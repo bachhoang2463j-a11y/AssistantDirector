@@ -188,8 +188,7 @@ async function runAll() {
   assert('__AD__ 测试钩子暴露', !!AD);
   assert('LIVE 环境检测通过（mock API 全套）', AD.IS_LIVE === true);
   assert('悬浮窗挂载（#ad-rail）', !!document.getElementById('ad-rail'));
-  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));
-  assert('GM 工具条按钮 ×3', document.querySelectorAll('#ad-panel .ad-toolbar button').length === 3);
+  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具条按钮 ×3', document.querySelectorAll('#ad-panel .ad-toolbar button').length === 3);
   await waitFor(() => MOCK.injections.calls.length === 0 && true, 2000); // init 去抖静默期
   assert('无楼层时 init 不注入', MOCK.injections.calls.length === 0);
 

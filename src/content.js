@@ -422,8 +422,14 @@
   // 8. 公开层 UI（贴边折叠栏，自 demo_story_director.html 移植）
   // ═════════════════════════════════════════════════════════════════════
 
+  // 挂载目标：酒馆助手的全局脚本运行在隐藏 iframe 里（Iframe.vue v-show=false），
+  // UI 必须挂到主页面 document 才可见；harness/直开页面时 window===parent 走 document。
+  const UI_DOC = (window !== window.parent && window.parent && window.parent.document)
+    ? window.parent.document
+    : document;
+
   const UI_CSS = `
-  #ad-rail { position: fixed; right: 0; top: 12%; height: 62vh; width: 40px; z-index: 60060;
+  #ad-rail { position: fixed; right: 0; top: 12%; height: 62vh; width: 40px; z-index: 99990;
     background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
     border: 1px solid rgba(148,163,184,0.28); border-right: none;
     border-radius: 8px 0 0 8px; display: flex; flex-direction: column; align-items: center;
@@ -450,7 +456,7 @@
   .ad-rail-fold { writing-mode: vertical-rl; font-size: 10px; letter-spacing: 4px;
     color: #64748b; padding: 8px 0 12px; }
 
-  #ad-panel { position: fixed; right: -400px; top: 4vh; bottom: 4vh; width: 372px; z-index: 60070;
+  #ad-panel { position: fixed; right: -400px; top: 4vh; bottom: 4vh; width: 372px; z-index: 99995;
     background: linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98));
     border: 1px solid rgba(148,163,184,0.28); border-radius: 10px 0 0 10px;
     display: flex; flex-direction: column; font-family: 'Courier New', 'SimSun', monospace; color: #cbd5e1;
@@ -498,7 +504,7 @@
     font-size: 10.5px; letter-spacing: 1px; padding: 5px 4px; cursor: pointer; transition: all .2s; }
   .ad-toolbar button:hover { border-color: rgba(251,191,36,0.55); color: #fbbf24; }
 
-  #ad-modal { position: fixed; inset: 0; z-index: 60080; display: none;
+  #ad-modal { position: fixed; inset: 0; z-index: 99999; display: none;
     background: rgba(2,6,23,0.72); align-items: center; justify-content: center; }
   #ad-modal.open { display: flex; }
   .ad-modal-box { width: min(680px, 92vw); max-height: 86vh; overflow-y: auto;
@@ -530,14 +536,14 @@
   .ad-btnrow button.primary { border-color: rgba(251,191,36,0.55); color: #fbbf24; }
   .ad-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
     background: rgba(15,23,42,0.95); border: 1px solid rgba(251,191,36,0.45); color: #fde68a;
-    border-radius: 8px; padding: 8px 18px; font-size: 12px; letter-spacing: 1px; z-index: 60090;
+    border-radius: 8px; padding: 8px 18px; font-size: 12px; letter-spacing: 1px; z-index: 100000;
     font-family: 'Courier New', monospace; box-shadow: 0 8px 28px rgba(0,0,0,0.5); }
   `;
 
   let els = {};
 
   function el(tag, attrs, html) {
-    const n = document.createElement(tag);
+    const n = UI_DOC.createElement(tag);
     if (attrs) for (const k of Object.keys(attrs)) n.setAttribute(k, attrs[k]);
     if (html != null) n.innerHTML = html;
     return n;
@@ -548,9 +554,10 @@
   }
 
   function buildUI() {
+    if (UI_DOC.getElementById('ad-rail')) { logWarn('已初始化，跳过重复挂载'); return; }
     const style = el('style', { id: 'ad-style' });
     style.textContent = UI_CSS;
-    document.head.appendChild(style);
+    UI_DOC.head.appendChild(style);
 
     // 折叠态贴边条
     const rail = el('aside', { id: 'ad-rail', title: '世界情报栏' }, `
@@ -558,7 +565,7 @@
       <div id="ad-rail-dot"></div>
       <div class="ad-rail-ticker"><ul id="ad-ticker"></ul></div>
       <div class="ad-rail-fold">点击展开 ▸</div>`);
-    document.body.appendChild(rail);
+    UI_DOC.body.appendChild(rail);
 
     // 展开态面板
     const panel = el('aside', { id: 'ad-panel' }, `
@@ -580,11 +587,11 @@
         <button id="ad-btn-settings" title="双模型端点与开关">⚙ 设置</button>
       </div>
       <div class="ad-colophon">本报仅刊载 <b>街头可见之事</b> · 真相须由读者自行抵达</div>`);
-    document.body.appendChild(panel);
+    UI_DOC.body.appendChild(panel);
 
     // 模态容器（设置/卡片/注入预览共用）
     const modal = el('div', { id: 'ad-modal' }, `<div class="ad-modal-box" id="ad-modal-box"></div>`);
-    document.body.appendChild(modal);
+    UI_DOC.body.appendChild(modal);
 
     els = { rail, panel, dot: rail.querySelector('#ad-rail-dot'), ticker: rail.querySelector('#ad-ticker'),
       wireBody: panel.querySelector('#ad-wire-body'),
@@ -594,7 +601,7 @@
     // 交互
     rail.addEventListener('click', () => togglePanel(true));
     modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
-    document.addEventListener('click', e => {
+    UI_DOC.addEventListener('click', e => {
       if (els.panel.classList.contains('open')
         && !els.panel.contains(e.target) && !els.rail.contains(e.target)
         && !els.modal.contains(e.target)) togglePanel(false);
@@ -619,7 +626,7 @@
 
   function toast(msg) {
     const t = el('div', { class: 'ad-toast' }, esc(msg));
-    document.body.appendChild(t);
+    UI_DOC.body.appendChild(t);
     setTimeout(() => t.remove(), 2200);
   }
 
@@ -871,7 +878,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   function init() {
-    if (document.getElementById('ad-rail')) { logWarn('已初始化，跳过重复挂载'); return; }
+    if (UI_DOC.getElementById('ad-rail')) { logWarn('已初始化，跳过重复挂载'); return; }
     buildUI();
     if (IS_LIVE) {
       loadRuntimeState();

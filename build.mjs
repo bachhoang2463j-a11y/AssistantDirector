@@ -16,7 +16,7 @@ const version = verMatch ? verMatch[1] : '0.0.0';
 
 const script = {
   type: 'script',
-  enabled: false,
+  enabled: true,   // 导入即启用（悬浮窗 UI 挂主页面 document，脚本跑在酒馆助手的隐藏 iframe 里）
   name: 'Assistant Director (副导演·世界模拟器)',
   id: '8f3c2a54-6d1b-4e7a-9c45-2b8ad0e91f47',
   content,
