@@ -105,3 +105,15 @@
 **验证**：harness 63/63（新增：注入更新点亮未读/ticker×2 无缝循环/展开后熄灭/折叠态极简结构断言[无 label/fold 元素]/空态收缩 empty 类）。IAB 截图管道本日不可用（capture failed for guest ×2），视觉留档由用户真机确认。
 
 ---
+
+## 2026-09-08 ｜ feat：卡片导入 jsonc 容错 + fixtures 测试卡组（业务提交 `7947cc4`）
+
+**变更行为**：content.js 新增 `stripJsonc`（字符串感知剥 // 与 /* */ 注释 + 尾逗号，字符串字面量内的 `//` 如 URL 不误伤），importCards 导入改走 stripJsonc→JSON.parse；新增 `integration-test/fixtures/cards-1925-06-13.json`（27 楼时点六卡纯 JSON：绿顶酒馆/中央车站/伦道夫仓库/澳大利亚酒店[安全区]/萨里山街区/禧市，menu 词条名与图鉴 V3.0 对齐）；harness 新增 3 条断言。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`、`integration-test/fixtures/cards-1925-06-13.json`
+
+**决策原因**：用户反馈"导入之前的 jsonc 导入失败"——SPEC/报告示例均为 jsonc（带注释），JSON.parse 不接受；与其要求用户手工去注释，不如导入端容错（用户从文档直接复制即可导入），另配一份纯 JSON 卡组供导入测试。
+
+**验证**：harness 66/66（新增：jsonc 行/块注释+尾逗号可解析、字符串内 // 不误剥、纯 JSON 原样可解析）；fixtures 经 node JSON.parse 校验 6 卡字段完整。
+
+---
