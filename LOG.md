@@ -133,3 +133,18 @@
 **验证**：harness 70/70（新增：情报条目流渲染/含派系与敌情菜单全名/当前态势行/hit 高亮/工具内联无底部条）；IAB 截图管道持续不可用，视觉由用户真机确认。
 
 ---
+
+## 2026-09-08 ｜ feat：情报完整显示 + 双主题皮肤系统（业务提交 `0974243`）
+
+**变更行为**：renderWire 去掉 reaction 的 trunc(42) 截断（信息完整显示，wire 容器整体滚动承载）；UI_CSS 全量 CSS 变量化，新增 paper 主题（NewDay 报纸基因）；设置面板新增皮肤下拉；__AD__ 暴露 renderWire/applyTheme。harness 72/72。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**：
+1. 用户反馈"公开情报显示不全，做整体滑动窗口"——视觉子代理实测 6 条中 5 条反应模式被截断，根因是 JS 层 trunc(42) 而非容器（wire 本就是 overflow-y:auto）。修复=去截断，长文自然换行由滚动容器承载；菜单行加 line-height 缓解孤字换行。trunc 函数随之删除（无引用）。
+2. 用户喜欢 NewDay 报纸风格，新建 paper 皮肤：米纸底 #f4ecd8 + 纸纹（radial+repeating 渐变）/纸边框 #8c7355（2px）/墨色 #2b241d/暗红强调 #8b2500（替代琥珀金）/安全区墨绿 #2e6b34/衬线字体 Noto Serif SC·Georgia/暖色投影——变量集照搬 NewDay.html 的主题制设计。slate（MMS 深色基因）为默认，两主题全 UI 生效（rail/panel/modal/toast/表单）。
+3. 皮肤属 UI 偏好存 localStorage（uiPrefs.theme），设置面板下拉切换即时生效（applyTheme 挂 ad-theme-paper 类）。
+
+**验证**：harness 72/72（新增：54 字长文 reaction 完整显示断言〔临时塞卡测试后还原〕、paper 主题类切换+衬线变量生效断言）。过程中修 harness 自身两处：断言数据误用 fixtures 卡（harness 卡组无此数据）、renderWire 未暴露测试钩子（TypeError 终止 runAll）。
+
+---
