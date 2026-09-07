@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Assistant Director（副导演）S0~S1 · 集成测试 harness</title>
+<style>
+  body { margin: 0; font: 13px/1.7 Consolas, Menlo, monospace; background: #0b1020; color: #dbe4ff; }
+  #bar { position: sticky; top: 0; z-index: 99999; padding: 10px 14px; background: #111936; border-bottom: 1px solid #263056; display: flex; gap: 12px; align-items: center; }
+  #bar button { padding: 6px 14px; border-radius: 8px; border: 1px solid #4c5db0; background: #1b2550; color: #dbe4ff; cursor: pointer; font: inherit; }
+  #bar button:hover { background: #263569; }
+  #stat { font-weight: 700; }
+  #note { font-size: 11px; color: #93a4d4; }
+  #log { margin: 0; padding: 12px 14px 40px; white-space: pre-wrap; }
+  .pass { color: #4ade80; }
+  .fail { color: #f87171; }
+  .info { color: #93a4d4; }
+  .head { color: #fbbf24; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="run">▶ 运行全部断言</button>
+  <span id="stat" class="info">等待加载产物…</span>
+  <span id="note">产物：../酒馆助手脚本-副导演.json（真实 content，非副本）· UI 将挂在本页右侧</span>
+</div>
+<pre id="log"></pre>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   mock 酒馆助手环境（与真实 API 同构）
+   ════════════════════════════════════════════════════════════════════ */
+const MOCK = (function () {
+  const store = { chat: {}, message: {} };   // message: { 楼层号: {…} }
+  let floorCount = 0;
+  const listeners = [];
+  const injections = { calls: [], active: new Map() }; // injectPrompts 调用记录
+
+  const clone = v => v === undefined ? v : JSON.parse(JSON.stringify(v));
+  const realId = id => (id < 0 ? floorCount + id : id);
+
+  window.tavern_events = {
+    MESSAGE_RECEIVED: 'MESSAGE_RECEIVED',
+    MESSAGE_UPDATED: 'MESSAGE_UPDATED',
+    MESSAGE_SWIPED: 'MESSAGE_SWIPED',
+    CHAT_CHANGED: 'CHAT_CHANGED',
+  };
+  window.getVariables = function (opt) {
+    const o = opt || {};
+    if (o.type === 'chat') return clone(store.chat);
+    if (o.type === 'message') {
+      const id = o.message_id == null ? floorCount - 1 : realId(o.message_id);
+      return clone(store.message[id] || {});
+    }
+    return {};
+  };
+  window.insertOrAssignVariables = function (vars, opt) {
+    const o = opt || {};
+    const bucket = o.type === 'chat' ? store.chat
+      : o.type === 'message' ? (store.message[realId(o.message_id == null ? -1 : o.message_id)] ||= {})
+      : null;
+    if (!bucket) return;
+    for (const k of Object.keys(vars || {})) bucket[k] = clone(vars[k]);
+  };
+  window.replaceVariables = function (vars, opt) {
+    const o = opt || {};
+    if (o.type === 'chat') store.chat = clone(vars) || {};
+  };
+  window.injectPrompts = function (prompts) {
+    for (const p of prompts || []) {
+      injections.calls.push({ id: p.id, content: p.content, depth: p.depth, role: p.role });
+      injections.active.set(p.id, p.content);
+    }
+    return { uninject: () => {} };
+  };
+  window.uninjectPrompts = function (ids) {
+    for (const id of ids || []) injections.active.delete(id);
+  };
+  window.eventOn = function (name, cb) { listeners.push({ name, cb }); };
+  window.eventEmit = function (name) {
+    for (const l of listeners) if (l.name === name) try { l.cb(); } catch (e) { console.error(e); }
+  };
+
+  return {
+    // 测试辅助
+    addFloor(vars) { store.message[floorCount++] = vars || {}; },
+    setFloorStat(statData) { store.message[Math.max(0, floorCount - 1)] = { stat_data: { '状态栏': statData } }; },
+    reset() {
+      // 原地清空（不能重新赋值——MOCK.chat 持有引用，重新赋值会与之脱钩）
+      for (const k of Object.keys(store.chat)) delete store.chat[k];
+      store.message = {}; floorCount = 0; injections.calls = []; injections.active.clear();
+    },
+    eventEmit: (name) => window.eventEmit(name),
+    injections,
+    chat: store.chat,
+  };
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   测试数据（取自真实聊天记录 #27 楼 stat_data 的结构）
+   ════════════════════════════════════════════════════════════════════ */
+const CH = (name, hp, hpMax, ammoStr) => ({
+  '角色': {
+    '名字': ' ' + name,
+    '属性': `[❤️HP:${hp}/${hpMax}][🔮MP:110/110][🛡️Armor:40][🧠SAN:59/65]`,
+    '弹药': ammoStr,
+  },
+});
+const STAT = (loc, chars) => ({
+  '日期和时间': '⏰ 1925年 · 6月13日 · 13:00 · 潜伏期',
+  '地点': loc,
+  '角色列表': chars,
+});
+
+const STAT_SUITE = STAT('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前', [
+  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
+  CH('🛡️弗兰克', 180, 180, '[🔩] [.45子弹：28]'),
+]);
+const STAT_GREEN = STAT('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', [
+  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
+  CH('🛡️弗兰克', 180, 180, '[🔩] [.45子弹：28]'),
+]);
+const STAT_GREEN_DOWNED = STAT('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', [
+  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
+  CH('🛡️弗兰克', 0, 180, '[🔩] [.45子弹：28]'),
+]);
+const STAT_GREEN_LOWAMMO = STAT('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', [
+  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：10]'),
+  CH('🛡️弗兰克', 180, 180, '[🔩] [.45子弹：8]'),
+]);
+const STAT_ALLEY = STAT('📍 悉尼 · 萨里山 · 某条后巷 · 苦力的棚屋前', [
+  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
+]);
+
+const CARDS = [
+  { place: '绿顶酒馆', aliases: ['凯特的酒馆', 'Green Roof'], faction: '凯特·利（萨里山）',
+    menu: '萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2', alert: '警戒',
+    reaction: '应邀客人以礼相待、敬酒试探；亮械或闯后场酒窖立即翻脸。',
+    verdict: '拒酒属待客试探，不构成开战；拔枪、闯后场禁区、暴露警方关联才构成。', source: 'daily' },
+  { place: '澳大利亚酒店', aliases: ['总督套房'], faction: '无（中立场所·己方据点）',
+    menu: '', alert: '常规', reaction: '酒店以住客隐私为重；大堂滋事召巡警。', source: 'daily' },
+  { place: '伦道夫船运仓库', aliases: ['达令港仓库'], faction: '伦道夫船运（黑法老触点）',
+    menu: '达令港码头武装打手*4~6', alert: '严密',
+    reaction: '白天禁区周边有人即喝止驱逐，夜间闯入直接动手。', source: 'daily' },
+];
+
+/* ════════════════════════════════════════════════════════════════════
+   断言框架
+   ════════════════════════════════════════════════════════════════════ */
+const logEl = document.getElementById('log');
+const statEl = document.getElementById('stat');
+let passed = 0, failed = 0;
+function line(cls, msg) { logEl.innerHTML += `<span class="${cls}">${msg}</span>\n`; }
+function head(t) { line('head', `── ${t} ──`); }
+function ok(desc, extra) { passed++; line('pass', `  ✓ ${desc}${extra ? '  ⟨' + extra + '⟩' : ''}`); }
+function ng(desc, extra) { failed++; line('fail', `  ✗ ${desc}${extra ? '  ⟨' + extra + '⟩' : ''}`); }
+function assert(desc, cond, extra) { cond ? ok(desc, extra) : ng(desc, extra); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// 条件轮询：IAB 对未聚焦页面节流 setTimeout（实测 ~1s 粒度），
+// 固定 sleep 与 content 的 800ms 去抖时序不可控，改为自适应等待
+async function waitFor(cond, timeoutMs = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    if (cond()) return true;
+    await sleep(150);
+  }
+  return cond();
+}
+
+let AD = null;
+
+/* ════════════════════════════════════════════════════════════════════
+   断言套件
+   ════════════════════════════════════════════════════════════════════ */
+async function runAll() {
+  passed = 0; failed = 0; logEl.innerHTML = '';
+
+  /* ——— 载入真实产物 ——— */
+  head('环境与初始化');
+  let json;
+  try {
+    const res = await fetch('../酒馆助手脚本-副导演.json');
+    json = await res.json();
+  } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
+  assert('产物 JSON 载入（type=script）', json.type === 'script');
+  assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
+  try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
+  AD = window.__AD__;
+  assert('__AD__ 测试钩子暴露', !!AD);
+  assert('LIVE 环境检测通过（mock API 全套）', AD.IS_LIVE === true);
+  assert('悬浮窗挂载（#ad-rail）', !!document.getElementById('ad-rail'));
+  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));
+  assert('GM 工具条按钮 ×3', document.querySelectorAll('#ad-panel .ad-toolbar button').length === 3);
+  await waitFor(() => MOCK.injections.calls.length === 0 && true, 2000); // init 去抖静默期
+  assert('无楼层时 init 不注入', MOCK.injections.calls.length === 0);
+
+  /* ——— 纯函数：归一化与三级匹配 ——— */
+  head('地点归一化与三级匹配');
+  assert('剥 emoji/空白归一化', AD.norm('📍 悉尼 · 绿顶酒馆') === '悉尼 · 绿顶酒馆');
+  let m = AD.matchCard('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', CARDS);
+  assert('包含匹配命中绿顶酒馆', m && m.card.place === '绿顶酒馆', `score=${m && m.score.toFixed(2)}`);
+  m = AD.matchCard('凯特的酒馆', CARDS);
+  assert('别名全等命中', m && m.card.place === '绿顶酒馆');
+  m = AD.matchCard('绿顶酒馆', CARDS);
+  assert('place 全等命中', m && m.card.place === '绿顶酒馆');
+  m = AD.matchCard('📍 悉尼 · 总督套房 · 客厅', CARDS);
+  assert('别名包含命中（总督套房→澳大利亚酒店）', m && m.card.place === '澳大利亚酒店');
+  m = AD.matchCard('📍 悉尼 · 萨里山 · 某条后巷 · 苦力的棚屋前', CARDS);
+  assert('未命中返回 null（不可穷尽地点）', m === null);
+  const cardsAmbig = [
+    CARDS[0],
+    { place: '悉尼', aliases: [], faction: 'X', menu: '', alert: '常规' },
+  ];
+  m = AD.matchCard('📍 悉尼 · 萨里山 · 绿顶酒馆', cardsAmbig);
+  assert('多卡命中择优（具体名 > 泛地名）', m && m.card.place === '绿顶酒馆', `胜者=${m && m.card.place}`);
+  assert('空地点文本不匹配', AD.matchCard('', CARDS) === null);
+  assert('空卡片池不匹配', AD.matchCard('绿顶酒馆', []) === null);
+
+  /* ——— 纯函数：menu 解析 ——— */
+  head('menu 解析');
+  let entries = AD.parseMenu('萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2');
+  assert('区间词条解析 ×3', entries.length === 3 && entries[0].name === '萨里山剃刀党混混' && entries[0].min === 4 && entries[0].max === 6);
+  entries = AD.parseMenu('打手*4');
+  assert('固定数量解析', entries[0].min === 4 && entries[0].max === 4);
+  entries = AD.parseMenu('夏恩(夏盖妖虫)');
+  assert('无数量标记解析（min=max=0）', entries[0].min === 0 && entries[0].max === 0);
+  entries = AD.parseMenu('');
+  assert('空 menu 解析为空数组', entries.length === 0);
+  entries = AD.parseMenu('打手×4～6／保镖*2');
+  assert('全角符号容错（×／～）', entries[0].min === 4 && entries[0].max === 6 && entries[1].min === 2);
+
+  /* ——— 纯函数：stat 解析 ——— */
+  head('stat_data 解析');
+  assert('HP 属性解析', JSON.stringify(AD.parseAttr('[❤️HP:0/180][🔮MP:110/110]', 'HP')) === '{"cur":0,"max":180}');
+  assert('HP 属性缺失返回 null', AD.parseAttr('[🛡️Armor:40]', 'HP') === null);
+  assert('弹药求和（多词条）', AD.parseAmmoTotal('[🔩] [.45子弹：28][12号独头弹：0]') === 28);
+  assert('弹药零值计入', AD.parseAmmoTotal('[🔩] [.45子弹：0]') === 0);
+  assert('角色列表归一（剥包装）', AD.charList(STAT_GREEN).length === 2);
+
+  /* ——— 纯函数：规模随行重算 ——— */
+  head('规模随行重算');
+  AD.state.ammoBaseline = 0; // 重置基准
+  let scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN);
+  assert('正常状态取区间中值（4~6→5）', scaled[0].count === 5, `count=${scaled[0].count}`);
+  assert('弹药基准记录（20+28=48）', AD.state.ammoBaseline === 48, `baseline=${AD.state.ammoBaseline}`);
+  scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN_DOWNED);
+  assert('有倒地 → 下限-1（4~6→3）', scaled[0].count === 3, `count=${scaled[0].count}`);
+  scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN_LOWAMMO);
+  assert('弹药消耗过半（48→18） → 降档', scaled[0].count === 3, `count=${scaled[0].count}`);
+  scaled = AD.computeScale(AD.parseMenu('打手*1~2'), STAT_GREEN_DOWNED);
+  assert('下限保护（min=1 → 不低于1）', scaled[0].count === 1, `count=${scaled[0].count}`);
+
+  /* ——— 纯函数：注入文本拼装 ——— */
+  head('注入文本拼装（三种形态）');
+  scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN);
+  let text = AD.buildSituationText(CARDS[0], scaled, '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂');
+  assert('命中卡：报警框架首行', text.startsWith(AD.ALERT_LINE));
+  assert('命中卡：地点行', text.includes('【当前态势 · 📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂】'));
+  assert('命中卡：驻守+派系+菜单（规模已重算）', text.includes('驻守：凯特·利（萨里山）（萨里山剃刀党混混*5/私酒蒸馏师*4/黑帮职业杀手*2）'));
+  assert('命中卡：反应模式', text.includes('反应模式：应邀客人以礼相待'));
+  assert('命中卡：战斗轮规则提醒（只写名字）', text.includes('<Combat_block>') && text.includes('我方/敌方各只写名字'));
+  assert('命中卡：场景判定标准', text.includes('判定标准：拒酒属待客试探'));
+  text = AD.buildSituationText(CARDS[2], AD.computeScale(AD.parseMenu(CARDS[2].menu), STAT_GREEN), 'x');
+  assert('无 verdict 卡片回落默认判定', text.includes('判定标准：玩家行动在语义上构成'));
+  text = AD.buildSafeText('📍 悉尼 · 澳大利亚酒店 - 总督套房');
+  assert('安全变体：无可见敌人 + 认知外突袭保留', text.includes('当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭'));
+  text = AD.buildFallbackText('某条后巷');
+  assert('兜底：无驻防情报 + 图鉴选择 + 禁自创数值', text.includes('此地无驻防情报') && text.includes('禁止自创敌方数值'));
+
+  /* ——— 端到端：dispatch 主流程 ——— */
+  head('端到端 dispatch（每楼配发）');
+  MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS); AD.state.ammoBaseline = 0;
+  MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+  const calls0 = MOCK.injections.calls.length;
+  AD.dispatchNow('test');
+  assert('命中楼注入一次（id=ad_situation, depth0, system）', (() => {
+    const c = MOCK.injections.calls[calls0];
+    return c && c.id === 'ad_situation' && c.depth === 0 && c.role === 'system';
+  })());
+  assert('注入内容含驻防与判定标准', MOCK.injections.calls[calls0].content.includes('驻守：凯特·利') && MOCK.injections.calls[calls0].content.includes('判定标准'));
+  const calls1 = MOCK.injections.calls.length;
+  AD.dispatchNow('test-again');
+  assert('幂等：同地点同状态不重注', MOCK.injections.calls.length === calls1);
+
+  MOCK.setFloorStat(STAT_SUITE);
+  AD.dispatchNow('test');
+  assert('换地点→安全变体注入（menu 空卡）', MOCK.injections.calls.length === calls1 + 1 && MOCK.injections.calls[calls1].content.includes('无可见敌人'));
+
+  MOCK.setFloorStat(STAT_ALLEY);
+  AD.dispatchNow('test');
+  assert('未命中地点→通用兜底注入', MOCK.injections.calls.length === calls1 + 2 && MOCK.injections.calls[calls1 + 1].content.includes('此地无驻防情报'));
+
+  MOCK.setFloorStat(STAT_GREEN_DOWNED);
+  AD.state.lastInjectedText = ''; // 强制重注以观察规模
+  AD.dispatchNow('test');
+  assert('倒地楼规模降档（*3）', MOCK.injections.calls[MOCK.injections.calls.length - 1].content.includes('萨里山剃刀党混混*3'));
+
+  /* ——— 事件链路：楼层事件 + 去抖 ——— */
+  head('事件链路（eventOn 接线与去抖）');
+  MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+  MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+  const evCalls = MOCK.injections.calls.length;
+  MOCK.eventEmit('MESSAGE_RECEIVED');
+  MOCK.eventEmit('MESSAGE_UPDATED');
+  MOCK.eventEmit('MESSAGE_SWIPED');
+  const merged = await waitFor(() => MOCK.injections.calls.length === evCalls + 1);
+  assert('连续三事件去抖合并为一次注入', merged, `+${MOCK.injections.calls.length - evCalls}`);
+
+  MOCK.setFloorStat(STAT_GREEN_DOWNED);
+  MOCK.eventEmit('MESSAGE_RECEIVED');
+  const scaledDown = await waitFor(() => {
+    const last = MOCK.injections.calls[MOCK.injections.calls.length - 1];
+    return last && last.content.includes('萨里山剃刀党混混*3');
+  });
+  assert('新楼事件触发重算（规模降档生效）', scaledDown);
+
+  MOCK.eventEmit('CHAT_CHANGED');
+  const chatOk = await waitFor(() => MOCK.injections.calls.length >= 1);
+  assert('CHAT_CHANGED 重建注入不报错', chatOk);
+
+  /* ——— 持久化：卡片 / 设置 ——— */
+  head('持久化');
+  MOCK.reset(); AD.setCards(CARDS);
+  assert('卡片写入聊天变量 $ad_cards', Array.isArray(MOCK.chat.$ad_cards) && MOCK.chat.$ad_cards.length === 3);
+  assert('卡片读回一致', AD.getCards()[2].place === '伦道夫船运仓库');
+  assert('运行时状态持久化 $ad_state', (() => { AD.persistRuntimeState(); return MOCK.chat.$ad_state && typeof MOCK.chat.$ad_state.lastLocationText === 'string'; })());
+  const s = AD.loadSettings();
+  assert('设置默认结构（双端点+总开关）', s.enabled === true && s.shadowline && s.situation);
+  s.situation.baseUrl = 'https://api.example.com/v1'; s.enabled = false;
+  AD.saveSettings(s);
+  assert('设置保存到 localStorage 并读回', AD.loadSettings().situation.baseUrl === 'https://api.example.com/v1' && AD.loadSettings().enabled === false);
+  const disCalls = MOCK.injections.calls.length;
+  MOCK.setFloorStat(STAT_GREEN);
+  AD.dispatchNow('test');
+  assert('总开关关闭 → 不注入不重注', MOCK.injections.calls.length === disCalls);
+  s.enabled = true; AD.saveSettings(s); // 恢复
+
+  /* ——— UI 数据驱动 ——— */
+  head('UI 数据驱动');
+  AD.togglePanel(true, true);
+  assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
+  assert('派系分组卡渲染（3 卡片 3 派系）', document.querySelectorAll('#ad-wire .ad-faction').length >= 3);
+  assert('ticker 渲染（6 项=3×2 无缝循环）', document.querySelectorAll('#ad-ticker li').length === 6);
+
+  finish();
+}
+function finish() {
+  const total = passed + failed;
+  statEl.textContent = failed === 0 ? `${total} 项全部通过 ✓` : `${passed}/${total} 通过，${failed} 失败 ✗`;
+  statEl.className = failed === 0 ? 'pass' : 'fail';
+  line(failed === 0 ? 'pass' : 'fail', `══ 总计：${passed}/${total} 通过 ══`);
+  line('info', '（右侧为本插件真实 UI 挂载，可人工目检折叠/展开与面板）');
+}
+document.getElementById('run').addEventListener('click', runAll);
+</script>
+</body>
+</html>
