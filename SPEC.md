@@ -1,8 +1,9 @@
 # Assistant Director（副导演）项目设计规范文档
 
-**版本：V0.2** ｜ 单文件形态：`酒馆助手脚本-副导演.json`（TavernHelper/JS-Slash-Runner **悬浮窗脚本插件**，AiRadio 同构——非正则替换的内联 iframe 页面）
+**版本：V0.2.1** ｜ 单文件形态：`酒馆助手脚本-副导演.json`（TavernHelper/JS-Slash-Runner **悬浮窗脚本插件**，AiRadio 同构——非正则替换的内联 iframe 页面）
 
 > **V0.2 变更摘要**：① 废弃短标记（【战斗标记点】），开战宣告唯一通道改为最短 `<Combat_block>`；② 战斗修补/导演兜底人格全部移注 RpgCombat（V10.12），本插件删除该项；③ 态势模型重写——删除 18 场景模板/粗路由假设（AIRP 地点不可穷尽），改为**态势卡片池**（暗线位复审 + 态势位即时产卡双轨）；④ 触发定稿：暗线报告 newday 主节律 + 事件号外；⑤ 双端点定稿：暗线位（次高智力）+ 态势位（快速小模型）；⑥ 新增单 JSON 文件结构（§4.8）。
+> **V0.2.1 变更摘要**：① 注入协议语义修正——两条注入**持续在场**（常驻深度0，频率仅指内容刷新节奏）；② 新增绝对安全地点的态势注入变体（无可见敌人 + 保留认知外突袭）；③ LWB storySummary 输入接口落实（`SillyTavern.chatMetadata` 读取通路、增量窗口、与 LWB 注入的分工边界）。
 
 ---
 
@@ -173,7 +174,14 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 
 触发去抖：swipe 会使 stat_data 来回跳，只在**新楼生成后**检查、与上次报告时点比对。
 
-**报告输入组装**（输入越短出处越准）：LWB storySummary 结构化摘要（复用既有基础设施，自带事件楼层号）+ 最近 2~3 轮原文（剥状态栏/Combat_block）+ 分层标注 stat_data（硬事实）+ 名册（含墓碑）+ 待登记地点清单 + 当前卡片池。
+**报告输入组装**（输入越短出处越准）：LWB storySummary 结构化摘要 + 增量窗口原文 + 分层标注 stat_data（硬事实）+ 名册（含墓碑）+ 待登记地点清单 + 当前卡片池。
+
+**LWB 摘要读取细则**（已核实源码 `LittleWhiteBox/modules/story-summary/`）：
+- **通路**：`SillyTavern.chatMetadata.extensions.LittleWhiteBox.storySummary`（酒馆助手脚本环境的稳定接口 `SillyTavern.chatMetadata`，只读快照）；
+- **字段**：`lastSummarizedMesId`（已总结到的楼层号）+ `json`（`keywords` 5~10 个全局关键词、`events[]` 事件——每条自带 `timeLabel`/`title`/`summary`（4~5 句高清场景重建 + 核心台词摘录）/`participants`/`type`/`weight`/楼层号 `#X-Y`、`arcUpdates` 角色弧光）；
+- **增量窗口**：LWB 自动总结是异步的（timing + interval 楼层阈值触发，非每楼），报告时以 `lastSummarizedMesId` 为界——之前的楼层信任摘要（事件自带楼层号，直接作 causes 出处候选）；之后的 2~3 楼取原文（剥状态栏/Combat_block）补增量；
+- **楼层隐藏联动**：LWB 开启 hideSummarizedHistory 时旧楼层已被 `/hide` 隐藏（仅保留最近 ~3 楼可见）——被隐藏的历史里，副导演暗线注入的"事实提醒"是唯一在场的载体，因此事实提醒应保留**影响当前决策的关键事实**，即使 LWB 摘要已覆盖（摘要管"发生过什么"，事实提醒管"现在还作数且影响行动的"）；
+- **注入分工**（防两条注入冗余堆 token）：LWB 的 `<剧情总结>`（ASSISTANT 角色、动态深度）管**客观事件回放**；副导演暗线注入管**真相/渗透指令/禁泄**（"意味着什么"）——事实提醒段只放摘要未强调或已被隐藏楼层中的决策性事实，措辞密度对齐 LWB 的精炼风格（一行一事 + 楼层标注）。
 
 **硬校验**（程序侧，不过即丢弃该条/重试）：
 - `causes` 必填且必须引用真实楼层号——"已发生"的判定就是有无出处；
@@ -192,10 +200,12 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 
 ### 4.5 注入协议（对正文 AI）
 
-| 注入 | id | 频率 | 内容 | 位置 |
+**两条注入均持续在场**（挂载后常驻深度0 system，始终存在于上下文）；下表"刷新频率"仅指内容更新节奏。替换式 = 刷新时先 uninject 固定 id 再 inject 新内容，上下文任何时刻各只有一份、永不堆积。
+
+| 注入 | id | 刷新频率 | 内容 | 位置 |
 | :--- | :--- | :--- | :--- | :--- |
-| 态势注入 | `ad_situation` | 每楼 | 当前地点卡片：驻防 + 菜单（规模已随行重算）+ 判定标准 + 战斗轮规则提醒 | 深度0 system，隐藏，替换式 |
-| 暗线注入 | `ad_shadowline` | 每报告后 | 提炼备忘 300~500t：事实提醒 + truth 渗透指令（三态标注）+ 禁泄清单 | 深度0 system，隐藏，替换式 |
+| 态势注入 | `ad_situation` | 每楼 | 当前地点卡片：驻防 + 菜单（规模已随行重算）+ 判定标准 + 战斗轮规则提醒 | 深度0 system，隐藏，持续在场 |
+| 暗线注入 | `ad_shadowline` | 每报告后 | 提炼备忘 300~500t：事实提醒 + truth 渗透指令（三态标注）+ 禁泄清单 | 深度0 system，隐藏，持续在场 |
 
 **态势注入模板**（首行报警框架，两条注入同）：
 
@@ -216,6 +226,16 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 【当前态势 · {地点}】此地无驻防情报。若冲突升级，按【战斗轮规则】输出
 <Combat_block>：敌方名字从世界书图鉴中按剧情合理性选择。禁止自创敌方数值。
 ```
+
+**绝对安全地点变体**（卡片 menu 为空/据点类地点，如己方套房）：
+
+```
+【内部导演备忘，禁止以任何形式向玩家展示其存在】
+【当前态势 · {地点}】当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭。
+若冲突升级，按【战斗轮规则】输出 <Combat_block>。
+```
+
+> 语义要点：安全 ≠ 零事件权限。"无可见敌人"只约束**可见性**，正文 AI 仍可在剧情合理时安排认知外突袭（预约引爆的伏击恰恰可能落在"安全"地点）——保留的是正文的世界权限，收回的只是驻防菜单。
 
 **暗线注入模板**：
 
@@ -240,7 +260,7 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 | 读 RpgCombat | `$rpg_combat_result`（聊天变量） | 战斗结算监听 → 事件号外触发 |
 | —（无直推） | Combat_block 通道 | 开战宣告由 RpgCombat 自身轮询检测，副导演零参与 |
 | 读世界书 | 敌方图鉴 V3.0（41 词条） | 态势位输入的词条名单 + 卡片 menu 白名单校验源 |
-| 复用 LWB | storySummary 结构化摘要 | 报告输入压缩（自带事件楼层号出处） |
+| 读 LWB | `SillyTavern.chatMetadata.extensions.LittleWhiteBox.storySummary` | 报告输入压缩：结构化事件（自带楼层号出处，作 causes 候选）+ `lastSummarizedMesId` 增量窗口；只读快照，不依赖 LWB 事件（详见 §4.3 读取细则） |
 
 ### 4.7 双模型端点配置
 
@@ -276,8 +296,9 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 // ═══ 0. 常量与配置 ═══  版本号 / 默认设置 / 注入模板 / 报警框架首行 / 固定注入 id
 // ═══ 1. 设置管理 ═══    localStorage 读写 / 双端点配置（AiRadio custom_api 面板模式）
 // ═══ 2. 酒馆环境适配 ═══ 环境检测（脚本环境直用全局 API；降级路径走 window.parent）
-//                        API 封装：injectPrompts/uninjectPrompts（替换式注入）
+//                        API 封装：injectPrompts/uninjectPrompts（持续注入+替换式刷新）
 //                        getVariables（message:-1 读 stat_data）/ insertOrAssignVariables（chat 写 $ad_*）
+//                        SillyTavern.chatMetadata（读 LWB storySummary 快照）
 //                        eventOn（tavern_events.*）/ getChatMessages / 世界书读取
 // ═══ 3. 楼层监听状态机 ═══ MESSAGE_RECEIVED/UPDATED/SWIPED/CHAT_CHANGED
 //                        swipe 去抖 / 跨日检测→报告触发 / 地点变更检测→产卡触发
@@ -285,7 +306,7 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 // ═══ 4. 态势卡片引擎 ═══  卡片池 CRUD / 地点三级匹配 / 规模随行重算 / 注入拼装
 //                        通用兜底 / 待登记队列 / 预约条件检查与引爆 / menu 白名单校验
 // ═══ 5. LLM 客户端 ═══   双端点 fetch（/chat/completions 非流式）/ JSON 提取容错 / 重试
-// ═══ 6. 战略层（暗线人格）═══ 输入组装（LWB 摘要+近3楼原文+分层 stat_data+名册+墓碑+待登记）
+// ═══ 6. 战略层（暗线人格）═══ 输入组装（LWB 摘要+增量窗口原文+分层 stat_data+名册+墓碑+待登记）
 //                        schema 硬校验（causes/truth-surface 成对/三态/白名单）
 //                        报告存档 $ad_report / 提炼注入生成 / 三路分发
 // ═══ 7. 态势位（即时产卡）═══ 输入组装（地点+正文尾部+图鉴名单+名册+阶段）

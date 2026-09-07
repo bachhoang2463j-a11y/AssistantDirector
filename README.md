@@ -2,7 +2,7 @@
 
 > SillyTavern（酒馆）AIRP 跑团的**世界模拟器**——让世界不等玩家行动也在运转。酒馆助手（TavernHelper / JS-Slash-Runner）**悬浮窗脚本插件**，单 JSON 文件形态（AiRadio 同构，非正则替换的内联 iframe 页面）。
 
-**当前版本：V0.2** ｜ 状态：文档阶段，未落码
+**当前版本：V0.2.1** ｜ 状态：文档阶段，未落码
 
 ---
 
@@ -71,7 +71,7 @@ UI 视觉 demo 已完成：`demo_story_director.html`（项目根目录，浏览
 | 敌方图鉴 V3.0 | 世界书 `COC-澳大利亚篇敌人与召唤物图鉴V3.0.json`（41 词条） | 态势位输入词条名单 + 卡片 menu 白名单校验源 |
 | MMS `stat_data` | 楼层变量（message:-1 回溯） | 地点/日期/我方状态/名册——触发检测与规模重算数据源 |
 | `$rpg_combat_result` | 聊天变量 | 战斗结算监听 → 事件号外 |
-| LWB storySummary | 聊天元数据 | 报告输入压缩（结构化事件 + 楼层号出处） |
+| LWB storySummary | `SillyTavern.chatMetadata`（聊天元数据，只读快照） | 报告输入压缩：结构化事件（楼层号出处）+ `lastSummarizedMesId` 增量窗口 |
 | 视觉基因参考 | MMS / AiRadio | UI 与端点配置面板 |
 
 ## 七、开发约定
@@ -87,3 +87,4 @@ UI 视觉 demo 已完成：`demo_story_director.html`（项目根目录，浏览
 | :--- | :--- | :--- |
 | V0.1 | 2026-09-06 | 立项：SPEC（四层架构/五原则/全协议/S0–S9 计划）与 README 成文；视觉 demo 完成于 MMS 目录 |
 | V0.2 | 2026-09-07 | 设计定稿重写：废弃短标记→最短 Combat_block 唯一通道；删除修补人格（已移注 RpgCombat V10.12）；态势模型重写为卡片池双轨（报告复审+即时产卡），删除 18 模板/粗路由穷尽假设；新增"地点不可穷尽"原则；触发矩阵定稿（newday 主节律+事件号外）；双端点定稿（暗线位次高智力+态势位快速小模型）；项目形态从单 HTML iframe 改为单 JSON 悬浮窗插件（AiRadio 同构），新增单 JSON 文件结构（SPEC §4.8）与可见性矩阵（SPEC §3） |
+| V0.2.1 | 2026-09-08 | 注入协议语义修正：两条注入持续在场（常驻深度0，频率仅指内容刷新节奏）；新增绝对安全地点态势变体（无可见敌人+保留认知外突袭）；LWB storySummary 输入接口落实（`SillyTavern.chatMetadata` 通路、增量窗口、注入分工边界——摘要管"发生过什么"，暗线注入管"意味着什么"） |
