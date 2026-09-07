@@ -445,6 +445,8 @@
     : document;
 
   const UI_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Noto+Serif+SC:wght@400;600;700;900&family=Playfair+Display:ital,wght@0,600;0,800;0,900;1,400&display=swap');
+
   /* ── 主题变量：slate（MMS 深色基因）── */
   #ad-rail, #ad-panel, #ad-modal, .ad-toast {
     --ad-bg: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
@@ -464,14 +466,14 @@
     --ad-font: 'Courier New', 'SimSun', monospace;
     --ad-radius: 10px; --ad-radius-sm: 5px;
   }
-  /* ── 主题：paper（方案 A：1920s 阿卡姆晨报 · 经典大报版）── */
+  /* ── 主题：paper（方案 A：1920s 阿卡姆晨报 · 经典时代大报版）── */
   #ad-rail.ad-theme-paper, #ad-panel.ad-theme-paper, #ad-modal.ad-theme-paper, .ad-toast.ad-theme-paper {
     --ad-bg: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, rgba(220,205,175,0.3) 100%), repeating-linear-gradient(0deg, #f4eedb, #f4eedb 2px, #f0e6ce 2px, #f0e6ce 4px);
     --ad-box-bg: #f4eedb;
     --ad-overlay: rgba(43,27,14,0.55);
     --ad-input-bg: rgba(255,250,235,0.9);
     --ad-border: #3a3028;
-    --ad-panel-border: 2px solid #1a1614;
+    --ad-panel-border: 3px solid #1a1614;
     --ad-ink: #2b241e; --ad-ink-strong: #1a1614;
     --ad-ink-dim: #5e5145; --ad-ink-faint: #8a7b6c;
     --ad-accent: #8b1e1e; --ad-accent-bright: #a82424;
@@ -488,6 +490,9 @@
     border-bottom: 4px double var(--ad-line-strong);
     background: rgba(244, 238, 219, 0.95);
     padding: 10px 14px 7px;
+    position: relative;
+    flex: none;
+    display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 4px;
@@ -495,46 +500,104 @@
   .ad-theme-paper .ad-head-ears {
     display: flex; justify-content: space-between; align-items: center;
     border-bottom: 1px solid var(--ad-line-strong); padding-bottom: 3px; margin-bottom: 2px;
-    font-size: 8px; letter-spacing: 1px; color: var(--ad-ink-dim); text-transform: uppercase;
+    font-size: 8.5px; letter-spacing: 1px; color: var(--ad-ink-dim); text-transform: uppercase;
     font-family: 'Courier Prime', 'Courier New', monospace;
+    padding-right: 75px;
   }
   .ad-theme-paper .ad-head-ears .ear-motto { font-style: italic; color: var(--ad-accent); font-family: var(--ad-font); }
   .ad-theme-paper .ad-head-main {
-    display: flex; justify-content: space-between; align-items: center; gap: 6px;
+    display: block; position: relative; width: 100%; text-align: center; margin: 2px 0;
   }
+  .ad-theme-paper .ad-head-info { display: none; }
   .ad-theme-paper .ad-head-title {
-    font-size: 16px; font-weight: 900; letter-spacing: 3px; color: var(--ad-ink-strong);
-    text-transform: uppercase; line-height: 1.1; text-align: center; flex: 1;
+    font-size: 20px; font-weight: 900; letter-spacing: 3.5px; color: var(--ad-ink-strong);
+    text-transform: uppercase; line-height: 1.15; text-align: center; width: 100%;
     text-shadow: 1px 1px 0 rgba(255,255,255,0.8);
+    font-family: 'Playfair Display', 'Noto Serif SC', serif;
+    margin: 2px 0 3px;
+  }
+  .ad-theme-paper .ad-head-btns {
+    position: absolute; right: 10px; top: 7px; z-index: 20; display: flex; gap: 4px;
+  }
+  .ad-theme-paper .ad-head-btns button {
+    background: rgba(244, 238, 219, 0.9); border: 1px solid var(--ad-line-strong);
+    border-radius: 2px; color: var(--ad-ink-dim); padding: 1px 5px; font-size: 11px;
+    line-height: 1.2; cursor: pointer; transition: all .15s;
+  }
+  .ad-theme-paper .ad-head-btns button:hover {
+    background: var(--ad-accent); color: #fff; border-color: var(--ad-accent);
   }
   .ad-theme-paper .ad-head-sub {
     display: flex; justify-content: space-between; align-items: center;
     border-top: 1px solid var(--ad-line-strong); border-bottom: 1px solid var(--ad-line-strong);
-    padding: 3px 6px; margin-top: 2px; font-size: 9px; letter-spacing: 1px;
+    padding: 3px 6px; margin-top: 2px; font-size: 9.5px; letter-spacing: 1.5px;
     font-family: 'Courier Prime', 'Courier New', monospace; color: var(--ad-ink-strong);
   }
   .ad-theme-paper .ad-head-sub .stage { color: var(--ad-accent); font-weight: bold; }
-  .ad-theme-paper .ad-nowline {
+  .ad-theme-paper .ad-nowline.ad-lead-box {
     border: 1px solid var(--ad-line-strong); border-left: 4px solid var(--ad-accent);
-    background: rgba(235, 225, 200, 0.7); margin: 8px 12px 4px; padding: 7px 10px;
-    font-size: 11px; line-height: 1.5; color: var(--ad-ink-strong);
+    background: rgba(235, 225, 200, 0.7); margin: 9px 12px 6px; padding: 8px 12px;
     border-radius: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.05); position: relative;
+    white-space: normal; overflow: visible; text-overflow: clip; flex: none;
   }
-  .ad-theme-paper .ad-nowline::before { content: '📍 '; }
-  .ad-theme-paper .ad-nowline::after {
-    content: 'PUBLIC RECORD'; position: absolute; right: 8px; top: 6px;
-    border: 1px solid var(--ad-accent); color: var(--ad-accent); font-size: 7.5px;
-    font-weight: bold; padding: 0 4px; letter-spacing: 1px; transform: rotate(4deg);
-    font-family: 'Courier Prime', monospace; opacity: 0.85;
+  .ad-theme-paper .ad-lead-stamp {
+    position: absolute; right: 8px; top: 7px; transform: rotate(6deg);
+    border: 1.5px solid var(--ad-accent); color: var(--ad-accent); font-family: 'Courier Prime', monospace;
+    font-size: 7.5px; font-weight: bold; padding: 1px 5px; letter-spacing: 1px; opacity: 0.85; pointer-events: none;
+  }
+  .ad-theme-paper .ad-lead-eyebrow {
+    font-family: 'Courier Prime', monospace; font-size: 8.5px; letter-spacing: 1.5px;
+    color: var(--ad-accent); text-transform: uppercase; font-weight: bold; margin-bottom: 3px;
+  }
+  .ad-theme-paper .ad-lead-title {
+    font-size: 13.5px; font-weight: 800; color: var(--ad-ink-strong); margin-bottom: 4px;
+    font-family: 'Playfair Display', 'Noto Serif SC', serif; line-height: 1.3;
+  }
+  .ad-theme-paper .ad-lead-body {
+    font-size: 11px; line-height: 1.6; color: var(--ad-ink); text-align: justify;
   }
   .ad-theme-paper .ad-item {
-    border-bottom: 1px solid var(--ad-line); padding: 9px 12px 10px;
+    border-bottom: 1px solid var(--ad-line); padding: 9px 12px 11px;
   }
-  .ad-theme-paper .ad-item-place::before { content: '◆ '; font-size: 9px; color: var(--ad-accent); }
-  .ad-theme-paper .ad-item-place { font-size: 13px; font-weight: 700; color: var(--ad-ink-strong); }
-  .ad-theme-paper .ad-item-alert { font-family: 'Courier Prime', 'Courier New', monospace; font-weight: bold; padding: 1px 5px; border: 1px solid var(--ad-line-strong); background: #ede3cc; }
-  .ad-theme-paper .ad-item-alert.hot { background: var(--ad-accent); color: #fff; border-color: var(--ad-accent); }
-  .ad-theme-paper .ad-item-reaction { font-size: 10.5px; line-height: 1.65; color: var(--ad-ink); text-align: justify; margin-top: 3px; }
+  .ad-theme-paper .ad-item.hit {
+    background: rgba(139, 30, 30, 0.05);
+    border-left: 3px solid var(--ad-accent);
+  }
+  .ad-theme-paper .ad-item-header {
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px;
+  }
+  .ad-theme-paper .ad-item-kicker {
+    font-family: 'Courier Prime', monospace; font-size: 8.5px; letter-spacing: 1px;
+    color: var(--ad-ink-dim); text-transform: uppercase;
+  }
+  .ad-theme-paper .ad-item-alert {
+    font-family: 'Courier Prime', monospace; font-size: 8.5px; font-weight: bold;
+    padding: 1px 5px; border: 1px solid var(--ad-line-strong); background: #ede3cc; color: var(--ad-ink-strong);
+    border-radius: 0px;
+  }
+  .ad-theme-paper .ad-item-alert.hot {
+    background: var(--ad-accent); color: #fff; border-color: var(--ad-accent);
+  }
+  .ad-theme-paper .ad-item-alert.safe {
+    background: #e2edd9; color: var(--ad-safe); border-color: var(--ad-safe);
+  }
+  .ad-theme-paper .ad-item-title {
+    font-family: 'Playfair Display', 'Noto Serif SC', serif; font-size: 13.5px; font-weight: 700;
+    color: var(--ad-ink-strong); line-height: 1.35; margin-bottom: 4px;
+  }
+  .ad-theme-paper .ad-item-title::before {
+    content: '◆ '; font-size: 9px; color: var(--ad-accent); vertical-align: 1px;
+  }
+  .ad-theme-paper .ad-item-place { font-weight: 700; color: var(--ad-ink-strong); }
+  .ad-theme-paper .ad-item-title .menu { font-weight: normal; color: var(--ad-ink); font-size: 12px; }
+  .ad-theme-paper .ad-item-reaction {
+    font-size: 11px; line-height: 1.65; color: var(--ad-ink); text-align: justify; margin-top: 3px;
+  }
+  .ad-theme-paper .ad-item-sub-wire {
+    margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--ad-line);
+    font-size: 10px; color: var(--ad-ink-dim); line-height: 1.55; font-style: italic;
+    font-family: 'Playfair Display', 'Noto Serif SC', serif;
+  }
   .ad-theme-paper .ad-colophon {
     display: block; border-top: 3px double var(--ad-line-strong); padding: 7px 14px; font-size: 8.5px;
     letter-spacing: 1px; color: var(--ad-ink-dim); text-align: center;
@@ -568,7 +631,7 @@
     color: var(--ad-ink-dim); padding: 0 0 16px 0; display: block; margin: 0 auto; width: 16px; }
   .ad-rail-ticker li:first-child { color: var(--ad-accent-bright); }
 
-  #ad-panel { position: fixed; right: -420px; top: 4vh; bottom: 4vh; width: 380px; z-index: 99995;
+  #ad-panel { position: fixed; right: -430px; top: 4vh; bottom: 4vh; width: 390px; z-index: 99995;
     background: var(--ad-bg); border: var(--ad-panel-border); border-right: none;
     border-radius: var(--ad-radius) 0 0 var(--ad-radius); box-shadow: var(--ad-shadow);
     display: flex; flex-direction: column; font-family: var(--ad-font); color: var(--ad-ink);
@@ -576,38 +639,43 @@
   #ad-panel.open { right: 0; }
   /* 报头基础布局 */
   .ad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-    padding: 7px 12px; border-bottom: 1px solid var(--ad-line-strong); flex: none; }
+    padding: 7px 12px; border-bottom: 1px solid var(--ad-line-strong); flex: none; position: relative; }
   .ad-head-ears { display: none; }
-  .ad-head-main { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; }
+  .ad-head-main { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; padding-right: 65px; }
   .ad-head-title { font-size: 11px; font-weight: bold; letter-spacing: 1px; color: var(--ad-ink-strong); }
   .ad-head-sub { display: none; }
   .ad-head-info { font-size: 10.5px; letter-spacing: 1px; color: var(--ad-ink-dim); white-space: nowrap; overflow: hidden; }
   .ad-head-info .stage { color: var(--ad-accent); }
-  .ad-head-btns { display: flex; gap: 5px; flex: none; }
+  .ad-head-btns { position: absolute; right: 10px; top: 6px; display: flex; gap: 4px; z-index: 10; }
   .ad-head-btns button { background: none; color: var(--ad-ink-dim); border: none; cursor: pointer;
     font-family: inherit; font-size: 12px; padding: 2px 4px; line-height: 1; transition: color .2s; }
   .ad-head-btns button:hover { color: var(--ad-accent); }
-  /* 当前态势行 */
-  .ad-nowline { flex: none; padding: 5px 12px; font-size: 10.5px; letter-spacing: 1px;
-    color: var(--ad-accent-dim); border-bottom: 1px solid var(--ad-line);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ad-nowline::before { content: '▶ '; }
-  /* 情报流主体：无边框纯排版条目，整体纵向滚动 */
+  /* 当前态势行/头条 */
+  .ad-nowline { flex: none; padding: 7px 12px; font-size: 11px; letter-spacing: 1px;
+    color: var(--ad-ink); border-bottom: 1px solid var(--ad-line);
+    background: var(--ad-hit); line-height: 1.5; position: relative; }
+  .ad-lead-stamp { display: none; }
+  .ad-lead-eyebrow { font-size: 9.5px; color: var(--ad-accent); font-weight: bold; margin-bottom: 2px; }
+  .ad-lead-title { font-size: 12px; font-weight: bold; color: var(--ad-ink-strong); margin-bottom: 2px; }
+  .ad-lead-body { font-size: 10.5px; color: var(--ad-ink-dim); line-height: 1.5; }
+  /* 情报流主体：整体纵向滚动 */
   .ad-wire { flex: 1; overflow-y: auto; padding: 2px 0 10px; }
   .ad-wire::-webkit-scrollbar { width: 5px; }
   .ad-wire::-webkit-scrollbar-thumb { background: var(--ad-scroll); border-radius: var(--ad-radius-sm); }
-  .ad-item { padding: 6px 12px 7px; }
+  .ad-item { padding: 7px 12px 8px; }
   .ad-item + .ad-item { border-top: 1px solid var(--ad-line); }
   .ad-item.hit { background: var(--ad-hit); }
-  .ad-item-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
-  .ad-item-place { font-size: 12.5px; color: var(--ad-ink-strong); letter-spacing: 1px; font-weight: bold; }
-  .ad-item-place::before { content: '● '; font-size: 8px; color: var(--ad-accent-dim); vertical-align: 2px; }
-  .ad-item-alert { font-size: 9px; letter-spacing: 2px; color: var(--ad-ink-faint); }
-  .ad-item-alert.hot { color: var(--ad-accent); }
+  .ad-item-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+  .ad-item-kicker { font-size: 9.5px; color: var(--ad-ink-dim); letter-spacing: 0.5px; }
+  .ad-item-alert { font-size: 9px; letter-spacing: 1px; color: var(--ad-ink-faint); padding: 1px 4px; }
+  .ad-item-alert.hot { color: var(--ad-accent); font-weight: bold; }
   .ad-item-alert.safe { color: var(--ad-safe); }
-  .ad-item-sub { font-size: 10.5px; color: var(--ad-ink-dim); margin-bottom: 2px; line-height: 1.5; }
-  .ad-item-sub .menu { color: var(--ad-ink); }
-  .ad-item-reaction { font-size: 10px; line-height: 1.55; color: var(--ad-ink-faint); }
+  .ad-item-title { font-size: 12px; color: var(--ad-ink-strong); margin-bottom: 2px; font-weight: bold; }
+  .ad-item-title::before { content: '● '; font-size: 8px; color: var(--ad-accent-dim); vertical-align: 1px; }
+  .ad-item-place { color: var(--ad-ink-strong); }
+  .ad-item-title .menu { color: var(--ad-ink-dim); font-size: 11px; font-weight: normal; }
+  .ad-item-reaction { font-size: 10.5px; line-height: 1.5; color: var(--ad-ink-dim); }
+  .ad-item-sub-wire { margin-top: 4px; padding-left: 6px; border-left: 2px solid var(--ad-line); font-size: 10px; color: var(--ad-ink-faint); }
   .ad-empty { padding: 14px 16px; font-size: 10.5px; color: var(--ad-ink-faint); letter-spacing: 1px; }
   .ad-colophon { display: none; }
 
@@ -690,24 +758,24 @@
         <div class="ad-head-ears">
           <span>VOL. IV — NO. 138</span>
           <span class="ear-motto">"Truth in the Shadows"</span>
-          <span>PRICE: 2 PENCE</span>
+          <span>PRICE: 2 PENCE · SYDNEY</span>
         </div>
         <div class="ad-head-main">
-          <span class="ad-head-info"><span id="ad-mast-date-slate">—</span> · <span class="stage" id="ad-mast-stage-slate">—</span></span>
-          <span class="ad-head-title">悉尼星期增刊 · GAZETTE</span>
-          <span class="ad-head-btns">
-            <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
-            <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
-            <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
-          </span>
+          <span class="ad-head-info"><span id="ad-mast-date-slate">1925年 · 6月13日</span> · <span class="stage" id="ad-mast-stage-slate">潜伏期</span></span>
+          <div class="ad-head-title">悉尼星期增刊 · GAZETTE</div>
+        </div>
+        <div class="ad-head-btns">
+          <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
+          <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
+          <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
         </div>
         <div class="ad-head-sub">
-          <span id="ad-mast-date">—</span>
-          <span class="stage" id="ad-mast-stage">—</span>
+          <span id="ad-mast-date">1925年 · 6月13日</span>
+          <span class="stage" id="ad-mast-stage">潜伏期</span>
         </div>
       </div>
       <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>
-      <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达</div>`);
+      <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达 ｜ SYDNEY 1925</div>`);
     UI_DOC.body.appendChild(panel);
 
     // 模态容器（设置/卡片/注入预览共用）
@@ -791,26 +859,59 @@
     const cards = getCards();
     const hit = State.lastLocationText ? matchCard(State.lastLocationText, cards) : null;
     let html = '';
+
     if (State.lastLocationText) {
-      const modeLabel = State.lastMode === 'card' ? '驻防注入'
-        : State.lastMode === 'safe' ? '安全区' : '通用兜底';
-      html += `<div class="ad-nowline" title="${esc(State.lastLocationText)}">当前 ${esc(shortLoc(State.lastLocationText))} · ${modeLabel}</div>`;
+      const locShort = shortLoc(State.lastLocationText);
+      let leadTitle = '';
+      let leadBody = '';
+
+      if (hit) {
+        const entries = parseMenu(hit.card.menu);
+        const safe = hit.card.safe || !entries.some(e => e.min || e.max);
+        const menuStr = compactMenu(hit.card.menu);
+        const alertLabel = safe ? '安全区' : `${hit.card.alert || '常规'}驻防中`;
+        leadTitle = `${hit.card.place} · ${alertLabel}`;
+        leadBody = `${hit.card.faction}驻守${menuStr ? '（' + menuStr + '）' : ''}。${hit.card.reaction || hit.card.verdict || '应邀客人以礼相待；亮械或闯入后场立即翻脸。'}`;
+      } else {
+        leadTitle = `${locShort || '当前地点'} · 通用兜底推演中`;
+        leadBody = '此地暂无固定驻防档案。若冲突升级，敌方将按剧情合理性与世界书图鉴进行态势演化。';
+      }
+
+      html += `<div class="ad-nowline ad-lead-box" title="${esc(State.lastLocationText)}">
+        <div class="ad-lead-stamp">PUBLIC RECORD</div>
+        <div class="ad-lead-eyebrow">📍 当前所在地态势简报 · CURRENT SITUATION</div>
+        <div class="ad-lead-title">${esc(leadTitle)}</div>
+        <div class="ad-lead-body">${esc(leadBody)}</div>
+      </div>`;
     }
+
     if (!cards.length) {
       html += `<div class="ad-empty">情报流为空——在 🗂 中导入卡片，或等待 S2 态势位自动产卡。</div>`;
     }
+
     for (const c of cards) {
       const entries = parseMenu(c.menu);
       const safe = c.safe || !entries.some(e => e.min || e.max);
       const menuStr = compactMenu(c.menu);
-      const alertCls = safe ? 'safe' : ((c.alert === '警戒' || c.alert === '严密') ? 'hot' : '');
-      html += `<div class="ad-item${hit && hit.card.place === c.place ? ' hit' : ''}">
-        <div class="ad-item-top"><span class="ad-item-place">${esc(c.place)}</span>
-          <span class="ad-item-alert ${alertCls}">${safe ? '安全区' : esc(c.alert || '常规')}</span></div>
-        <div class="ad-item-sub">${esc(c.faction)}${menuStr ? ` · <span class="menu">${esc(menuStr)}</span>` : ''}</div>
-        ${c.reaction ? `<div class="ad-item-reaction">${esc(c.reaction)}</div>` : ''}
+      const isHot = !safe && (c.alert === '警戒' || c.alert === '严密');
+      const alertCls = safe ? 'safe' : (isHot ? 'hot' : '');
+      const isHit = hit && hit.card.place === c.place;
+      const kickerSource = c.source === 'daily' ? '《真理报》社会版' : '《情报汇编》';
+      const statusLabel = safe ? '安全区' : (isHot ? (c.alert === '严密' ? '戒备扩充' : '火并升温') : esc(c.alert || '常规'));
+
+      html += `<div class="ad-item${isHit ? ' hit' : ''}">
+        <div class="ad-item-header">
+          <span class="ad-item-kicker">${esc(kickerSource)} · 派系：${esc(c.faction || '未知')}</span>
+          <span class="ad-item-alert ${alertCls}">${esc(statusLabel)}</span>
+        </div>
+        <div class="ad-item-title">
+          <span class="ad-item-place">${esc(c.place)}</span>${menuStr ? `：<span class="menu">${esc(menuStr)}</span>` : ''}
+        </div>
+        <div class="ad-item-reaction">${esc(c.reaction || '现场暂无特殊反应记录，按常识与戒备等级演出。')}</div>
+        ${c.verdict ? `<div class="ad-item-sub-wire">✦ 现场反应与判定：${esc(c.verdict)}</div>` : ''}
       </div>`;
     }
+
     els.wireBody.innerHTML = html;
   }
 
@@ -819,8 +920,13 @@
     if (!els.wireBody) return;
     if (waiting != null) {
       const now = els.wireBody.querySelector('.ad-nowline');
-      if (now) now.textContent = waiting;
-      else els.wireBody.innerHTML = `<div class="ad-nowline">${esc(waiting)}</div>`;
+      if (now) {
+        const titleEl = now.querySelector('.ad-lead-title');
+        if (titleEl) titleEl.textContent = waiting;
+        else now.textContent = waiting;
+      } else {
+        els.wireBody.innerHTML = `<div class="ad-nowline ad-lead-box"><div class="ad-lead-title">${esc(waiting)}</div></div>`;
+      }
       return;
     }
     renderWire(); renderTicker();
@@ -828,10 +934,11 @@
 
   // 报头：日期/阶段（"⏰ 1925年 · 6月13日 · 12:40 · 潜伏期" → 两段）
   function updatePanelMeta(stat) {
+    if (!stat) return;
     const raw = String(stat['日期和时间'] || '');
     const parts = raw.replace(EMOJI_RE, '').split('·').map(s => s.trim()).filter(Boolean);
-    const dateText = parts.length >= 2 ? `${parts[0]} · ${parts[1]}` : (parts[0] || '—');
-    const stageText = parts.length >= 3 ? (parts[parts.length - 1] || '—') : '—';
+    const dateText = parts.length >= 2 ? `${parts[0]} · ${parts[1]}` : (parts[0] || '1925年 · 6月13日');
+    const stageText = parts.length >= 3 ? (parts[parts.length - 1] || '潜伏期') : '潜伏期';
 
     if (els.mastDate) els.mastDate.textContent = dateText;
     if (els.mastStage) els.mastStage.textContent = stageText;

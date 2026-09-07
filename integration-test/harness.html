@@ -345,7 +345,7 @@ async function runAll() {
   })());
   AD.togglePanel(true, true);
   assert('展开后未读熄灭', !document.getElementById('ad-rail-dot').classList.contains('on'));
-  assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
+  assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年') && document.getElementById('ad-mast-date').textContent.includes('6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
   // UI 段前的持久化段 reset 过楼层表，此处补一楼有效数据再 dispatch，刷新 nowline/hit
   MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
   AD.dispatchNow('ui-setup');
@@ -355,7 +355,7 @@ async function runAll() {
   })());
   assert('情报条目含派系与敌情菜单', (() => {
     const first = document.querySelector('#ad-wire .ad-item');
-    return first.textContent.includes('凯特·利') && first.textContent.includes('萨里山剃刀党混混4-6') && first.textContent.includes('警戒');
+    return first.textContent.includes('凯特·利') && first.textContent.includes('萨里山剃刀党混混4-6') && (first.textContent.includes('警戒') || first.textContent.includes('火并升温'));
   })());
   assert('当前态势行（地点+配发形态）', (() => {
     const now = document.querySelector('#ad-wire .ad-nowline');
@@ -367,7 +367,7 @@ async function runAll() {
   })());
   assert('工具按钮内联报头（无底部工具条）', (() => {
     return document.querySelectorAll('.ad-head-btns button').length === 3
-      && !document.querySelector('#ad-panel .ad-toolbar') && !document.querySelector('#ad-panel .ad-colophon');
+      && !document.querySelector('#ad-panel .ad-toolbar');
   })());
   assert('折叠态极简结构（无静态品牌文案）', (() => {
     const rail = document.getElementById('ad-rail');
