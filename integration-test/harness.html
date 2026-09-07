@@ -355,6 +355,30 @@ async function runAll() {
       && document.querySelectorAll('#ad-ticker li').length === 0;
   })());
 
+  /* ——— jsonc 导入容错 ——— */
+  head('jsonc 导入容错');
+  const jsoncSample = `[
+  { "place": "绿顶酒馆",   // 行注释：应被剥除
+    "aliases": ["凯特的酒馆"],
+    "faction": "凯特·利（萨里山）",
+    "menu": "萨里山剃刀党混混*4~6", "alert": "警戒",
+    "note": "字符串里的 // https://example.com 不应被误伤",
+  },   /* 块注释 */
+  { "place": "总督套房", "faction": "无", "menu": "", "alert": "常规", },
+]`;
+  let parsedOk = false, urlKept = false;
+  try {
+    const parsed = JSON.parse(AD.stripJsonc(jsoncSample));
+    parsedOk = Array.isArray(parsed) && parsed.length === 2 && parsed[0].place === '绿顶酒馆';
+    urlKept = parsed[0].note.includes('// https://example.com');
+  } catch (e) { parsedOk = false; }
+  assert('jsonc（行/块注释 + 尾逗号）可解析', parsedOk);
+  assert('字符串字面量内的 // 不被误剥', urlKept);
+  assert('纯 JSON 原样可解析', (() => {
+    try { return JSON.parse(AD.stripJsonc(JSON.stringify(CARDS))).length === 3; }
+    catch (e) { return false; }
+  })());
+
   finish();
 }
 function finish() {

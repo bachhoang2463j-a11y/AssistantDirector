@@ -853,6 +853,30 @@
     }
   }
 
+  // jsonc → json：剥 // 行注释、/* */ 块注释与尾逗号（字符串字面量内的内容原样保留，
+  // 否则 "https://" 会被误伤）；让用户从 SPEC/报告里直接复制的 jsonc 也能导入
+  function stripJsonc(src) {
+    let out = '', i = 0;
+    const s = String(src == null ? '' : src);
+    while (i < s.length) {
+      const c = s[i];
+      if (c === '"') {                       // 字符串字面量：复制到闭合引号（处理 \" 转义）
+        out += c; i++;
+        while (i < s.length) {
+          const ch = s[i];
+          out += ch; i++;
+          if (ch === '\\') { out += s[i] || ''; i++; continue; }
+          if (ch === '"') break;
+        }
+        continue;
+      }
+      if (c === '/' && s[i + 1] === '/') { while (i < s.length && s[i] !== '\n') i++; continue; }
+      if (c === '/' && s[i + 1] === '*') { i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) i++; i += 2; continue; }
+      out += c; i++;
+    }
+    return out.replace(/,(\s*[\]}])/g, '$1');   // 尾逗号
+  }
+
   function importCards() {
     const input = el('textarea', { style: 'width:100%;height:180px;background:rgba(30,41,59,0.7);color:#e2e8f0;border:1px solid rgba(148,163,184,0.28);border-radius:6px;font-family:inherit;font-size:11px;padding:8px;' });
     openModal(`<h3>📥 导入卡片 JSON</h3>
@@ -864,7 +888,7 @@
     const [ok, cancel] = row.querySelectorAll('button');
     ok.addEventListener('click', () => {
       try {
-        const data = JSON.parse(input.value);
+        const data = JSON.parse(stripJsonc(input.value));
         const arr = Array.isArray(data) ? data : [data];
         const bad = arr.filter(c => !c || !c.place || !c.faction);
         if (bad.length) { toast(`格式错误：${bad.length} 条缺少 place/faction`); return; }
@@ -924,7 +948,7 @@
     // 引擎纯函数
     norm, matchCard, parseMenu, parseAttr, parseAmmoTotal, charList, computeScale,
     buildSituationText, buildSafeText, buildFallbackText,
-    shortLoc, pushTickerHead, renderTicker,
+    shortLoc, pushTickerHead, renderTicker, stripJsonc,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,
