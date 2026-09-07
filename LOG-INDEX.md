@@ -1,0 +1,8 @@
+# LOG-INDEX（施工日志目录）
+
+> 规范见 `Coding rule.md`。按 HASH 定位 LOG.md 对应段落，禁止全量读取 LOG.md。
+> 列：日期 ｜ 行为 ｜ LOG.md 行号 ｜ HASH
+
+| 日期 | 行为 | LOG.md 行号 | HASH |
+| :--- | :--- | :--- | :--- |
+| 2026-09-07 | SPEC V0.2 设计定稿重写（Combat_block 唯一通道/删修补人格/卡片池双轨/触发矩阵/单 JSON 悬浮窗结构） | 6 | `b516261` |
