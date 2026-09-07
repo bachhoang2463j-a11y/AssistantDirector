@@ -148,3 +148,19 @@
 **验证**：harness 72/72（新增：54 字长文 reaction 完整显示断言〔临时塞卡测试后还原〕、paper 主题类切换+衬线变量生效断言）。过程中修 harness 自身两处：断言数据误用 fixtures 卡（harness 卡组无此数据）、renderWire 未暴露测试钩子（TypeError 终止 runAll）。
 
 ---
+
+## 2026-09-08 ｜ feat：paper 皮肤报纸质感重调（业务提交 `8d17ea8`）
+
+**变更行为**：paper 主题按"阿卡姆广告报"参考重调；全部 border-radius 变量化（--ad-radius/--ad-radius-sm，paper 归零 slate 保留）；harness 皮肤断言扩展（直角 + inset 晕影）。72/72。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户反馈"不太像，去圆角/加投影模拟纸质感/多用棕色字体"，并给出阿卡姆广告报参考图；视觉子代理提取参数）：
+- **直角**：panel/rail/modal/toast/输入框/按钮/卡片/滚动条 thumb 全部 border-radius:0（slate 用变量保留原圆角，两主题互不影响）。
+- **纸质感投影**：右下双层柔影（4px 6px 18px + 1px 2px 6px，棕黑 rgba(30,18,8)）+ inset 边缘晕影两层（50px/120px 棕调）——纸张浮于桌面 + 四周做旧；纸纹横纹保留并调棕。
+- **棕字系**：标题深棕 #2c1e14 / 正文棕 #5e4b35 / 弱化 #8c7a65 / 强调暗红棕 #8b2635 / 安全区墨绿 #2f4f3a；边框深棕细框 1px #2b1b0e（替代浅棕粗框）。
+- **报纸语汇**：报头底线 3px double 双线、当前态势行底线 dashed 账目线、地点项目符号 ●→◆ 棕色菱形。
+
+**验证**：harness 72/72（皮肤断言扩展：paper 直角 + boxShadow 含 inset，slate 恢复圆角）。
+
+---
