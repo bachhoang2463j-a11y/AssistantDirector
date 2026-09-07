@@ -198,3 +198,19 @@
 - 此前工具按钮 `.ad-head-btns` 位于 `.ad-head-main` 内联行，容易挤占报纸主刊名导致文字折行或遮挡；移至报头最右上角 `.ad-head-ears` 右侧绝对定位后，主刊名 `悉尼星期增刊 · GAZETTE` 居中舒展，视觉与操作互不干扰。
 
 **验证**：`build.mjs` 打包成功（content 56529 字符），测试套件全部通过。
+
+## 2026-09-08 ｜ feat：S2 态势位即时产卡落地（业务提交 `41555e6`）
+
+**变更行为**：模块 5（LLM 客户端）与模块 7（态势位）从占位实现为完整链路；设置新增图鉴世界书配置；dispatchNow 接线即时产卡。harness 84/84（S2 新增 13 断言）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**实现要点**：
+1. **模块 5 LLM 客户端**：`callLLM`（OpenAI 兼容 /chat/completions 非流式，Bearer 认证，AbortSignal.timeout 90s）；`extractJson`（剥围栏 + 首个 [{ 配对提取，字符串感知不误伤）；`getBestiaryNames`（getWorldbook 世界书 API 读词条名做白名单；未配置时自动匹配名称含"图鉴"的世界书；读取失败降级为结构校验并缓存）；`readLatestFloorTail`（getChatMessages(-1) 正文尾 600 字，剥代码块/Status_block/Combat_block）。
+2. **模块 7 即时产卡**：`triggerInstant`（dispatchNow 尾部接线：主地点未命中 + 分兵点位未命中 → 一次调用产多卡；Instant.busy 防并发）；`collectOffscreenPlaces`（角色"内心"字段正则提取"不在场，前往X"分兵点位）；`validateCard`（结构校验 + menu 词条强制图鉴白名单 + alert 四档）；`generateInstantCards`（输入组装 → 生成 → 校验 → 失败重试 ≤1 → 过卡写池 source=instant → toast + scheduleDispatch 下一拍命中替换兜底注入；tried 表防同地点重复产卡，换聊天清零）。
+3. **设置**：新增"图鉴世界书"配置（留空自动匹配，保存时重置图鉴缓存）；端点未配置时完全不发起 LLM 调用（纯程序兜底）。
+4. **harness S2 断言组**（mock fetch/getChatMessages/getWorldbook）：A 成功链路（兜底→异步入池→下一拍命中含词条判定→恰 1 次调用→请求含地点图鉴名册→不重复）；B 非法 menu 白名单拒绝→重试一次→不入池保持兜底→不反复重试；C 分兵多卡（主地点命中仅对分兵点位产卡）；D 端点未配置零调用。测试数据不污染 localStorage（段末还原）。
+
+**验证**：84/84 全绿。注：A3 首跑失败系断言误用卡片名而非地点原文（匹配靠别名"后巷"），harness 修正后通过。
+
+---
