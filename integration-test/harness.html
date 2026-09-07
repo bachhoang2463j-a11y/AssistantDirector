@@ -388,13 +388,17 @@ async function runAll() {
     AD.setCards(CARDS); AD.renderWire();   // 还原
     return ok;
   })());
-  assert('皮肤系统（paper 主题：类切换 + 衬线变量生效）', (() => {
+  assert('皮肤系统（paper 主题：类切换 + 衬线变量 + 直角 + 多层纸影）', (() => {
     AD.applyTheme('paper');
     const panel = document.getElementById('ad-panel');
-    const font = getComputedStyle(panel).fontFamily;
-    const okPaper = panel.classList.contains('ad-theme-paper') && /Georgia|Serif/i.test(font);
+    const cs = getComputedStyle(panel);
+    const font = cs.fontFamily;
+    const okPaper = panel.classList.contains('ad-theme-paper') && /Georgia|Serif/i.test(font)
+      && cs.borderTopLeftRadius === '0px'
+      && cs.boxShadow.includes('inset');
     AD.applyTheme('slate');
-    const okBack = !panel.classList.contains('ad-theme-paper');
+    const okBack = !panel.classList.contains('ad-theme-paper')
+      && getComputedStyle(panel).borderTopLeftRadius !== '0px';
     return okPaper && okBack;
   })());
 
