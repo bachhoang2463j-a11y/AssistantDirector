@@ -164,3 +164,21 @@
 **验证**：harness 72/72（皮肤断言扩展：paper 直角 + boxShadow 含 inset，slate 恢复圆角）。
 
 ---
+
+## 2026-09-08 ｜ feat：升级方案 A 阿卡姆大报皮肤与纵向长卷排版（业务提交 `fd5194a`）
+
+**变更行为**：重构报纸皮肤为 1920s 方案 A（阿卡姆晨报 · 经典时代大报版），采用纵向长卷连续滑动（Vertical Continuous Roll）；输出 4 大候选方案选型演示页面 `demo_newspaper_showcase.html` 并更新 `demo_story_director.html`；打包 `酒馆助手脚本-副导演.json`。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`demo_newspaper_showcase.html`、`demo_story_director.html`
+
+**决策原因**（用户反馈当前报纸皮肤不够像报纸，要求输出 demo 页面并在多方案中选择方案 A 纵向长卷排版）：
+- **1920s 时代大报视觉重构**：
+  - **报头（Masthead）**：双耳设计（期号/社训/定价）、牛津双实线（Oxford Rules 4px double）、衬线大刊名（Playfair Display/Noto Serif SC）与日期阶段副题栏。
+  - **态势头条（Lead Story Box）**：通栏头条驻防简报 + 红色 PUBLIC RECORD 橡胶印章 + 醒目左强调线。
+  - **情报流（News Column Articles）**：报纸分栏风格条目、报纸菱形符号（◆）、Kicker 来源元信息行、徽章状态标签、首字下沉社评与折角底注（Colophon）。
+  - **贴边折叠条（Rail）**：米纸书脊材质、红星手柄、红墨水呼吸脉冲点与竖排情报轮播走纸带。
+- **纵向长卷滑交互**：顶部报头与底注固定，内容区纵向平滑滚动，兼顾高拟真报纸质感与鼠标滚轮单手浏览的便捷性。
+
+**验证**：`build.mjs` 打包成功（content 51555 字符），`demo_newspaper_showcase.html` 交互全功能验证通过，双主题切换与兼容性完好。
+
+---
