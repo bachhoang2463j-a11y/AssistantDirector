@@ -117,3 +117,19 @@
 **验证**：harness 66/66（新增：jsonc 行/块注释+尾逗号可解析、字符串内 // 不误剥、纯 JSON 原样可解析）；fixtures 经 node JSON.parse 校验 6 卡字段完整。
 
 ---
+
+## 2026-09-08 ｜ feat：展开态重做为情报条目流 + 两个隐藏 bug 修复（业务提交 `dc3cb06`）
+
+**变更行为**：展开态面板结构重做（报头/主体/工具条/底注全部重构）；dispatchNow 补总开关检查；saveSettings 同步闭包变量；mock setFloorStat 修复空楼层表写入无效位置。harness 70/70。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户反馈"信息密度小/无效边框太多/没有最关键的公开情报"，视觉子代理实测装饰占纵向 30-35%、横向 15-20%，4 卡 60% 高度仅承载 ~60 字且零情报条目）：
+1. **展开态重做**：报头压成一行（日期·阶段 + 内联 ↻🗂⚙ 图标按钮）；主体改为无边框纯排版情报条目流——每卡一条 2~3 行（地点+戒备着色徽标 / 派系·敌情菜单区间 / 反应模式截断），当前地点条目 hit 高亮，顶部"当前 地点·配发形态"一行；删除：报头双线框/大标题/通栏英文、分隔标题、卡片盒（描边+圆角+金竖条）、胶囊徽章、底部工具条、colophon 底注。S1 数据源=卡片池，S4 换 surface 真情报流。
+2. **真 bug ①**：dispatchNow 不检查 SETTINGS.enabled（总开关关闭后手动重算仍注入）——此前 harness"总开关关闭不注入"为假通过（mock setFloorStat 在 floorCount=0 时写 message[0] 而 message_id:-1 解析为 -1，stat 读取恒 null）。
+3. **真 bug ②**：saveSettings 只写 localStorage 不同步闭包 SETTINGS——修 mock 暴露：外部改设置后 dispatchNow 读到的还是旧值。两处修复 + mock 修复后该断言转为真测试。
+4. compactMenu 不再截断词条名（保信息密度，行内自然换行）；State 增 lastMode（nowline 数据源，持久化）。
+
+**验证**：harness 70/70（新增：情报条目流渲染/含派系与敌情菜单全名/当前态势行/hit 高亮/工具内联无底部条）；IAB 截图管道持续不可用，视觉由用户真机确认。
+
+---
