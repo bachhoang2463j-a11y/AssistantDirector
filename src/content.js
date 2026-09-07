@@ -70,6 +70,7 @@
       enabled: true,            // 总开关：关闭后不注入、不监听（UI 保留）
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
+      bestiaryBook: '',         // 图鉴世界书名（留空自动匹配名称含"图鉴"的世界书）
     };
   }
   function loadSettings() {
@@ -82,6 +83,7 @@
         enabled: saved.enabled !== false,
         shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
         situation: Object.assign(def.situation, saved.situation || {}),
+        bestiaryBook: typeof saved.bestiaryBook === 'string' ? saved.bestiaryBook : '',
       };
     } catch (e) { return defaultSettings(); }
   }
@@ -230,6 +232,7 @@
     State.lastLocationText = '';
     State.ammoBaseline = 0;
     State.tickerHeads = [];
+    Instant.tried = Object.create(null);   // 换聊天：分兵/未命中产卡记录清零
     if (!SETTINGS.enabled) return;
     scheduleDispatch('chat-changed');
   }
@@ -417,12 +420,104 @@
     persistRuntimeState();
     updatePanelStatus(null, { mode, locationText, card: hit ? hit.card : null, text });
     updatePanelMeta(stat);
+    if (IS_LIVE) triggerInstant(mode === 'fallback', locationText, stat);   // S2：未命中/分兵 → 异步产卡
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 5. LLM 客户端 —— S2 落地（双端点 fetch /chat/completions）
+  // 5. LLM 客户端（OpenAI 兼容 /chat/completions 非流式）
   // ═════════════════════════════════════════════════════════════════════
-  // （占位：S0/S1 不发起任何 LLM 调用）
+
+  async function callLLM(cfg, messages, { timeoutMs = 90000 } = {}) {
+    if (!cfg || !cfg.baseUrl || !cfg.model) throw new Error('端点未配置（Base URL / Model 必填）');
+    const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}
+        ),
+        body: JSON.stringify({
+          model: cfg.model, messages,
+          temperature: cfg.temperature != null ? cfg.temperature : 0.4,
+          max_tokens: cfg.maxTokens || 2000,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) { throw new Error(`请求失败：${e.message || e}`); }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const content = data && data.choices && data.choices[0] && data.choices[0].message
+      && data.choices[0].message.content;
+    if (!content) throw new Error('响应缺少 choices[0].message.content');
+    return content;
+  }
+
+  // 从模型输出提取 JSON：剥 ``` 围栏，取首个 [ 或 { 到配对闭合（字符串感知）
+  function extractJson(text) {
+    let s = String(text || '').trim()
+      .replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    const start = s.search(/[[{]/);
+    if (start < 0) throw new Error('输出中未找到 JSON');
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < s.length; i++) {
+      const c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === '{' || c === '[') depth++;
+      else if (c === '}' || c === ']') {
+        depth--;
+        if (depth === 0) return JSON.parse(s.slice(start, i + 1));
+      }
+    }
+    throw new Error('JSON 未闭合');
+  }
+
+  // —— 世界书图鉴白名单（态势位输入 + menu 校验源）—————————————
+
+  let bestiaryCache = null;   // { names: string[] | null }，null=不可用（降级为结构校验）
+  function resetBestiaryCache() { bestiaryCache = null; }
+  async function getBestiaryNames() {
+    if (bestiaryCache) return bestiaryCache.names;
+    let names = null;
+    try {
+      if (IS_LIVE && typeof getWorldbook === 'function') {
+        const bookName = SETTINGS.bestiaryBook ||
+          (typeof getWorldbookNames === 'function'
+            ? (getWorldbookNames().find(n => n.includes('图鉴')) || '') : '');
+        if (bookName) {
+          const entries = await getWorldbook(bookName);
+          names = (entries || []).map(e => e && e.name).filter(Boolean);
+          log(`图鉴白名单载入：${bookName}（${names.length} 词条）`);
+        } else {
+          logWarn('图鉴世界书未配置，且未找到名称含"图鉴"的世界书——menu 校验降级为结构校验');
+        }
+      }
+    } catch (e) { logWarn('图鉴读取失败，menu 白名单校验降级为结构校验', e); }
+    bestiaryCache = { names };
+    return names;
+  }
+
+  // 最新楼正文尾部（产卡语境输入；剥代码块/状态栏/Combat_block）
+  function readLatestFloorTail(maxChars = 600) {
+    try {
+      const msgs = getChatMessages(-1);
+      const m = Array.isArray(msgs) ? msgs[0] : null;
+      if (!m || !m.message) return '';
+      const t = String(m.message)
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/<Status_block>[\s\S]*?<\/Status_block>/gi, '')
+        .replace(/<Combat_block>[\s\S]*?<\/Combat_block>/gi, '');
+      return t.slice(-maxChars);
+    } catch (e) { return ''; }
+  }
 
   // ═════════════════════════════════════════════════════════════════════
   // 6. 战略层（暗线人格） —— S3 落地
@@ -430,9 +525,124 @@
   // （占位：触发矩阵 / 报告 schema 校验 / 提炼注入 ad_shadowline）
 
   // ═════════════════════════════════════════════════════════════════════
-  // 7. 态势位（即时产卡） —— S2 落地
+  // 7. 态势位（即时产卡）：未命中触发 → 输入组装 → 生成 → 白名单校验 → 回落
   // ═════════════════════════════════════════════════════════════════════
-  // （占位：未命中触发 → 输入组装 → 生成 → 白名单校验 → 回落）
+
+  const Instant = { busy: false, tried: Object.create(null) };  // tried: norm(地点)→true 防重复产卡
+
+  // 分兵点位：角色"内心"含"不在场，前往X"类描述时提取 X（一次 LLM 调用产多卡）
+  function collectOffscreenPlaces(stat) {
+    const out = [];
+    for (const c of charList(stat)) {
+      const m = String(c['内心'] || '')
+        .match(/不在场[，,]?\s*(?:正在|已经?)?(?:前往|赶往|在)([^，。,.、;；!?！？]{2,20})/);
+      if (m) out.push(m[1].trim());
+    }
+    return [...new Set(out)];
+  }
+
+  // 卡片硬校验：结构 + menu 白名单；返回 null=通过，字符串=拒绝原因
+  function validateCard(card, bestiaryNames) {
+    if (!card || typeof card !== 'object') return '非对象';
+    if (!card.place || typeof card.place !== 'string') return '缺少 place';
+    if (!card.faction || typeof card.faction !== 'string') return '缺少 faction';
+    if (card.alert && !ALERT_LEVELS.includes(card.alert)) return `alert 非法（${card.alert}）`;
+    if (card.aliases != null && !Array.isArray(card.aliases)) return 'aliases 非数组';
+    if (card.menu) {
+      const entries = parseMenu(card.menu);
+      if (bestiaryNames && bestiaryNames.length) {
+        const bad = entries.map(e => e.name).filter(n => !bestiaryNames.includes(n));
+        if (bad.length) return `menu 词条不在图鉴白名单：${bad.join('、')}`;
+      }
+    }
+    return null;
+  }
+
+  function buildInstantMessages(places, context) {
+    const sys = [
+      '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为每个给定地点生成一张驻防态势卡。',
+      '规则：',
+      '1. menu 是可选敌方菜单，词条名只能从【图鉴词条名单】中原文选用，格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
+      '2. alert 只能取：松懈/常规/警戒/严密。',
+      '3. faction 用派系名（优先从【名册】选用；民用/中立场所可标注"无（中立场所）"类描述）。',
+      '4. reaction 一句话：何类行为被容忍、何类触发敌意。verdict 一句话判定标准：何种行为构成对戒备的挑衅/侵入/暴露。',
+      '5. 只输出 JSON 数组，禁止任何解释文字。每项结构：',
+      '{"place":"地点名","aliases":["别名"],"faction":"派系","menu":"词条*min~max/…","alert":"常规","reaction":"…","verdict":"…"}',
+    ].join('\n');
+    const user = [
+      `【待登记地点】\n${places.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
+      `【剧情上下文（最近正文节选）】\n${context.floorTail || '（无）'}`,
+      `【图鉴词条名单】\n${(context.bestiary || []).join(' / ') || '（无——menu 一律留空）'}`,
+      `【名册（已知派系）】\n${(context.roster || []).join(' / ') || '（无）'}`,
+    ].join('\n\n');
+    return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+  }
+
+  async function generateInstantCards(places, stat) {
+    const cfg = SETTINGS.situation;
+    if (!cfg.baseUrl || !cfg.model) { log('态势位端点未配置，跳过即时产卡'); return; }
+    const bestiary = await getBestiaryNames();
+    const roster = [...new Set(getCards().map(c => c.faction).filter(Boolean))];
+    const floorTail = readLatestFloorTail(600);
+    for (const p of places) Instant.tried[norm(p)] = true;
+    let lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {          // 失败/全拒 → 重试 ≤1
+      try {
+        const raw = await callLLM(cfg, buildInstantMessages(places, { bestiary, roster, floorTail }));
+        const arr = extractJson(raw);
+        const list = Array.isArray(arr) ? arr : [arr];
+        const okCards = [];
+        for (const c of list) {
+          const err = validateCard(c, bestiary);
+          if (err) { lastErr = `${(c && c.place) || '?'}：${err}`; logWarn('卡片校验拒绝', lastErr); continue; }
+          okCards.push({
+            place: String(c.place).trim(),
+            aliases: (c.aliases || []).map(String),
+            faction: String(c.faction).trim(),
+            menu: String(c.menu || ''),
+            alert: ALERT_LEVELS.includes(c.alert) ? c.alert : '常规',
+            reaction: String(c.reaction || ''),
+            verdict: String(c.verdict || ''),
+            source: 'instant',
+          });
+        }
+        if (!okCards.length) throw new Error(`全部卡片未过校验（${lastErr}）`);
+        const cards = getCards();
+        let added = 0;
+        for (const c of okCards) {
+          if (!cards.some(x => norm(x.place) === norm(c.place))) { cards.push(c); added++; }
+        }
+        if (added) {
+          setCards(cards); renderWire(); renderTicker();
+          toast(`新地点已登记：${okCards.map(c => c.place).join('、')}`);
+          log(`即时产卡成功（${added} 张，第 ${attempt} 次尝试）`);
+          scheduleDispatch('instant-card');   // 下一拍重新配发：当楼兜底 → 命中新卡
+        } else log('产卡结果均已存在于卡片池，跳过');
+        return;
+      } catch (e) {
+        lastErr = e.message || String(e);
+        logWarn(`即时产卡第 ${attempt} 次失败：${lastErr}`);
+      }
+    }
+    logWarn(`即时产卡最终失败（保持兜底注入）：${lastErr}`);
+  }
+
+  // dispatchNow 接线点：主地点未命中 + 分兵点位未命中 → 一次异步产卡（busy 防并发）
+  function triggerInstant(mainMissed, mainPlace, stat) {
+    if (Instant.busy) return;
+    const cards = getCards();
+    const targets = [];
+    if (mainMissed && mainPlace && !Instant.tried[norm(mainPlace)]) targets.push(mainPlace);
+    for (const p of collectOffscreenPlaces(stat)) {
+      const n = norm(p);
+      if (!Instant.tried[n] && !matchCard(p, cards)) targets.push(p);
+    }
+    if (!targets.length) return;
+    Instant.busy = true;
+    generateInstantCards(targets, stat)
+      .catch(e => logWarn('generateInstantCards 异常', e))
+      .finally(() => { Instant.busy = false; });
+  }
 
   // ═════════════════════════════════════════════════════════════════════
   // 8. 公开层 UI（贴边折叠栏，自 demo_story_director.html 移植）
@@ -972,7 +1182,8 @@
       </select></div>
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
-      <div class="dim" style="font-size:10px;color:#64748b;margin:4px 0 2px">S0 仅持久化配置；暗线位于 S3、态势位于 S2 接入调用。</div>
+      <div class="ad-form-row"><label>图鉴世界书</label><input type="text" data-k="bestiaryBook" value="${esc(s.bestiaryBook || '')}" placeholder="留空自动匹配名称含「图鉴」的世界书"></div>
+      <div class="dim" style="font-size:10px;color:#64748b;margin:4px 0 2px">态势位（S2）随地点即时产卡；暗线位（S3）天级推演。</div>
       ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
       ${ep('situation', '态势位（快速小模型 · 随地点）')}
       <div class="ad-btnrow">
@@ -990,6 +1201,7 @@
           : input.type === 'number' ? Number(input.value) : input.value.trim();
       });
       saveSettings(SETTINGS);
+      resetBestiaryCache();   // 图鉴世界书配置可能已变
       if (!SETTINGS.enabled) uninjectAll();
       else scheduleDispatch('settings-saved');
       const theme = els.modalBox.querySelector('#ad-set-theme').value;
@@ -1184,6 +1396,9 @@
     norm, matchCard, parseMenu, parseAttr, parseAmmoTotal, charList, computeScale,
     buildSituationText, buildSafeText, buildFallbackText,
     shortLoc, pushTickerHead, renderTicker, renderWire, stripJsonc, applyTheme,
+    // S2：LLM 客户端与态势位
+    callLLM, extractJson, getBestiaryNames, resetBestiaryCache, readLatestFloorTail,
+    collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,

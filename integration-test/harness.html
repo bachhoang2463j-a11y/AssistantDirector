@@ -402,6 +402,92 @@ async function runAll() {
     return okPaper && okBack;
   })());
 
+  /* ——— S2 态势位即时产卡（mock LLM 环境）——— */
+  head('S2 态势位即时产卡');
+  {
+    // mock：fetch（可控响应+调用计数）/ getChatMessages / 世界书图鉴
+    let fetchCalls = 0, lastPrompt = '', responder = null;
+    window.fetch = async (url, opts) => {
+      fetchCalls++;
+      const body = JSON.parse(opts.body);
+      lastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
+      const content = responder ? responder(body) : '[]';
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+    };
+    window.getChatMessages = () => [{ message_id: 0, name: 'AI', role: 'assistant', is_hidden: false,
+      message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。', data: {}, extra: {} }];
+    window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0'];
+    window.getWorldbook = async () => [
+      { name: '萨里山剃刀党混混' }, { name: '达令港码头武装打手' }, { name: '悉尼常规巡警' }];
+    const s2 = AD.loadSettings();
+    s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
+    AD.saveSettings(s2);
+    AD.resetBestiaryCache();
+
+    // A. 成功产卡：闯入未登记地点 → 兜底注入 → 异步产卡入池 → 下一拍命中
+    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+    AD.Instant.tried = Object.create(null);
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_ALLEY } });
+    responder = () => JSON.stringify([{ place: '苦力棚屋', aliases: ['后巷'], faction: '悉尼街头苦力',
+      menu: '达令港码头武装打手*2~4', alert: '常规', reaction: '白天生人靠近即被驱赶。',
+      verdict: '强行闯入或翻找木箱才构成冲突。' }]);
+    const callsA = fetchCalls;
+    AD.dispatchNow('s2a');
+    const lastA = () => MOCK.injections.calls[MOCK.injections.calls.length - 1];
+    assert('A1 未命中楼先落通用兜底注入', lastA() && lastA().content.includes('此地无驻防情报'));
+    const gotCard = await waitFor(() => AD.getCards().some(c => c.place === '苦力棚屋'), 8000);
+    assert('A2 闯入未登记地点 → 异步产卡入池（source=instant）', gotCard && AD.getCards().find(c => c.place === '苦力棚屋').source === 'instant');
+    AD.dispatchNow('s2a2');
+    assert('A3 下一拍配发命中新卡（驻防注入含词条与判定）', lastA().content.includes('苦力的棚屋前')
+      && lastA().content.includes('达令港码头武装打手') && lastA().content.includes('强行闯入或翻找木箱'));
+    assert('A4 成功产卡恰好调用 1 次 LLM', fetchCalls === callsA + 1, `+${fetchCalls - callsA}`);
+    assert('A5 产卡请求含地点/图鉴名单/名册', lastPrompt.includes('苦力') && lastPrompt.includes('达令港码头武装打手') && lastPrompt.includes('凯特·利'));
+    AD.dispatchNow('s2a3');
+    await waitFor(() => true, 1500);
+    assert('A6 已登记地点不重复产卡（tried + 卡池命中）', fetchCalls === callsA + 1);
+
+    // B. 非法 menu：拒绝 → 重试一次 → 仍拒 → 回落保持兜底
+    responder = () => JSON.stringify([{ place: '黑仓库', faction: '神秘组织',
+      menu: '不存在的敌人*3', alert: '常规' }]);
+    MOCK.setFloorStat(STAT('📍 悉尼 · 达令港 · 黑仓库区 · 码头北端', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
+    const callsB = fetchCalls;
+    AD.dispatchNow('s2b');
+    await waitFor(() => fetchCalls >= callsB + 2, 8000);
+    assert('B1 非法 menu 被白名单拒绝并重试一次后放弃', fetchCalls === callsB + 2, `+${fetchCalls - callsB}`);
+    assert('B2 被拒卡片不入池（保持兜底注入）', !AD.getCards().some(c => c.place === '黑仓库')
+      && MOCK.injections.calls[MOCK.injections.calls.length - 1].content.includes('黑仓库区'));
+    await waitFor(() => true, 1200);
+    assert('B3 失败地点不反复重试（tried 生效）', fetchCalls === callsB + 2);
+
+    // C. 分兵多卡：主地点命中，角色"不在场，前往X" → 一次产卡
+    responder = () => JSON.stringify([{ place: '禧市茶楼', faction: '禧市洪门堂口',
+      menu: '悉尼常规巡警*1~2', alert: '松懈', reaction: '说书人在场时以礼待客。', verdict: '只有挑衅堂口才翻脸。' }]);
+    const STAT_SPLIT = STAT('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅', [
+      CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
+      { '角色': { '名字': ' 🎭林有声', '属性': '[❤️HP:110/110]', '内心': '不在场，前往禧市茶楼找蒂莉的放风人' } },
+    ]);
+    MOCK.setFloorStat(STAT_SPLIT);
+    const callsC = fetchCalls;
+    AD.dispatchNow('s2c');
+    const gotSplit = await waitFor(() => AD.getCards().some(c => c.place === '禧市茶楼'), 8000);
+    assert('C1 分兵点位（内心"前往X"）一次产卡入池', gotSplit && fetchCalls === callsC + 1);
+    assert('C2 主地点命中时仅对分兵点位发起产卡', lastPrompt.includes('禧市茶楼') && !lastPrompt.includes('总督套房'));
+
+    // D. 端点未配置 → 不调 LLM
+    const s2d = AD.loadSettings();
+    s2d.situation.baseUrl = ''; AD.saveSettings(s2d);
+    AD.Instant.tried = Object.create(null);
+    MOCK.setFloorStat(STAT('📍 悉尼 · 未知角落 · 全新地点Z', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
+    const callsD = fetchCalls;
+    AD.dispatchNow('s2d');
+    await waitFor(() => true, 1500);
+    assert('D1 端点未配置 → 不发起 LLM 调用（纯兜底）', fetchCalls === callsD);
+    // 清理：还原设置（不留 mock 端点污染 localStorage 与下轮回归）
+    const s2z = AD.loadSettings();
+    s2z.situation = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 1000 };
+    AD.saveSettings(s2z);
+  }
+
   /* ——— jsonc 导入容错 ——— */
   head('jsonc 导入容错');
   const jsoncSample = `[
