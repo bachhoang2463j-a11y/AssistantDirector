@@ -3,215 +3,214 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>副导演 · 世界情报栏 — 视觉 Demo</title>
+<title>副导演 · 世界情报栏 — 1920s 阿卡姆大报 Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Noto+Serif+SC:wght@400;600;700;900&family=Playfair+Display:ital,wght@0,600;0,800;0,900;1,400&display=swap" rel="stylesheet">
+
 <style>
   /* ============ 基础 ============ */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    font-family: 'Courier New', 'Nimbus Mono PS', 'SimSun', monospace;
-    background: #020617;
+    font-family: 'Noto Serif SC', 'Playfair Display', Georgia, serif;
+    background: #090d16;
     color: #cbd5e1;
     overflow-x: hidden;
   }
   :root {
-    --ink: #cbd5e1;          /* 主文字：MMS 浅灰蓝 */
-    --ink-dim: #94a3b8;      /* 次文字 */
-    --ink-faint: #64748b;    /* 弱文字 */
-    --paper: #0f172a;        /* 面板底：MMS slate-900 */
-    --paper-deep: #020617;   /* 页面底 */
-    --paper-card: #1e293b;   /* 卡片底：MMS slate-800 */
-    --gold: #fbbf24;         /* 琥珀金强调：MMS 同款 */
-    --gold-dim: rgba(251, 191, 36, 0.55);
-    --gold-faint: rgba(251, 191, 36, 0.14);
-    --rule: rgba(148, 163, 184, 0.28);   /* 报纸细线 */
-    --rule-double: #94a3b8;  /* 双线框 */
+    --news-paper: #f4eedb;
+    --news-paper-deep: #e8debe;
+    --news-ink: #2b241e;
+    --news-ink-strong: #1a1614;
+    --news-ink-dim: #5e5145;
+    --news-ink-faint: #8a7b6c;
+    --news-accent: #8b1e1e;
+    --news-rule: #3a3028;
+    --news-rule-light: #c4b59d;
+    --news-scroll: #b8a890;
     --red: #ef4444;
   }
 
   /* ============ 模拟酒馆聊天背景（demo 语境） ============ */
-  .fake-chat { max-width: 720px; margin: 0 auto; padding: 28px 90px 60px 24px; }
+  .fake-chat { max-width: 760px; margin: 0 auto; padding: 28px 90px 60px 24px; }
   .fake-floor {
     background: rgba(15, 23, 42, 0.72);
     border: 1px solid rgba(148, 163, 184, 0.15);
     border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 18px;
-    font-size: 13px;
-    line-height: 1.9;
+    padding: 18px 22px;
+    margin-bottom: 20px;
+    font-size: 13.5px;
+    line-height: 1.95;
+    color: #cbd5e1;
   }
   .fake-floor .floor-tag {
-    font-size: 10px; letter-spacing: 2px; color: var(--ink-faint);
-    border-bottom: 1px solid var(--rule); padding-bottom: 6px; margin-bottom: 10px;
+    font-size: 10.5px; letter-spacing: 2px; color: #64748b; font-family: monospace;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15); padding-bottom: 8px; margin-bottom: 12px;
     display: flex; justify-content: space-between;
   }
-  .fake-floor p { margin-bottom: 8px; }
-  .fake-floor .say { color: #e2e8f0; }
+  .fake-floor p { margin-bottom: 10px; }
+  .fake-floor .say { color: #f1f5f9; font-weight: 500; }
   .fake-floor .narr { color: #94a3b8; }
 
   /* ============ 贴边折叠条（折叠态） ============ */
   #sd-rail {
-    position: fixed; right: 0; top: 12%; height: 62vh; width: 40px; z-index: 60;
-    background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
-    border: 1px solid var(--rule); border-right: none;
-    border-radius: 8px 0 0 8px;
+    position: fixed; right: 0; top: 22%; height: 58vh; width: 36px; z-index: 60;
+    background: repeating-linear-gradient(0deg, #f4eedb, #f4eedb 2px, #f1e9d2 2px, #f1e9d2 4px);
+    border: 2px solid #2b241e; border-right: none;
+    border-radius: 4px 0 0 4px;
+    box-shadow: -4px 6px 18px rgba(30,20,10,0.35), inset 0 0 20px rgba(100,70,30,0.1);
+    color: #1a1614;
     display: flex; flex-direction: column; align-items: center;
-    cursor: pointer; user-select: none;
-    transition: width .25s ease, box-shadow .3s ease;
+    cursor: pointer; user-select: none; padding: 10px 0;
+    transition: transform .25s ease, box-shadow .3s ease;
   }
-  #sd-rail:hover { box-shadow: -6px 0 24px rgba(251,191,36,0.13); }
-  #sd-rail:hover .rail-label { color: var(--gold); }
-  .rail-label {
-    writing-mode: vertical-rl; letter-spacing: 6px; font-size: 11px;
-    color: var(--ink-dim); padding-top: 14px; transition: color .25s;
+  #sd-rail:hover {
+    transform: translateX(-4px);
+    box-shadow: -8px 8px 24px rgba(30,20,10,0.45);
   }
-  .rail-label b { color: var(--gold); font-weight: normal; }
-  /* 未读脉冲点 */
+  .rail-star { font-size: 14px; color: #8b1e1e; line-height: 1; margin-bottom: 6px; }
   #rail-dot {
-    width: 7px; height: 7px; border-radius: 50%; background: var(--gold);
-    margin-top: 10px; opacity: 0; transition: opacity .3s;
-    box-shadow: 0 0 8px var(--gold-dim);
-    animation: dot-pulse 1.6s ease-in-out infinite;
+    width: 7px; height: 7px; border-radius: 50%; background: #8b1e1e;
+    margin-bottom: 6px; opacity: 0; transition: opacity .3s;
+    box-shadow: 0 0 6px rgba(139,30,30,0.6);
+    animation: dot-pulse 1.4s ease-in-out infinite;
   }
   #rail-dot.on { opacity: 1; }
-  @keyframes dot-pulse { 0%,100% { transform: scale(1); box-shadow: 0 0 4px var(--gold-dim);} 50% { transform: scale(1.5); box-shadow: 0 0 12px var(--gold-dim);} }
-  /* 电报纸带窗：竖排滚动标题 */
+  @keyframes dot-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+
+  .rail-label {
+    writing-mode: vertical-rl; font-family: 'Playfair Display', 'Noto Serif SC', serif;
+    font-weight: 700; font-size: 11px; letter-spacing: 4px; color: #2b241e; padding-top: 4px;
+  }
   .rail-ticker {
-    flex: 1; overflow: hidden; margin: 12px 0; width: 100%;
-    mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
-    -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
-    position: relative;
+    flex: 1; overflow: hidden; margin: 10px 0; width: 100%; position: relative;
+    mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent);
   }
   .rail-ticker ul {
-    list-style: none; position: absolute; left: 0; right: 0;
-    animation: tick 14s linear infinite;
+    list-style: none; position: absolute; left: 0; right: 0; margin: 0; padding: 0;
+    animation: tick 15s linear infinite;
   }
   @keyframes tick { from { transform: translateY(0); } to { transform: translateY(-50%); } }
   .rail-ticker li {
-    writing-mode: vertical-rl; letter-spacing: 3px; font-size: 9px;
-    color: var(--ink-faint); padding: 0 0 18px 0; height: auto;
-    display: block; margin: 0 auto; width: 20px;
+    writing-mode: vertical-rl; font-size: 9.5px; letter-spacing: 2px;
+    color: #5e5145; padding: 0 0 16px 0; margin: 0 auto; width: 18px;
   }
-  .rail-ticker li::before { content: '✦ '; color: var(--gold-dim); }
+  .rail-ticker li::before { content: '❧ '; color: #8b1e1e; }
   .rail-fold-btn {
-    writing-mode: vertical-rl; font-size: 10px; letter-spacing: 4px;
-    color: var(--ink-faint); padding: 8px 0 12px;
+    writing-mode: vertical-rl; font-size: 9px; letter-spacing: 3px;
+    color: #8a7b6c; font-family: monospace;
   }
 
   /* ============ 展开面板 ============ */
   #sd-panel {
-    position: fixed; right: -400px; top: 4vh; bottom: 4vh; width: 372px; z-index: 70;
+    position: fixed; right: -460px; top: 4vh; bottom: 4vh; width: 420px; z-index: 70;
     background:
-      linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98));
-    border: 1px solid var(--rule);
-    border-radius: 10px 0 0 10px;
+      radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, rgba(220,205,175,0.3) 100%),
+      repeating-linear-gradient(0deg, #f4eedb, #f4eedb 2px, #f0e6ce 2px, #f0e6ce 4px);
+    border: 3px solid #1a1614; border-right: none;
+    box-shadow: -14px 0 45px rgba(20,12,6,0.4), inset 0 0 80px rgba(120,90,40,0.12);
+    color: var(--news-ink);
     display: flex; flex-direction: column;
     transition: right .38s cubic-bezier(0.22, 1, 0.36, 1);
-    box-shadow: -18px 0 48px rgba(0,0,0,0.5);
   }
   #sd-panel.open { right: 0; }
 
   /* 报头 */
   .masthead {
-    padding: 14px 16px 10px;
-    border-bottom: 3px double var(--rule-double);
-    position: relative;
+    padding: 12px 18px 8px;
+    border-bottom: 4px double #1a1614;
+    background: rgba(244, 238, 219, 0.95);
+    flex: none;
   }
-  .masthead::after {
-    content: ''; position: absolute; left: 16px; right: 16px; bottom: 3px;
-    border-bottom: 1px solid var(--rule);
+  .mast-ears {
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid #1a1614; padding-bottom: 4px; margin-bottom: 6px;
+    font-family: 'Courier Prime', monospace; font-size: 8.5px; letter-spacing: 1px; color: #5e5145;
+    text-transform: uppercase;
   }
-  .mast-top {
-    display: flex; justify-content: space-between; align-items: baseline;
-    font-size: 9px; letter-spacing: 2px; color: var(--ink-faint);
-    margin-bottom: 6px;
-  }
+  .mast-ears .ear-center { font-style: italic; color: #8b1e1e; font-family: 'Playfair Display', serif; }
   .mast-title {
-    text-align: center; font-size: 17px; letter-spacing: 8px;
-    color: #e2e8f0; font-weight: bold; text-indent: 8px;
+    text-align: center; font-family: 'Playfair Display', 'Noto Serif SC', serif;
+    font-size: 22px; font-weight: 900; letter-spacing: 4px; color: #1a1614; line-height: 1.1;
+    text-transform: uppercase; margin: 3px 0; text-shadow: 1px 1px 0 rgba(255,255,255,0.8);
   }
-  .mast-title .co { color: var(--gold); }
   .mast-sub {
-    display: flex; justify-content: center; gap: 14px; margin-top: 7px;
-    font-size: 10px; letter-spacing: 2px; color: var(--ink-dim);
+    display: flex; justify-content: space-between; align-items: center;
+    border-top: 1px solid #1a1614; border-bottom: 1px solid #1a1614;
+    padding: 3px 6px; margin-top: 5px;
+    font-size: 9.5px; letter-spacing: 1.5px; font-family: 'Courier Prime', monospace; color: #2b241e;
   }
-  .mast-sub .stage { color: var(--gold); }
-  .mast-sub .sep::before { content: '·'; color: var(--rule-double); }
+  .mast-sub .stage { color: #8b1e1e; font-weight: bold; }
 
-  /* 派系情报流 */
-  .wire { flex: 1; overflow-y: auto; padding: 12px 14px 18px; }
+  /* 当前态势通栏头条 */
+  .lead-box {
+    background: rgba(235, 225, 200, 0.7);
+    border: 1px solid #3a3028; border-left: 4px solid #8b1e1e;
+    padding: 9px 12px; margin: 10px 14px 4px; position: relative;
+  }
+  .lead-eyebrow {
+    font-family: 'Courier Prime', monospace; font-size: 8.5px; letter-spacing: 2px;
+    color: #8b1e1e; text-transform: uppercase; font-weight: bold; margin-bottom: 3px;
+  }
+  .lead-title {
+    font-size: 14px; font-weight: 800; color: #1a1614; margin-bottom: 4px;
+  }
+  .lead-body { font-size: 11px; line-height: 1.6; color: #2b241e; }
+  .lead-stamp {
+    position: absolute; right: 10px; top: 8px; transform: rotate(6deg);
+    border: 1.5px solid #8b1e1e; color: #8b1e1e; font-family: 'Courier Prime', monospace;
+    font-size: 8px; font-weight: bold; padding: 1px 5px; letter-spacing: 1px; opacity: 0.85;
+  }
+
+  /* 纵向连续情报流 */
+  .wire { flex: 1; overflow-y: auto; padding: 8px 14px 16px; }
   .wire::-webkit-scrollbar { width: 5px; }
-  .wire::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 3px; }
-  .wire-date-rule {
-    display: flex; align-items: center; gap: 10px;
-    font-size: 9px; letter-spacing: 3px; color: var(--ink-faint);
-    margin: 4px 0 12px;
-  }
-  .wire-date-rule::before, .wire-date-rule::after {
-    content: ''; flex: 1; border-top: 1px solid var(--rule);
-  }
+  .wire::-webkit-scrollbar-thumb { background: var(--news-scroll); border-radius: 2px; }
 
   .faction {
-    background: rgba(30, 41, 59, 0.55);
-    border: 1px solid var(--rule);
-    border-left: 3px solid var(--gold-dim);
-    border-radius: 6px;
-    padding: 10px 12px 11px; margin-bottom: 12px;
-    transition: border-color .3s;
+    border-bottom: 1px solid var(--news-rule-light);
+    padding: 8px 0 10px;
   }
-  .faction:hover { border-left-color: var(--gold); }
   .fac-head {
-    display: flex; justify-content: space-between; align-items: baseline;
-    margin-bottom: 8px;
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;
   }
-  .fac-name { font-size: 12px; letter-spacing: 3px; color: #e2e8f0; }
-  .fac-name::before { content: '❧ '; color: var(--gold-dim); }
+  .fac-name { font-size: 13.5px; font-weight: 700; color: #1a1614; }
+  .fac-name::before { content: '◆ '; color: #8b1e1e; font-size: 9px; }
   .fac-status {
-    font-size: 8px; letter-spacing: 2px; padding: 2px 7px;
-    border: 1px solid var(--rule); border-radius: 99px; color: var(--ink-dim);
+    font-size: 8.5px; font-family: 'Courier Prime', monospace; padding: 1px 5px;
+    border: 1px solid #3a3028; background: #ede3cc; color: #1a1614; font-weight: bold;
   }
-  .fac-status.active { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-faint); }
-  .fac-status.quiet { color: var(--ink-faint); }
+  .fac-status.active { background: #8b1e1e; color: #fff; border-color: #8b1e1e; }
+  .fac-status.quiet { color: var(--news-ink-dim); }
 
-  .intel { padding: 6px 0 6px 12px; position: relative; }
-  .intel + .intel { border-top: 1px dashed rgba(148,163,184,0.16); }
-  .intel::before {
-    content: ''; position: absolute; left: 0; top: 12px; bottom: 10px;
-    border-left: 1px solid var(--rule);
-  }
+  .intel { padding: 4px 0 4px 2px; }
   .intel-meta {
-    font-size: 8.5px; letter-spacing: 1.5px; color: var(--ink-faint); margin-bottom: 3px;
-    display: flex; gap: 8px;
+    font-family: 'Courier Prime', monospace; font-size: 8.5px; letter-spacing: 1px;
+    color: var(--news-ink-dim); margin-bottom: 3px; display: flex; gap: 8px;
   }
-  .intel-src { color: var(--gold-dim); }
-  .intel-text { font-size: 12px; line-height: 1.75; color: var(--ink); }
-  .intel.fresh { animation: fresh-in .5s ease; }
-  .intel.fresh .intel-text { color: #fde68a; }
-  @keyframes fresh-in { from { opacity: 0; transform: translateY(-7px); background: var(--gold-faint);} to { opacity: 1; transform: none; } }
+  .intel-src { color: #8b1e1e; font-weight: bold; }
+  .intel-text { font-size: 11.5px; line-height: 1.7; color: var(--news-ink); text-align: justify; }
 
-  /* 未现身派系（阶段未揭示） */
-  .faction.unknown { border-left-color: rgba(100,116,139,0.4); }
-  .faction.unknown .fac-name { color: var(--ink-faint); letter-spacing: 5px; }
-  .faction.unknown .fac-body {
-    font-size: 11px; color: var(--ink-faint); letter-spacing: 2px;
-    text-align: center; padding: 6px 0 2px;
+  .faction.unknown {
+    background: rgba(0,0,0,0.03); border: 1px dashed #b8a890; padding: 8px 10px; margin-top: 6px;
   }
-  .faction.unveil { animation: unveil .8s ease; }
-  @keyframes unveil { 0% { box-shadow: inset 0 0 0 999px rgba(251,191,36,0.25);} 100% { box-shadow: none; } }
+  .faction.unknown .fac-name { color: var(--news-ink-faint); }
+  .faction.unknown .fac-body {
+    font-size: 10.5px; color: var(--news-ink-faint); letter-spacing: 2px;
+    text-align: center; padding: 4px 0; font-family: 'Courier Prime', monospace;
+  }
 
   /* 底注 */
   .colophon {
-    border-top: 3px double var(--rule-double); position: relative;
-    padding: 7px 16px; font-size: 8.5px; letter-spacing: 2px;
-    color: var(--ink-faint); text-align: center;
+    border-top: 3px double #1a1614; padding: 7px 14px; font-size: 8.5px;
+    letter-spacing: 1px; color: var(--news-ink-dim); text-align: center;
+    background: rgba(244, 238, 219, 0.95); flex: none; font-family: 'Courier Prime', monospace;
   }
-  .colophon::before {
-    content: ''; position: absolute; left: 16px; right: 16px; top: 3px;
-    border-top: 1px solid var(--rule);
-  }
-  .colophon b { color: var(--gold-dim); font-weight: normal; }
+  .colophon b { color: #8b1e1e; font-weight: bold; }
 
-  /* ============ demo 控制条（非插件组成部分） ============ */
+  /* demo 控制条 */
   .demo-bar {
     position: fixed; left: 16px; bottom: 16px; z-index: 80;
     background: rgba(15,23,42,0.92); border: 1px dashed rgba(148,163,184,0.4);
@@ -219,36 +218,36 @@
   }
   .demo-bar .demo-tag { color: var(--red); letter-spacing: 3px; font-size: 9px; margin-bottom: 7px; }
   .demo-bar button {
-    display: block; width: 190px; text-align: left;
-    background: rgba(30,41,59,0.7); color: var(--ink);
-    border: 1px solid var(--rule); border-radius: 5px;
-    font-family: inherit; font-size: 10.5px; letter-spacing: 1px;
-    padding: 6px 9px; margin-bottom: 6px; cursor: pointer; transition: all .2s;
+    display: block; width: 200px; text-align: left;
+    background: rgba(30,41,59,0.7); color: #cbd5e1;
+    border: 1px solid rgba(148,163,184,0.3); border-radius: 5px;
+    font-family: inherit; font-size: 10.5px; padding: 6px 9px; margin-bottom: 6px; cursor: pointer; transition: all .2s;
   }
-  .demo-bar button:hover { border-color: var(--gold-dim); color: var(--gold); }
+  .demo-bar button:hover { border-color: #fbbf24; color: #fbbf24; }
   .demo-bar button:last-child { margin-bottom: 0; }
 </style>
 </head>
 <body>
 
-<!-- 模拟酒馆楼层（demo 语境） -->
+<!-- 模拟酒馆楼层 -->
 <div class="fake-chat">
   <div class="fake-floor">
-    <div class="floor-tag"><span>FLOOR 12</span><span>第 12 楼</span></div>
+    <div class="floor-tag"><span>FLOOR 12</span><span>第 12 楼 · 萨里山街区</span></div>
     <p class="narr">达令赫斯特的红砖巷道被雨浸得发亮。妓院二楼的窗帘后，蒂莉·迪瓦恩隔着蕾丝打量着你们——她的笑容像账本一样精确。</p>
     <p class="say">「凯特·利的人昨晚在萨里山放了三把火，」她慢条斯理地拨弄着烟嘴，「如果你们真想知道是谁在给内陆运'家具'，我可以告诉你们哪辆车队的账目最干净——前提是，代价格外公道。」</p>
     <p class="narr">她身后，两名看场打手无声地挪动了半步，堵住了通往后廊的路。窗外远处，警笛声由远及近，又拐向了别的街区。</p>
   </div>
   <div class="fake-floor">
-    <div class="floor-tag"><span>FLOOR 13</span><span>第 13 楼</span></div>
-    <p class="narr">【状态栏标记点】</p>
+    <div class="floor-tag"><span>FLOOR 13</span><span>第 13 楼 · 调查员行动</span></div>
+    <p class="narr">【状态栏标记点 · 1925年6月13日 13:00 · 潜伏期】</p>
   </div>
 </div>
 
 <!-- ============ 副导演 · 贴边折叠条（折叠态） ============ -->
-<aside id="sd-rail" title="世界情报栏">
-  <div class="rail-label">世界情报 <b>✦</b> GAZETTE</div>
+<aside id="sd-rail" title="世界情报栏 · 点击展开">
+  <div class="rail-star">✦</div>
   <div id="rail-dot"></div>
+  <div class="rail-label">情报号外 GAZETTE</div>
   <div class="rail-ticker">
     <ul id="ticker-list">
       <li>剃刀党私酒价格一夜上涨四成</li>
@@ -259,23 +258,34 @@
       <li>坎卡杰里以南驼队改夜间行进</li>
     </ul>
   </div>
-  <div class="rail-fold-btn">点击展开 ▸</div>
+  <div class="rail-fold-btn">▸ 展开</div>
 </aside>
 
 <!-- ============ 副导演 · 世界情报面板（展开态） ============ -->
 <aside id="sd-panel">
   <div class="masthead">
-    <div class="mast-top"><span>VOL. Ⅰ — No. 13</span><span>SYDNEY · 1926</span></div>
-    <div class="mast-title">悉尼<span class="co"> gazette </span>星期增刊</div>
+    <div class="mast-ears">
+      <span>VOL. IV — NO. 138</span>
+      <span class="ear-center">"Truth in the Shadows"</span>
+      <span>PRICE: 2 PENCE · SYDNEY</span>
+    </div>
+    <div class="mast-title">悉尼星期增刊 · GAZETTE</div>
     <div class="mast-sub">
-      <span id="mast-date">第 13 日 · 暮春</span>
-      <span class="sep" id="mast-stage">阶段一 · 街头与权谋</span>
+      <span id="mast-date">1925年 · 6月13日 · 暮春</span>
+      <span class="stage" id="mast-stage">阶段一 · 街头与权谋</span>
+    </div>
+  </div>
+
+  <div class="lead-box">
+    <div class="lead-stamp">PUBLIC RECORD</div>
+    <div class="lead-eyebrow">📍 当前所在地态势简报</div>
+    <div class="lead-title">绿顶酒馆 · 警戒戒备中</div>
+    <div class="lead-body">
+      凯特·利旗下剃刀党混混与私酒蒸馏师聚集。应邀客人以礼相待、敬酒试探；若亮械或闯入后场酒窖立即开战。
     </div>
   </div>
 
   <div class="wire" id="wire">
-    <div class="wire-date-rule">✶ 公 开 情 报 汇 编 ✶</div>
-
     <!-- 派系卡 1：剃刀党 -->
     <div class="faction" id="fac-razor">
       <div class="fac-head">
@@ -308,7 +318,7 @@
       </div>
     </div>
 
-    <!-- 派系卡 3：沙蝎（表面伪装层） -->
+    <!-- 派系卡 3：商行 -->
     <div class="faction" id="fac-scorpion">
       <div class="fac-head">
         <span class="fac-name">内陆货运商行</span>
@@ -324,17 +334,17 @@
       </div>
     </div>
 
-    <!-- 派系卡 4：黑法老（阶段未揭示） -->
+    <!-- 派系卡 4：未揭示 -->
     <div class="faction unknown" id="fac-pharaoh">
       <div class="fac-head">
         <span class="fac-name">？？？</span>
         <span class="fac-status quiet">尚未接触</span>
       </div>
-      <div class="fac-body">—— 此间尚无值得刊登的传闻 ——</div>
+      <div class="fac-body">—— ✦ 此间尚无值得刊登的公开传闻 ✦ ——</div>
     </div>
   </div>
 
-  <div class="colophon">本报仅刊载 <b>街头可见之事</b> · 真相须由读者自行抵达</div>
+  <div class="colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达 ｜ SYDNEY 1925</div>
 </aside>
 
 <!-- ============ demo 控制条 ============ -->
@@ -360,7 +370,7 @@
     if (panel.classList.contains('open') && !panel.contains(e.target) && !rail.contains(e.target) && !e.target.closest('.demo-bar')) togglePanel(false);
   });
 
-  /* 模拟：新的世界动态到达（表面征兆层） */
+  /* 模拟：新的世界动态到达 */
   const NEWS_POOL = [
     { src: '《矿工晨报》', day: '第 13 日', text: '坎卡杰里以南的驼队近日改在夜间行进，商队称"避暑"。',
       stage: '坎卡杰里以南驼队改夜间行进' },
@@ -373,35 +383,31 @@
   let heads = ['剃刀党私酒价格一夜上涨四成', '飞行小队扩充编制进驻达令港', '坎卡杰里以南驼队改夜间行进'];
   function simulateNews() {
     const n = NEWS_POOL[newsIdx++ % NEWS_POOL.length];
-    // 贴边条：未读点 + ticker 头条置换（重建 3×2 结构保持 -50% 无缝循环）
     dot.classList.add('on');
     heads.unshift(n.stage); heads = heads.slice(0, 3);
     document.getElementById('ticker-list').innerHTML =
       heads.concat(heads).map(t => '<li>' + t + '</li>').join('');
-    // 面板：对应派系卡插入新情报（置顶高亮）
     const fac = document.getElementById('fac-scorpion');
     const firstIntel = fac.querySelector('.intel');
     const intel = document.createElement('div');
-    intel.className = 'intel fresh';
+    intel.className = 'intel';
     intel.innerHTML = '<div class="intel-meta"><span class="intel-src">' + n.src +
       '</span><span>' + n.day + '</span></div><div class="intel-text">' + n.text + '</div>';
     fac.insertBefore(intel, firstIntel);
     fac.querySelector('.fac-status').textContent = '活动升温';
     fac.querySelector('.fac-status').classList.replace('quiet', 'active');
-    // 自动展开一瞬便于观察
     togglePanel(true);
   }
 
-  /* 模拟：阶段推进（黑法老卡片解锁 + 沙蝎伪装剥离预告） */
+  /* 模拟：阶段推进 */
   function advanceStage() {
     document.getElementById('mast-stage').textContent = '阶段二 · 荒原与走私';
     document.getElementById('mast-date').textContent = '第 21 日 · 初夏';
     const ph = document.getElementById('fac-pharaoh');
     ph.classList.remove('unknown');
-    ph.classList.add('unveil');
     ph.querySelector('.fac-name').textContent = '黑法老兄弟会';
-    ph.querySelector('.fac-name').style.letterSpacing = '3px';
     ph.querySelector('.fac-status').textContent = '初露端倪';
+    ph.querySelector('.fac-status').className = 'fac-status active';
     ph.querySelector('.fac-body').outerHTML =
       '<div class="intel"><div class="intel-meta"><span class="intel-src">教堂告解传闻</span><span>第 20 日</span></div>' +
       '<div class="intel-text">北郊旧仓库夜间有穿斗篷者聚集，守门人"收金镑，不多问"。</div></div>';

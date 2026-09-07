@@ -90,7 +90,11 @@
     try { localStorage.setItem(LS.settings, JSON.stringify(s)); } catch (e) { log('warn', '设置保存失败', e); }
   }
   function loadUiPrefs() {
-    try { return JSON.parse(localStorage.getItem(LS.ui) || '{}') || {}; } catch (e) { return {}; }
+    try {
+      const p = JSON.parse(localStorage.getItem(LS.ui) || '{}') || {};
+      if (!p.theme) p.theme = 'paper';
+      return p;
+    } catch (e) { return { theme: 'paper' }; }
   }
   function saveUiPrefs(p) {
     try { localStorage.setItem(LS.ui, JSON.stringify(p)); } catch (e) { /* 忽略 */ }
@@ -441,7 +445,7 @@
     : document;
 
   const UI_CSS = `
-  /* ── 主题变量：slate（默认 · MMS 深色基因）── */
+  /* ── 主题变量：slate（MMS 深色基因）── */
   #ad-rail, #ad-panel, #ad-modal, .ad-toast {
     --ad-bg: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
     --ad-box-bg: #0f172a;
@@ -460,33 +464,86 @@
     --ad-font: 'Courier New', 'SimSun', monospace;
     --ad-radius: 10px; --ad-radius-sm: 5px;
   }
-  /* ── 主题：paper（阿卡姆广告报基因：直角/深棕框/右下柔影/边缘晕影/全棕字系/纸纹）── */
+  /* ── 主题：paper（方案 A：1920s 阿卡姆晨报 · 经典大报版）── */
   #ad-rail.ad-theme-paper, #ad-panel.ad-theme-paper, #ad-modal.ad-theme-paper, .ad-toast.ad-theme-paper {
-    --ad-bg: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(80,55,25,0.02) 2px, rgba(80,55,25,0.02) 4px) #f2e8d5;
-    --ad-box-bg: #f2e8d5;
-    --ad-overlay: rgba(43,27,14,0.45);
-    --ad-input-bg: rgba(255,250,235,0.85);
-    --ad-border: #8b7355;
-    --ad-panel-border: 1px solid #2b1b0e;
-    --ad-ink: #5e4b35; --ad-ink-strong: #2c1e14;
-    --ad-ink-dim: #6e5d4b; --ad-ink-faint: #8c7a65;
-    --ad-accent: #8b2635; --ad-accent-bright: #a03040;
-    --ad-accent-dim: rgba(139,38,53,0.6); --ad-accent-faint: rgba(139,38,53,0.12);
-    --ad-line: #cbb89e; --ad-line-strong: #8b7355;
-    --ad-hit: rgba(139,38,53,0.06); --ad-safe: #2f4f3a;
-    --ad-scroll: rgba(139,115,85,0.45);
-    --ad-shadow: 4px 6px 18px rgba(30,18,8,0.28), 1px 2px 6px rgba(30,18,8,0.18),
-                 inset 0 0 50px rgba(101,67,33,0.08), inset 0 0 120px rgba(60,40,20,0.04);
-    --ad-font: 'Noto Serif SC', 'Playfair Display', Georgia, serif;
+    --ad-bg: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, rgba(220,205,175,0.3) 100%), repeating-linear-gradient(0deg, #f4eedb, #f4eedb 2px, #f0e6ce 2px, #f0e6ce 4px);
+    --ad-box-bg: #f4eedb;
+    --ad-overlay: rgba(43,27,14,0.55);
+    --ad-input-bg: rgba(255,250,235,0.9);
+    --ad-border: #3a3028;
+    --ad-panel-border: 2px solid #1a1614;
+    --ad-ink: #2b241e; --ad-ink-strong: #1a1614;
+    --ad-ink-dim: #5e5145; --ad-ink-faint: #8a7b6c;
+    --ad-accent: #8b1e1e; --ad-accent-bright: #a82424;
+    --ad-accent-dim: rgba(139,30,30,0.6); --ad-accent-faint: rgba(139,30,30,0.12);
+    --ad-line: #c4b59d; --ad-line-strong: #3a3028;
+    --ad-hit: rgba(139,30,30,0.06); --ad-safe: #2f4f3a;
+    --ad-scroll: #b8a890;
+    --ad-shadow: -14px 0 45px rgba(20,12,6,0.4), inset 0 0 80px rgba(120,90,40,0.12);
+    --ad-font: 'Playfair Display', 'Noto Serif SC', 'Newsreader', Georgia, serif;
     --ad-radius: 0px; --ad-radius-sm: 0px;
   }
-  /* paper 报纸语汇：双线报头 / 虚线账目 / 菱形项目符号 */
-  .ad-theme-paper .ad-head { border-bottom: 3px double var(--ad-line-strong); }
-  .ad-theme-paper .ad-nowline { border-bottom: 1px dashed var(--ad-line-strong); }
-  .ad-theme-paper .ad-item-place::before { content: '◆ '; font-size: 9px; }
-  .ad-theme-paper .ad-modal-box h3 { letter-spacing: 6px; }
+  /* paper 报纸语汇：双线报头 / 虚线账目 / 菱形项目符号 / 报头双耳 / 题头 */
+  .ad-theme-paper .ad-head {
+    border-bottom: 4px double var(--ad-line-strong);
+    background: rgba(244, 238, 219, 0.95);
+    padding: 10px 14px 7px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .ad-theme-paper .ad-head-ears {
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--ad-line-strong); padding-bottom: 3px; margin-bottom: 2px;
+    font-size: 8px; letter-spacing: 1px; color: var(--ad-ink-dim); text-transform: uppercase;
+    font-family: 'Courier Prime', 'Courier New', monospace;
+  }
+  .ad-theme-paper .ad-head-ears .ear-motto { font-style: italic; color: var(--ad-accent); font-family: var(--ad-font); }
+  .ad-theme-paper .ad-head-main {
+    display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  }
+  .ad-theme-paper .ad-head-title {
+    font-size: 16px; font-weight: 900; letter-spacing: 3px; color: var(--ad-ink-strong);
+    text-transform: uppercase; line-height: 1.1; text-align: center; flex: 1;
+    text-shadow: 1px 1px 0 rgba(255,255,255,0.8);
+  }
+  .ad-theme-paper .ad-head-sub {
+    display: flex; justify-content: space-between; align-items: center;
+    border-top: 1px solid var(--ad-line-strong); border-bottom: 1px solid var(--ad-line-strong);
+    padding: 3px 6px; margin-top: 2px; font-size: 9px; letter-spacing: 1px;
+    font-family: 'Courier Prime', 'Courier New', monospace; color: var(--ad-ink-strong);
+  }
+  .ad-theme-paper .ad-head-sub .stage { color: var(--ad-accent); font-weight: bold; }
+  .ad-theme-paper .ad-nowline {
+    border: 1px solid var(--ad-line-strong); border-left: 4px solid var(--ad-accent);
+    background: rgba(235, 225, 200, 0.7); margin: 8px 12px 4px; padding: 7px 10px;
+    font-size: 11px; line-height: 1.5; color: var(--ad-ink-strong);
+    border-radius: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.05); position: relative;
+  }
+  .ad-theme-paper .ad-nowline::before { content: '📍 '; }
+  .ad-theme-paper .ad-nowline::after {
+    content: 'PUBLIC RECORD'; position: absolute; right: 8px; top: 6px;
+    border: 1px solid var(--ad-accent); color: var(--ad-accent); font-size: 7.5px;
+    font-weight: bold; padding: 0 4px; letter-spacing: 1px; transform: rotate(4deg);
+    font-family: 'Courier Prime', monospace; opacity: 0.85;
+  }
+  .ad-theme-paper .ad-item {
+    border-bottom: 1px solid var(--ad-line); padding: 9px 12px 10px;
+  }
+  .ad-theme-paper .ad-item-place::before { content: '◆ '; font-size: 9px; color: var(--ad-accent); }
+  .ad-theme-paper .ad-item-place { font-size: 13px; font-weight: 700; color: var(--ad-ink-strong); }
+  .ad-theme-paper .ad-item-alert { font-family: 'Courier Prime', 'Courier New', monospace; font-weight: bold; padding: 1px 5px; border: 1px solid var(--ad-line-strong); background: #ede3cc; }
+  .ad-theme-paper .ad-item-alert.hot { background: var(--ad-accent); color: #fff; border-color: var(--ad-accent); }
+  .ad-theme-paper .ad-item-reaction { font-size: 10.5px; line-height: 1.65; color: var(--ad-ink); text-align: justify; margin-top: 3px; }
+  .ad-theme-paper .ad-colophon {
+    display: block; border-top: 3px double var(--ad-line-strong); padding: 7px 14px; font-size: 8.5px;
+    letter-spacing: 1px; color: var(--ad-ink-dim); text-align: center;
+    background: rgba(244, 238, 219, 0.95); flex: none; font-family: 'Courier Prime', 'Courier New', monospace;
+  }
+  .ad-theme-paper .ad-colophon b { color: var(--ad-accent); font-weight: bold; }
+  .ad-theme-paper .ad-modal-box h3 { letter-spacing: 6px; border-bottom: 2px solid var(--ad-line-strong); }
 
-  #ad-rail { position: fixed; right: 0; top: 28%; width: 30px; z-index: 99990;
+  #ad-rail { position: fixed; right: 0; top: 28%; width: 32px; z-index: 99990;
     background: var(--ad-bg); border: var(--ad-panel-border); border-right: none;
     border-radius: var(--ad-radius) 0 0 var(--ad-radius); display: flex; flex-direction: column; align-items: center;
     cursor: pointer; user-select: none; padding: 9px 0 7px;
@@ -511,15 +568,19 @@
     color: var(--ad-ink-dim); padding: 0 0 16px 0; display: block; margin: 0 auto; width: 16px; }
   .ad-rail-ticker li:first-child { color: var(--ad-accent-bright); }
 
-  #ad-panel { position: fixed; right: -400px; top: 4vh; bottom: 4vh; width: 372px; z-index: 99995;
+  #ad-panel { position: fixed; right: -420px; top: 4vh; bottom: 4vh; width: 380px; z-index: 99995;
     background: var(--ad-bg); border: var(--ad-panel-border); border-right: none;
     border-radius: var(--ad-radius) 0 0 var(--ad-radius); box-shadow: var(--ad-shadow);
     display: flex; flex-direction: column; font-family: var(--ad-font); color: var(--ad-ink);
     transition: right .38s cubic-bezier(0.22, 1, 0.36, 1); }
   #ad-panel.open { right: 0; }
-  /* 报头：一行信息条 + 内联工具按钮 */
+  /* 报头基础布局 */
   .ad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
     padding: 7px 12px; border-bottom: 1px solid var(--ad-line-strong); flex: none; }
+  .ad-head-ears { display: none; }
+  .ad-head-main { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; }
+  .ad-head-title { font-size: 11px; font-weight: bold; letter-spacing: 1px; color: var(--ad-ink-strong); }
+  .ad-head-sub { display: none; }
   .ad-head-info { font-size: 10.5px; letter-spacing: 1px; color: var(--ad-ink-dim); white-space: nowrap; overflow: hidden; }
   .ad-head-info .stage { color: var(--ad-accent); }
   .ad-head-btns { display: flex; gap: 5px; flex: none; }
@@ -531,7 +592,7 @@
     color: var(--ad-accent-dim); border-bottom: 1px solid var(--ad-line);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ad-nowline::before { content: '▶ '; }
-  /* 情报流主体：无边框纯排版条目，整体滚动，内容不截断 */
+  /* 情报流主体：无边框纯排版条目，整体纵向滚动 */
   .ad-wire { flex: 1; overflow-y: auto; padding: 2px 0 10px; }
   .ad-wire::-webkit-scrollbar { width: 5px; }
   .ad-wire::-webkit-scrollbar-thumb { background: var(--ad-scroll); border-radius: var(--ad-radius-sm); }
@@ -548,6 +609,7 @@
   .ad-item-sub .menu { color: var(--ad-ink); }
   .ad-item-reaction { font-size: 10px; line-height: 1.55; color: var(--ad-ink-faint); }
   .ad-empty { padding: 14px 16px; font-size: 10.5px; color: var(--ad-ink-faint); letter-spacing: 1px; }
+  .ad-colophon { display: none; }
 
   #ad-modal { position: fixed; inset: 0; z-index: 99999; display: none;
     background: var(--ad-overlay); align-items: center; justify-content: center; }
@@ -588,7 +650,7 @@
   `;
 
   let els = {};
-  let currentTheme = 'slate';   // slate | paper（NewDay 报纸基因）
+  let currentTheme = 'paper';   // paper（方案 A 报纸基因 · 默认） | slate
 
   function applyTheme(theme) {
     currentTheme = theme === 'paper' ? 'paper' : 'slate';
@@ -615,24 +677,37 @@
     style.textContent = UI_CSS;
     UI_DOC.head.appendChild(style);
 
-    // 折叠态贴边条（极简：✦ 手柄 + 未读点 + 情报轮播；空态收缩为小胶囊）
+    // 折叠态贴边条（✦ 手柄 + 未读点 + 情报轮播；空态收缩为小胶囊）
     const rail = el('aside', { id: 'ad-rail', title: '世界情报 · 点击展开' }, `
       <div class="ad-rail-star">✦</div>
       <div id="ad-rail-dot"></div>
       <div class="ad-rail-ticker"><ul id="ad-ticker"></ul></div>`);
     UI_DOC.body.appendChild(rail);
 
-    // 展开态面板：一行报头（信息+内联工具）→ 当前态势行 → 情报条目流
+    // 展开态面板：双耳古典大报头 → 当前态势通栏行 → 纵向连续情报流 → 报尾底注
     const panel = el('aside', { id: 'ad-panel' }, `
       <div class="ad-head">
-        <span class="ad-head-info"><span id="ad-mast-date">—</span> · <span class="stage" id="ad-mast-stage">—</span></span>
-        <span class="ad-head-btns">
-          <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
-          <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
-          <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
-        </span>
+        <div class="ad-head-ears">
+          <span>VOL. IV — NO. 138</span>
+          <span class="ear-motto">"Truth in the Shadows"</span>
+          <span>PRICE: 2 PENCE</span>
+        </div>
+        <div class="ad-head-main">
+          <span class="ad-head-info"><span id="ad-mast-date-slate">—</span> · <span class="stage" id="ad-mast-stage-slate">—</span></span>
+          <span class="ad-head-title">悉尼星期增刊 · GAZETTE</span>
+          <span class="ad-head-btns">
+            <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
+            <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
+            <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
+          </span>
+        </div>
+        <div class="ad-head-sub">
+          <span id="ad-mast-date">—</span>
+          <span class="stage" id="ad-mast-stage">—</span>
+        </div>
       </div>
-      <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>`);
+      <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>
+      <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达</div>`);
     UI_DOC.body.appendChild(panel);
 
     // 模态容器（设置/卡片/注入预览共用）
@@ -642,6 +717,7 @@
     els = { rail, panel, dot: rail.querySelector('#ad-rail-dot'), ticker: rail.querySelector('#ad-ticker'),
       wireBody: panel.querySelector('#ad-wire-body'),
       mastDate: panel.querySelector('#ad-mast-date'), mastStage: panel.querySelector('#ad-mast-stage'),
+      mastDateSlate: panel.querySelector('#ad-mast-date-slate'), mastStageSlate: panel.querySelector('#ad-mast-stage-slate'),
       modal, modalBox: modal.querySelector('#ad-modal-box') };
 
     // 交互
@@ -754,13 +830,13 @@
   function updatePanelMeta(stat) {
     const raw = String(stat['日期和时间'] || '');
     const parts = raw.replace(EMOJI_RE, '').split('·').map(s => s.trim()).filter(Boolean);
-    if (parts.length >= 3) {
-      els.mastDate.textContent = `${parts[0]}${parts[1] || ''}`;
-      els.mastStage.textContent = parts[parts.length - 1] || '—';
-    } else if (parts.length) {
-      els.mastDate.textContent = parts[0];
-      els.mastStage.textContent = '—';
-    }
+    const dateText = parts.length >= 2 ? `${parts[0]} · ${parts[1]}` : (parts[0] || '—');
+    const stageText = parts.length >= 3 ? (parts[parts.length - 1] || '—') : '—';
+
+    if (els.mastDate) els.mastDate.textContent = dateText;
+    if (els.mastStage) els.mastStage.textContent = stageText;
+    if (els.mastDateSlate) els.mastDateSlate.textContent = dateText;
+    if (els.mastStageSlate) els.mastStageSlate.textContent = stageText;
   }
 
   // ═════════════════════════════════════════════════════════════════════
@@ -784,8 +860,8 @@
     openModal(`
       <h3>⚙ 副导演 · 设置</h3>
       <div class="ad-form-row"><label>皮肤</label><select id="ad-set-theme">
-        <option value="slate">slate · 深色档案（默认）</option>
-        <option value="paper">paper · 1920s 报纸（NewDay 基因）</option>
+        <option value="paper">paper · 1920s 阿卡姆大报（方案 A · 默认）</option>
+        <option value="slate">slate · 深色档案（MMS 基因）</option>
       </select></div>
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>

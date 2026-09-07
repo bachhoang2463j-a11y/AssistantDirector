@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>副导演 · 1920s 报纸皮肤多方案选型与滑动演示 — Newspaper Showcase</title>
+<!-- 引入复古衬线与打字机字体支持 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Noto+Serif+SC:wght@400;600;700;900&family=Playfair+Display:ital,wght@0,600;0,800;0,900;1,400&family=Special+Elite&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+
+<style>
+  /* ==========================================================================
+     0. 全局基础重置与演示容器
+     ========================================================================== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #090d16;
+    color: #cbd5e1;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Serif SC", serif;
+    overflow-x: hidden;
+  }
+
+  /* 顶部方案切换与控制浮动坞 */
+  #showcase-dock {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    background: rgba(13, 19, 33, 0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 10px 18px;
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .dock-title {
+    font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #f1f5f9;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dock-title .badge {
+    background: #fbbf24; color: #0f172a; font-size: 10px; font-weight: 800;
+    padding: 2px 6px; border-radius: 4px; letter-spacing: 1px;
+  }
+  .dock-schemes {
+    display: flex; gap: 5px; flex-wrap: wrap; align-items: center;
+  }
+  .dock-btn {
+    background: #1e293b; color: #94a3b8; border: 1px solid rgba(148,163,184,0.25);
+    border-radius: 6px; padding: 5px 9px; font-size: 11px; letter-spacing: 0.5px;
+    cursor: pointer; transition: all .2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    display: flex; align-items: center; gap: 4px; font-family: inherit;
+  }
+  .dock-btn:hover { background: #334155; color: #f8fafc; border-color: #64748b; }
+  .dock-btn.active {
+    background: #d97706; color: #fff; border-color: #f59e0b; font-weight: bold;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+  }
+  .dock-modes {
+    display: flex; gap: 5px; align-items: center; background: rgba(15, 23, 42, 0.8);
+    padding: 3px 6px; border-radius: 6px; border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+  .dock-mode-label { font-size: 10px; color: #fbbf24; letter-spacing: 1px; margin-right: 2px; }
+  .dock-mode-btn {
+    background: transparent; color: #94a3b8; border: 1px solid transparent;
+    border-radius: 4px; padding: 3px 8px; font-size: 10.5px; cursor: pointer;
+    transition: all .2s; font-family: inherit;
+  }
+  .dock-mode-btn:hover { color: #f8fafc; }
+  .dock-mode-btn.active {
+    background: #2563eb; color: #fff; font-weight: bold; border-color: #3b82f6;
+  }
+  .dock-actions {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .dock-action-btn {
+    background: rgba(30, 41, 59, 0.8); color: #cbd5e1; border: 1px solid rgba(148,163,184,0.25);
+    border-radius: 6px; padding: 4px 8px; font-size: 10.5px; cursor: pointer;
+    transition: all .2s; font-family: inherit;
+  }
+  .dock-action-btn:hover { background: #334155; color: #fbbf24; border-color: #fbbf24; }
+
+  /* 方案详情信息气泡条 */
+  #scheme-info-banner {
+    position: fixed; top: 56px; left: 0; right: 0; z-index: 900;
+    background: rgba(15, 23, 42, 0.94);
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.25);
+    padding: 7px 20px; font-size: 11px; line-height: 1.5; color: #94a3b8;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #scheme-info-text strong { color: #fbbf24; font-weight: 600; }
+  #scheme-info-tags { display: flex; gap: 6px; }
+  .info-tag {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 3px;
+    background: rgba(148,163,184,0.15); color: #cbd5e1;
+  }
+
+  /* 模拟酒馆聊天背景 */
+  .fake-chat-container {
+    max-width: 760px; margin: 105px auto 60px; padding: 20px 80px 40px 24px;
+    transition: margin-right .4s ease;
+  }
+  .fake-floor {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 8px; padding: 18px 22px; margin-bottom: 22px;
+    font-size: 13.5px; line-height: 1.95; color: #cbd5e1;
+    font-family: 'Noto Serif SC', Georgia, serif;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.3);
+  }
+  .fake-floor .floor-tag {
+    font-size: 10.5px; letter-spacing: 2px; color: #64748b; font-family: monospace;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15); padding-bottom: 8px; margin-bottom: 12px;
+    display: flex; justify-content: space-between;
+  }
+  .fake-floor p { margin-bottom: 10px; }
+  .fake-floor .say { color: #f1f5f9; font-weight: 500; }
+  .fake-floor .narr { color: #94a3b8; }
+  .fake-floor .status-block {
+    background: rgba(2, 6, 23, 0.6); border-left: 3px solid #fbbf24;
+    padding: 8px 12px; font-size: 11.5px; font-family: monospace; color: #fde68a; margin-top: 10px;
+  }
+
+  /* ==========================================================================
+     1. 副导演组件结构（悬浮窗与面板通用骨架）
+     ========================================================================== */
+  #sd-rail {
+    position: fixed; right: 0; top: 22%; z-index: 9500;
+    cursor: pointer; user-select: none;
+    transition: transform .3s cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow .3s, width .25s;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  #sd-panel {
+    position: fixed; right: -500px; top: 4vh; bottom: 4vh; width: 450px; z-index: 9600;
+    display: flex; flex-direction: column;
+    transition: right .4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow .4s, width .3s ease;
+    overflow: hidden;
+  }
+  #sd-panel.open { right: 0; }
+  #sd-panel.spread-wide { width: 720px; }
+
+  /* ==========================================================================
+     2. 方案 A：【阿卡姆晨报 · 经典时代大报版】(The Arkham Broadside 1926)
+     ========================================================================== */
+  body.theme-broadside {
+    --news-paper-bg: #f4eedb;
+    --news-paper-deep: #e8debe;
+    --news-ink-black: #1a1614;
+    --news-ink-lead: #2b241e;
+    --news-ink-muted: #5e5145;
+    --news-ink-faint: #8a7b6c;
+    --news-rule: #3a3028;
+    --news-rule-light: #c4b59d;
+    --news-accent: #8b1e1e;
+    --news-accent-gold: #855a15;
+    --news-font-title: 'UnifrakturMaguntia', 'Cinzel', 'Noto Serif SC', serif;
+    --news-font-head: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
+    --news-font-body: 'Newsreader', 'Noto Serif SC', Georgia, serif;
+    --news-font-meta: 'Courier Prime', 'SimSun', monospace;
+  }
+  .theme-broadside #sd-rail {
+    width: 38px; height: 58vh;
+    background: repeating-linear-gradient(0deg, #f4eedb, #f4eedb 2px, #f1e9d2 2px, #f1e9d2 4px);
+    border: 2px solid #2b241e; border-right: none;
+    border-radius: 4px 0 0 4px;
+    box-shadow: -4px 6px 18px rgba(30,20,10,0.35), inset 0 0 20px rgba(100,70,30,0.1);
+    color: #1a1614; padding: 10px 0;
+  }
+  .theme-broadside #sd-rail:hover {
+    transform: translateX(-4px); box-shadow: -8px 8px 24px rgba(30,20,10,0.45);
+  }
+  .theme-broadside .rail-stamp-icon { font-size: 14px; color: #8b1e1e; line-height: 1; margin-bottom: 6px; }
+  .theme-broadside .rail-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #8b1e1e;
+    box-shadow: 0 0 6px rgba(139,30,30,0.6); margin-bottom: 8px; opacity: 0;
+  }
+  .theme-broadside .rail-dot.on { opacity: 1; animation: dot-blink 1.4s infinite; }
+  .theme-broadside .rail-spine-title {
+    writing-mode: vertical-rl; font-family: var(--news-font-head); font-weight: 700;
+    font-size: 11px; letter-spacing: 4px; color: #2b241e; padding-top: 4px;
+  }
+  .theme-broadside .rail-ticker-wrap {
+    flex: 1; width: 100%; overflow: hidden; position: relative; margin: 10px 0;
+    mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 15%, #000 85%, transparent);
+  }
+  .theme-broadside .rail-ticker-wrap ul {
+    position: absolute; left: 0; right: 0; list-style: none;
+    animation: broadside-tick 15s linear infinite;
+  }
+  .theme-broadside .rail-ticker-wrap li {
+    writing-mode: vertical-rl; font-family: var(--news-font-body); font-size: 9.5px;
+    letter-spacing: 2px; color: #5e5145; padding: 0 0 16px 0; margin: 0 auto; width: 18px;
+  }
+  .theme-broadside .rail-ticker-wrap li::before { content: '❧ '; color: #8b1e1e; }
+  .theme-broadside .rail-unfold-tag {
+    writing-mode: vertical-rl; font-size: 9px; letter-spacing: 3px; color: #8a7b6c; font-family: monospace;
+  }
+
+  /* 方案 A 展开态面板 */
+  .theme-broadside #sd-panel {
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, rgba(220,205,175,0.3) 100%),
+      repeating-linear-gradient(0deg, #f4eedb, #f4eedb 2px, #f0e6ce 2px, #f0e6ce 4px);
+    border: 3px solid #1a1614; border-right: none;
+    box-shadow: -14px 0 45px rgba(20,12,6,0.4), inset 0 0 80px rgba(120,90,40,0.12);
+    color: var(--news-ink-black);
+    font-family: var(--news-font-body);
+  }
+
+  /* 方案 A 经典大报头 */
+  .theme-broadside .news-masthead {
+    padding: 12px 18px 8px; border-bottom: 4px double #1a1614;
+    position: relative; flex: none; background: rgba(244, 238, 219, 0.95);
+  }
+  .theme-broadside .mast-ears {
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid #1a1614; padding-bottom: 4px; margin-bottom: 6px;
+    font-family: var(--news-font-meta); font-size: 8.5px; letter-spacing: 1px; color: #5e5145;
+    text-transform: uppercase;
+  }
+  .theme-broadside .mast-ears .ear-center { font-style: italic; color: #8b1e1e; font-family: var(--news-font-head); }
+  .theme-broadside .mast-main-title {
+    text-align: center; font-family: 'Playfair Display', 'Noto Serif SC', serif;
+    font-size: 22px; font-weight: 900; letter-spacing: 4px; color: #1a1614; line-height: 1.1;
+    text-transform: uppercase; margin: 3px 0;
+    text-shadow: 1px 1px 0 rgba(255,255,255,0.8);
+  }
+  .theme-broadside .mast-sub-banner {
+    display: flex; justify-content: space-between; align-items: center;
+    border-top: 1px solid #1a1614; border-bottom: 1px solid #1a1614;
+    padding: 3px 6px; margin-top: 5px;
+    font-size: 9.5px; letter-spacing: 1.5px; font-family: var(--news-font-meta); color: #2b241e;
+  }
+  .theme-broadside .mast-sub-banner .stage-tag { color: #8b1e1e; font-weight: bold; }
+
+  /* 报纸分版导航栏（横向滑动/翻页专用） */
+  .news-page-tabs {
+    display: none; justify-content: space-between; align-items: center;
+    background: #e8debe; border-bottom: 1.5px solid #3a3028; padding: 4px 12px;
+    font-family: var(--news-font-meta); font-size: 9.5px;
+  }
+  .news-page-tabs.visible { display: flex; }
+  .page-tab-group { display: flex; gap: 4px; }
+  .page-tab-btn {
+    background: transparent; border: 1px solid transparent; color: #5e5145;
+    padding: 2px 8px; font-size: 9.5px; cursor: pointer; border-radius: 2px;
+    font-family: inherit; font-weight: 600; transition: all .15s;
+  }
+  .page-tab-btn:hover { color: #1a1614; background: rgba(0,0,0,0.05); }
+  .page-tab-btn.active {
+    background: #1a1614; color: #f4eedb; font-weight: bold;
+  }
+  .page-nav-arrows { display: flex; gap: 4px; align-items: center; }
+  .page-nav-btn {
+    background: #f4eedb; border: 1px solid #3a3028; color: #1a1614;
+    padding: 1px 6px; font-size: 10px; cursor: pointer; line-height: 1.2;
+  }
+  .page-nav-btn:hover { background: #8b1e1e; color: #fff; border-color: #8b1e1e; }
+  .page-indicator { font-size: 9px; color: #5e5145; margin: 0 4px; }
+
+  /* ==========================================================================
+     3. 滑动模式定义（纵向 vs 左右翻页 vs 双版宽幅）
+     ========================================================================== */
+
+  /* 模式一：默认纵向长卷滚动 (Mode: Vertical Continuous Scroll) */
+  .news-wire-container {
+    flex: 1; overflow-y: auto; padding: 12px 16px 20px;
+  }
+  .news-wire-container::-webkit-scrollbar { width: 5px; }
+  .news-wire-container::-webkit-scrollbar-thumb { background: #b8a890; border-radius: 2px; }
+
+  /* 模式二：左右多版翻页/滑动 (Mode: Horizontal Paged Swipe) */
+  #sd-panel.mode-horizontal .news-wire-container {
+    display: flex; overflow-x: auto; overflow-y: hidden; padding: 0;
+    scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+  #sd-panel.mode-horizontal .news-sheet-page {
+    flex: 0 0 100%; width: 100%; height: 100%; overflow-y: auto;
+    padding: 12px 16px 20px; scroll-snap-align: start;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.04);
+  }
+  #sd-panel.mode-horizontal .news-sheet-page::-webkit-scrollbar { width: 4px; }
+  #sd-panel.mode-horizontal .news-sheet-page::-webkit-scrollbar-thumb { background: #caa976; }
+
+  /* 模式三：宽幅双版并列展卷 (Mode: Dual-Page Spread) */
+  #sd-panel.mode-spread .news-wire-container {
+    display: flex; gap: 16px; overflow-y: auto; padding: 12px 18px 20px;
+  }
+  #sd-panel.mode-spread .spread-page-left {
+    flex: 1; border-right: 1px solid #3a3028; padding-right: 14px;
+  }
+  #sd-panel.mode-spread .spread-page-right {
+    flex: 1; padding-left: 2px;
+  }
+
+  /* 通用头条与文章排版 */
+  .theme-broadside .news-lead-headline {
+    background: rgba(235, 225, 200, 0.7);
+    border: 1px solid #3a3028; border-left: 4px solid #8b1e1e;
+    padding: 10px 12px; margin-bottom: 12px;
+    position: relative;
+  }
+  .theme-broadside .lead-eyebrow {
+    font-family: var(--news-font-meta); font-size: 8.5px; letter-spacing: 2px;
+    color: #8b1e1e; text-transform: uppercase; font-weight: bold; margin-bottom: 4px;
+  }
+  .theme-broadside .lead-title {
+    font-family: var(--news-font-head); font-size: 14.5px; font-weight: 800; color: #1a1614;
+    line-height: 1.35; margin-bottom: 5px;
+  }
+  .theme-broadside .lead-body { font-size: 11.5px; line-height: 1.65; color: #2b241e; }
+  .theme-broadside .lead-stamp {
+    position: absolute; right: 10px; top: 8px; transform: rotate(8deg);
+    border: 1.5px solid #8b1e1e; color: #8b1e1e; font-family: var(--news-font-meta);
+    font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 2px;
+    letter-spacing: 1px; opacity: 0.85; pointer-events: none;
+  }
+
+  .theme-broadside .news-columns { display: flex; flex-direction: column; gap: 11px; }
+  .theme-broadside .news-article {
+    border-bottom: 1px solid var(--news-rule-light); padding-bottom: 9px;
+  }
+  .theme-broadside .article-header {
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;
+  }
+  .theme-broadside .article-kicker {
+    font-family: var(--news-font-meta); font-size: 8.5px; letter-spacing: 1.5px;
+    color: #5e5145; text-transform: uppercase;
+  }
+  .theme-broadside .article-badge {
+    font-size: 8.5px; font-family: var(--news-font-meta); font-weight: bold;
+    padding: 1px 5px; border: 1px solid #3a3028; background: #ede3cc; color: #1a1614;
+  }
+  .theme-broadside .article-badge.hot { background: #8b1e1e; color: #fff; border-color: #8b1e1e; }
+  .theme-broadside .article-title {
+    font-family: var(--news-font-head); font-size: 13.5px; font-weight: 700; color: #1a1614;
+    line-height: 1.35; margin-bottom: 5px;
+  }
+  .theme-broadside .article-title::before { content: '◆ '; font-size: 9px; color: #8b1e1e; }
+  .theme-broadside .article-text {
+    font-size: 11.5px; line-height: 1.7; color: #2b241e; text-align: justify;
+  }
+  .theme-broadside .article-text.drop-cap::first-letter {
+    font-family: 'Playfair Display', serif; font-size: 26px; font-weight: 900;
+    float: left; line-height: 0.9; padding-right: 5px; padding-top: 2px; color: #8b1e1e;
+  }
+  .theme-broadside .article-sub-wire {
+    margin-top: 6px; padding-left: 8px; border-left: 2px solid #b8a890;
+    font-size: 10.5px; color: #5e5145; line-height: 1.55; font-style: italic;
+  }
+  .theme-broadside .news-article.mystery {
+    background: rgba(0,0,0,0.03); border: 1px dashed #b8a890; padding: 8px 10px;
+  }
+  .theme-broadside .news-article.mystery .mystery-label {
+    text-align: center; font-family: var(--news-font-meta); font-size: 10.5px;
+    letter-spacing: 3px; color: #8a7b6c; padding: 6px 0;
+  }
+  .theme-broadside .news-colophon {
+    border-top: 3px double #1a1614; padding: 8px 16px;
+    font-family: var(--news-font-meta); font-size: 8.5px; letter-spacing: 1.5px;
+    color: #5e5145; text-align: center; background: rgba(244, 238, 219, 0.95); flex: none;
+  }
+
+  /* ==========================================================================
+     其他 3 个方案的色彩与基础定义
+     ========================================================================== */
+  body.theme-telegraph {
+    --news-paper-bg: #ebd4a7; --news-ink-black: #26211c; --news-accent: #a31d1d;
+    --news-font-head: 'Courier Prime', monospace; --news-font-body: 'Courier Prime', monospace; --news-font-meta: monospace;
+  }
+  body.theme-noir {
+    --news-paper-bg: #1b1714; --news-ink-black: #f5ebe0; --news-accent: #e63946;
+    --news-font-head: 'Special Elite', monospace; --news-font-body: 'Courier Prime', monospace; --news-font-meta: monospace;
+  }
+  body.theme-illustrated {
+    --news-paper-bg: #fbf7ee; --news-ink-black: #1c3d5a; --news-accent: #9e7b30;
+    --news-font-head: 'Cinzel', serif; --news-font-body: 'Noto Serif SC', serif; --news-font-meta: 'Cinzel', serif;
+  }
+
+  @keyframes broadside-tick { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
+  @keyframes dot-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+  .fresh-entry { animation: highlight-in 0.6s ease-out; }
+  @keyframes highlight-in {
+    0% { transform: scale(0.96); background: rgba(251, 191, 36, 0.35); }
+    100% { transform: scale(1); }
+  }
+</style>
+</head>
+<body class="theme-broadside">
+
+<!-- ==========================================================================
+     顶部方案选型控制坞 (Showcase Control Dock)
+     ========================================================================== -->
+<div id="showcase-dock">
+  <div class="dock-title">
+    <span>🗞️ 副导演 · 1920s 报纸皮肤选型</span>
+    <span class="badge">PROTOTYPE SHOWCASE</span>
+  </div>
+
+  <div class="dock-schemes">
+    <button class="dock-btn active" onclick="switchTheme('broadside', this)">
+      <span>📜 方案 A：阿卡姆经典大报</span>
+    </button>
+    <button class="dock-btn" onclick="switchTheme('telegraph', this)">
+      <span>📟 方案 B：战地电报机</span>
+    </button>
+    <button class="dock-btn" onclick="switchTheme('noir', this)">
+      <span>🕵️ 方案 C：黑色罪案小报</span>
+    </button>
+    <button class="dock-btn" onclick="switchTheme('illustrated', this)">
+      <span>⚜️ 方案 D：爱德华绅士周刊</span>
+    </button>
+  </div>
+
+  <!-- 滑动/排版模式选择器 -->
+  <div class="dock-modes">
+    <span class="dock-mode-label">滑动模式:</span>
+    <button class="dock-mode-btn" onclick="switchScrollMode('vertical', this)">
+      ⬇️ 纵向长卷滑
+    </button>
+    <button class="dock-mode-btn active" onclick="switchScrollMode('horizontal', this)">
+      ↔️ 左右多版翻页
+    </button>
+    <button class="dock-mode-btn" onclick="switchScrollMode('spread', this)">
+      📖 双版并列展卷
+    </button>
+  </div>
+
+  <div class="dock-actions">
+    <button class="dock-action-btn" onclick="togglePanel()">▸ 展开/收起</button>
+    <button class="dock-action-btn" onclick="simulateNewIntel()">✦ 模拟新情报</button>
+    <button class="dock-action-btn" onclick="simulateAdvanceStage()">⏩ 阶段解密</button>
+  </div>
+</div>
+
+<!-- 方案设计理念与规格说明条 -->
+<div id="scheme-info-banner">
+  <div id="scheme-info-text">
+    <strong>当前滑动模式：左右多版翻页 (↔️ Horizontal Paging)</strong> —— 将报纸分为「第1版·要闻态势」、「第2版·公开电讯」、「第3版·暗流解密」，支持左右滑动翻页、标签切版与翻页动画！
+  </div>
+  <div id="scheme-info-tags">
+    <span class="info-tag">#左右多版翻页</span>
+    <span class="info-tag">#吸附滑动</span>
+    <span class="info-tag">#分版标签</span>
+    <span class="info-tag">#阿卡姆大报</span>
+  </div>
+</div>
+
+<!-- ==========================================================================
+     模拟酒馆跑团聊天主页面（背景语境）
+     ========================================================================== -->
+<div class="fake-chat-container" id="fake-chat">
+  <div class="fake-floor">
+    <div class="floor-tag"><span>FLOOR 12</span><span>第 12 楼 · 萨里山街区</span></div>
+    <p class="narr">达令赫斯特的红砖巷道被连绵的秋雨浸得发亮。妓院二楼昏黄的百叶窗后，蒂莉·迪瓦恩隔着蕾丝边窗帘打量着你们——她的指间夹着一根细长的象牙烟嘴，笑容像账本上的红字一样分明。</p>
+    <p class="say">「凯特·利的人昨晚在萨里山放了三把火，」她慢条斯理地吐出一口青烟，「如果你们真想知道是谁在给内陆运'特种机械'，我可以告诉你们哪辆车队的账目最干净——前提是，代价格外公道。」</p>
+    <p class="narr">她身后，两名剃刀党看场打手无声地挪动了半步，堵住了通往后廊的安全门。窗外远处，警笛声由远及近，又拐向了更混乱的码头区。</p>
+    <div class="status-block">
+      【状态栏 · 1925年6月13日 13:00】地点：📍 悉尼 · 萨里山 · 绿顶酒馆 · 二楼密室 ｜ 戒备：警戒 ｜ 阶段：潜伏期
+    </div>
+  </div>
+
+  <div class="fake-floor">
+    <div class="floor-tag"><span>FLOOR 13</span><span>第 13 楼 · 调查员行动</span></div>
+    <p class="narr">你递上一枚刻有伦敦船运标记的银币。蒂莉的目光在银币边缘停留了片刻，眼神微冷，但手腕轻巧地将银币扫入了手袋。</p>
+    <p class="say">「大洋贸易商会。三天前他们在黑德兰港包下了整整三节冷藏车厢，守卫全换成了不爱说话的内陆人。」</p>
+  </div>
+</div>
+
+<!-- ==========================================================================
+     副导演 · 贴边折叠条（折叠态）
+     ========================================================================== -->
+<aside id="sd-rail" title="世界情报栏 · 点击展开">
+  <div class="rail-stamp-icon">✦</div>
+  <div class="rail-dot" id="sd-rail-dot"></div>
+  <div class="rail-spine-title">情报号外 GAZETTE</div>
+  <div class="rail-ticker-wrap">
+    <ul id="sd-ticker-list">
+      <li>剃刀党私酒价格一夜上涨四成</li>
+      <li>飞行小队扩充编制进驻达令港</li>
+      <li>坎卡杰里以南驼队改夜间行进</li>
+      <li>剃刀党私酒价格一夜上涨四成</li>
+      <li>飞行小队扩充编制进驻达令港</li>
+      <li>坎卡杰里以南驼队改夜间行进</li>
+    </ul>
+  </div>
+  <div class="rail-unfold-tag">▸ 点击展开</div>
+</aside>
+
+<!-- ==========================================================================
+     副导演 · 世界情报报纸面板（展开态）
+     ========================================================================== -->
+<aside id="sd-panel" class="mode-horizontal">
+  <!-- 报头 (Masthead) -->
+  <div class="news-masthead">
+    <div class="mast-ears">
+      <span id="mast-vol">VOL. IV — NO. 138</span>
+      <span class="ear-center">"Truth in the Shadows"</span>
+      <span id="mast-weather">PRICE: 2 PENCE · SYDNEY</span>
+    </div>
+    <div class="mast-main-title">悉尼星期增刊 · GAZETTE</div>
+    <div class="mast-sub-banner">
+      <span id="mast-date">1925年 · 6月13日 · 暮春</span>
+      <span class="stage-tag" id="mast-stage">阶段一 · 街头与权谋</span>
+    </div>
+  </div>
+
+  <!-- 分版导航条（左右翻页模式生效） -->
+  <div class="news-page-tabs visible" id="page-tabs-bar">
+    <div class="page-tab-group">
+      <button class="page-tab-btn active" onclick="goToPage(0, this)">第 1 版 · 要闻</button>
+      <button class="page-tab-btn" onclick="goToPage(1, this)">第 2 版 · 电讯</button>
+      <button class="page-tab-btn" onclick="goToPage(2, this)">第 3 版 · 暗流</button>
+    </div>
+    <div class="page-nav-arrows">
+      <button class="page-nav-btn" onclick="prevPage()">◀</button>
+      <span class="page-indicator" id="page-indicator-text">1 / 3 版</span>
+      <button class="page-nav-btn" onclick="nextPage()">▶</button>
+    </div>
+  </div>
+
+  <!-- 主情报流容器 (Wire Container) -->
+  <div class="news-wire-container" id="news-wire-box">
+    <!-- 第 1 版：头条要闻与当前态势 -->
+    <div class="news-sheet-page" id="page-1">
+      <div class="news-lead-headline">
+        <div class="lead-stamp">PUBLIC RECORD</div>
+        <div class="lead-eyebrow">📍 当前所在地态势简报 · CURRENT SITUATION</div>
+        <div class="lead-title" id="lead-place-title">绿顶酒馆 · 警戒戒备中</div>
+        <div class="lead-body">
+          凯特·利旗下剃刀党混混与私酒蒸馏师聚集。应邀客人以礼相待、敬酒试探；若亮械或闯入后场酒窖立即开战。
+        </div>
+      </div>
+
+      <div class="news-article" id="art-lead-editorial">
+        <div class="article-header">
+          <span class="article-kicker">主笔社论 · LEADING ARTICLE</span>
+          <span class="article-badge hot">头版社评</span>
+        </div>
+        <div class="article-title">暗流涌动的新州：内陆铁轨上的幽灵</div>
+        <div class="article-text drop-cap">
+          随着冬令将至，悉尼港的走私船只并未随着气温下降而收敛。工商业公会多次就内陆矿机运输异常向总督府递交请愿书，但各方势力心照不宣地维持着脆弱的平衡。
+        </div>
+        <div class="article-sub-wire">
+          ✦ 提示：向右滑动或点击「第2版」查看各派系最新公开情报。
+        </div>
+      </div>
+    </div>
+
+    <!-- 第 2 版：各派系公开情报电讯 -->
+    <div class="news-sheet-page" id="page-2">
+      <div class="news-columns" id="news-columns-container">
+        <!-- 派系 1：萨里山剃刀党 -->
+        <div class="news-article" id="art-razor">
+          <div class="article-header">
+            <span class="article-kicker">《真理报》社会版 · 第12日</span>
+            <span class="article-badge hot">火并升温</span>
+          </div>
+          <div class="article-title">萨里山剃刀党：私酒供应链疑受重创</div>
+          <div class="article-text">
+            达令赫斯特夜半枪声不断，警方记录多起“私酒商激烈斗殴”，现场无人被捕。凯特·利旗下私酒价格一夜上涨四成。
+          </div>
+          <div class="article-sub-wire">
+            ✦ 码头传闻：两名私酒搬运工失踪，现场留有煤灰弹壳。
+          </div>
+        </div>
+
+        <!-- 派系 2：警方 -->
+        <div class="news-article" id="art-police">
+          <div class="article-header">
+            <span class="article-kicker">《电讯晚报》警务版 · 第13日</span>
+            <span class="article-badge">戒备扩充</span>
+          </div>
+          <div class="article-title">麦凯探长飞行小队扩编进驻达令港</div>
+          <div class="article-text">
+            州议会讨论延长《手枪管制法案》适用期。警方飞行小队昨夜突击搜查私人码头，入夜后巡逻频次翻倍。
+          </div>
+        </div>
+
+        <!-- 派系 3：大洋商行 -->
+        <div class="news-article" id="art-trade">
+          <div class="article-header">
+            <span class="article-kicker">商会登记簿 · 第10日</span>
+            <span class="article-badge">活动平缓</span>
+          </div>
+          <div class="article-title">内陆重型车队登记反常重型机械</div>
+          <div class="article-text">
+            大洋贸易商会新注册三辆重型货运卡车，申报用途为“内陆矿业钻探机械”。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 第 3 版：街头暗流与阶段解密 -->
+    <div class="news-sheet-page" id="page-3">
+      <div class="news-article mystery" id="art-pharaoh">
+        <div class="mystery-label">
+          —— ✦ 阶段未揭示：此间尚无街头可见之传闻 ✦ ——
+        </div>
+      </div>
+
+      <div class="news-article" style="margin-top:14px;">
+        <div class="article-header">
+          <span class="article-kicker">酒馆街谈巷议 · 坊间传闻</span>
+          <span class="article-badge">传闻杂记</span>
+        </div>
+        <div class="article-title">流民营地的怪异胡言与占卜占星者</div>
+        <div class="article-text">
+          据达令港水手称，近几周夜间退潮时，总能在红砂滩涂上看见奇怪的同心圆脚印，巡夜人巡查时仅闻到刺鼻的硫磺味。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 报尾出版信息 (Colophon) -->
+  <div class="news-colophon">
+    本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由调查员自行抵达 ｜ SYDNEY 1925
+  </div>
+</aside>
+
+<script>
+  // DOM 元素引用
+  const rail = document.getElementById('sd-rail');
+  const panel = document.getElementById('sd-panel');
+  const dot = document.getElementById('sd-rail-dot');
+  const tickerList = document.getElementById('sd-ticker-list');
+  const wireBox = document.getElementById('news-wire-box');
+  const pageTabsBar = document.getElementById('page-tabs-bar');
+  const pageIndicator = document.getElementById('page-indicator-text');
+  const fakeChat = document.getElementById('fake-chat');
+
+  let currentThemeKey = 'broadside';
+  let currentScrollMode = 'horizontal'; // 'vertical' | 'horizontal' | 'spread'
+  let currentPageIdx = 0;
+
+  // 切换方案主题
+  function switchTheme(themeKey, btn) {
+    currentThemeKey = themeKey;
+    document.body.className = 'theme-' + themeKey;
+    document.querySelectorAll('.dock-schemes .dock-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+  }
+
+  // 切换滑动/排版模式
+  function switchScrollMode(mode, btn) {
+    currentScrollMode = mode;
+    document.querySelectorAll('.dock-modes .dock-mode-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    panel.classList.remove('mode-horizontal', 'mode-spread', 'spread-wide');
+
+    const infoText = document.getElementById('scheme-info-text');
+
+    if (mode === 'vertical') {
+      pageTabsBar.classList.remove('visible');
+      infoText.innerHTML = '<strong>当前模式：纵向长卷滑 (⬇️ Vertical Continuous)</strong> —— 经典上下连续滚动，报头与报尾固定，内容连贯一览无余，适合鼠标滚轮极速浏览。';
+    } else if (mode === 'horizontal') {
+      panel.classList.add('mode-horizontal');
+      pageTabsBar.classList.add('visible');
+      infoText.innerHTML = '<strong>当前模式：左右多版翻页 (↔️ Horizontal Paging)</strong> —— 真实 1920s 报纸分版！分为「第1版·要闻态势」、「第2版·公开电讯」、「第3版·暗流解密」，支持左右滑动手势、标签切版与按键翻页。';
+      goToPage(0);
+    } else if (mode === 'spread') {
+      panel.classList.add('mode-spread', 'spread-wide');
+      pageTabsBar.classList.remove('visible');
+      infoText.innerHTML = '<strong>当前模式：双版并列展卷 (📖 Dual-Page Spread)</strong> —— 面板展开为 720px 宽幅大报，左半版是要闻与态势，右半版是各派系公开情报，左右并列展卷。';
+    }
+  }
+
+  // 左右翻页控制器
+  function goToPage(idx, btn) {
+    currentPageIdx = Math.max(0, Math.min(idx, 2));
+    const pages = [document.getElementById('page-1'), document.getElementById('page-2'), document.getElementById('page-3')];
+    if (pages[currentPageIdx]) {
+      pages[currentPageIdx].scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+    }
+    document.querySelectorAll('.page-tab-btn').forEach((b, i) => {
+      b.classList.toggle('active', i === currentPageIdx);
+    });
+    pageIndicator.textContent = `${currentPageIdx + 1} / 3 版`;
+  }
+  function nextPage() { goToPage(currentPageIdx + 1); }
+  function prevPage() { goToPage(currentPageIdx - 1); }
+
+  // 监听横向滚动吸附同步更新页码
+  wireBox.addEventListener('scroll', () => {
+    if (currentScrollMode === 'horizontal') {
+      const scrollLeft = wireBox.scrollLeft;
+      const width = wireBox.clientWidth || 1;
+      const page = Math.round(scrollLeft / width);
+      if (page !== currentPageIdx) {
+        currentPageIdx = page;
+        document.querySelectorAll('.page-tab-btn').forEach((b, i) => {
+          b.classList.toggle('active', i === currentPageIdx);
+        });
+        pageIndicator.textContent = `${currentPageIdx + 1} / 3 版`;
+      }
+    }
+  });
+
+  // 展开 / 折叠面板
+  function togglePanel(forceOpen) {
+    const willOpen = forceOpen !== undefined ? forceOpen : !panel.classList.contains('open');
+    panel.classList.toggle('open', willOpen);
+    if (willOpen) dot.classList.remove('on');
+  }
+  rail.addEventListener('click', () => togglePanel(true));
+  document.addEventListener('click', (e) => {
+    if (panel.classList.contains('open')
+        && !panel.contains(e.target)
+        && !rail.contains(e.target)
+        && !e.target.closest('#showcase-dock')) {
+      togglePanel(false);
+    }
+  });
+
+  // 模拟情报到达
+  const FRESH_NEWS_POOL = [
+    {
+      src: '《矿工晨报》· 第14日',
+      badge: '异动频发',
+      hot: true,
+      title: '坎卡杰里驼队改在夜间行进，商队宣称“避暑”',
+      text: '从大沙沙漠边缘返回的驼工透露，运往内陆不知名深坑的木箱全部加盖了防潮重铁皮，沿途有持步枪的雇佣兵押送。'
+    }
+  ];
+  let newsIdx = 0;
+  let currentHeads = ['剃刀党私酒价格一夜上涨四成', '飞行小队扩充编制进驻达令港', '坎卡杰里以南驼队改夜间行进'];
+
+  function simulateNewIntel() {
+    const n = FRESH_NEWS_POOL[newsIdx++ % FRESH_NEWS_POOL.length];
+    dot.classList.add('on');
+    currentHeads.unshift(n.title.slice(0, 14));
+    currentHeads = currentHeads.slice(0, 3);
+    tickerList.innerHTML = currentHeads.concat(currentHeads).map(t => `<li>${t}</li>`).join('');
+
+    const cols = document.getElementById('news-columns-container');
+    const newArt = document.createElement('div');
+    newArt.className = 'news-article fresh-entry';
+    newArt.innerHTML = `
+      <div class="article-header">
+        <span class="article-kicker">${n.src}</span>
+        <span class="article-badge ${n.hot ? 'hot' : ''}">${n.badge}</span>
+      </div>
+      <div class="article-title">${n.title}</div>
+      <div class="article-text">${n.text}</div>
+    `;
+    cols.insertBefore(newArt, cols.firstChild);
+
+    // 自动切到第 2 版并展开
+    togglePanel(true);
+    if (currentScrollMode === 'horizontal') goToPage(1);
+  }
+
+  // 模拟剧情阶段推进（揭示神秘暗线派系）
+  function simulateAdvanceStage() {
+    document.getElementById('mast-stage').textContent = '阶段二 · 荒原与走私 (STAGE 2)';
+    document.getElementById('mast-date').textContent = '1925年 · 6月20日 · 初夏';
+
+    const pharaoh = document.getElementById('art-pharaoh');
+    pharaoh.className = 'news-article fresh-entry';
+    pharaoh.innerHTML = `
+      <div class="article-header">
+        <span class="article-kicker">教堂告解传闻 · 第20日</span>
+        <span class="article-badge hot">初露端倪</span>
+      </div>
+      <div class="article-title">黑法老兄弟会：北郊废弃教堂夜间斗篷聚会</div>
+      <div class="article-text">
+        守门人承认每逢新月有外籍神职人员进入地下墓穴，对方“支付金镑，不允多问”。警方档案中翻出十年前一宗祭祀失踪悬案，受害者胸口均有对称蝎形割痕。
+      </div>
+      <div class="article-sub-wire">
+        ✦ 侦探手记：该教派与大洋贸易商行内陆运输线路高度重合。
+      </div>
+    `;
+    togglePanel(true);
+    if (currentScrollMode === 'horizontal') goToPage(2);
+  }
+
+  // 默认启动时轻微展开预览
+  setTimeout(() => { togglePanel(true); }, 500);
+</script>
+</body>
+</html>
