@@ -179,7 +179,7 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 事件号
 **LWB 摘要读取细则**（已核实源码 `LittleWhiteBox/modules/story-summary/`）：
 - **通路**：`SillyTavern.chatMetadata.extensions.LittleWhiteBox.storySummary`（酒馆助手脚本环境的稳定接口 `SillyTavern.chatMetadata`，只读快照）；
 - **字段**：`lastSummarizedMesId`（已总结到的楼层号）+ `json`（`keywords` 5~10 个全局关键词、`events[]` 事件——每条自带 `timeLabel`/`title`/`summary`（4~5 句高清场景重建 + 核心台词摘录）/`participants`/`type`/`weight`/楼层号 `#X-Y`、`arcUpdates` 角色弧光）；
-- **增量窗口**：LWB 自动总结是异步的（timing + interval 楼层阈值触发，非每楼），报告时以 `lastSummarizedMesId` 为界——之前的楼层信任摘要（事件自带楼层号，直接作 causes 出处候选）；之后的 2~3 楼取原文（剥状态栏/Combat_block）补增量；
+- **增量窗口**：LWB 自动总结是异步的（timing + interval 楼层阈值触发，非每楼），报告时以 `lastSummarizedMesId` 为界——**已总结楼层不再回读原文**，以 LWB 摘要事件作为该段历史的唯一输入材料（事件自带楼层号，直接作 causes 出处候选，程序只校验楼层号真实存在、不回读原文复核事实陈述）；未总结的最近 2~3 楼取原文（剥状态栏/Combat_block）补增量；LWB 缺席或摘要为空时该段为盲区——代价是暗线对老历史无从推演（非幻觉，三态机制兜底：无出处条目进不了真相层）；
 - **楼层隐藏联动**：LWB 开启 hideSummarizedHistory 时旧楼层已被 `/hide` 隐藏（仅保留最近 ~3 楼可见）——被隐藏的历史里，副导演暗线注入的"事实提醒"是唯一在场的载体，因此事实提醒应保留**影响当前决策的关键事实**，即使 LWB 摘要已覆盖（摘要管"发生过什么"，事实提醒管"现在还作数且影响行动的"）；
 - **注入分工**（防两条注入冗余堆 token）：LWB 的 `<剧情总结>`（ASSISTANT 角色、动态深度）管**客观事件回放**；副导演暗线注入管**真相/渗透指令/禁泄**（"意味着什么"）——事实提醒段只放摘要未强调或已被隐藏楼层中的决策性事实，措辞密度对齐 LWB 的精炼风格（一行一事 + 楼层标注）。
 
