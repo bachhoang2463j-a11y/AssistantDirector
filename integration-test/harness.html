@@ -335,10 +335,25 @@ async function runAll() {
 
   /* ——— UI 数据驱动 ——— */
   head('UI 数据驱动');
+  assert('注入更新点亮未读提醒（rail-dot.on）', document.getElementById('ad-rail-dot').classList.contains('on'));
+  assert('ticker 渲染（最新情报×2 无缝循环）', (() => {
+    const lis = document.querySelectorAll('#ad-ticker li');
+    return lis.length >= 2 && lis[0].textContent.includes('绿顶酒馆');
+  })());
   AD.togglePanel(true, true);
+  assert('展开后未读熄灭', !document.getElementById('ad-rail-dot').classList.contains('on'));
   assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
   assert('派系分组卡渲染（3 卡片 3 派系）', document.querySelectorAll('#ad-wire .ad-faction').length >= 3);
-  assert('ticker 渲染（6 项=3×2 无缝循环）', document.querySelectorAll('#ad-ticker li').length === 6);
+  assert('折叠态极简结构（无静态品牌文案）', (() => {
+    const rail = document.getElementById('ad-rail');
+    return !rail.querySelector('.ad-rail-label') && !rail.querySelector('.ad-rail-fold')
+      && !!rail.querySelector('.ad-rail-star') && rail.title.includes('点击展开');
+  })());
+  assert('空态收缩（tickerHeads 清空 → empty 类 + ticker 清空）', (() => {
+    AD.state.tickerHeads = []; AD.renderTicker();
+    return document.getElementById('ad-rail').classList.contains('empty')
+      && document.querySelectorAll('#ad-ticker li').length === 0;
+  })());
 
   finish();
 }

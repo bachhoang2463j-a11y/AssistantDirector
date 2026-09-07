@@ -181,6 +181,7 @@
     lastLocationText: '',     // 当前地点原文
     ammoBaseline: 0,          // 弹药基准（历史最高，规模降档参照）
     lastCardsRef: '',         // 卡片池指纹（检测外部改动）
+    tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
     pendingTimer: null,
   };
 
@@ -189,12 +190,14 @@
     State.lastInjectedText = s.lastInjectedText || '';
     State.lastLocationText = s.lastLocationText || '';
     State.ammoBaseline = s.ammoBaseline || 0;
+    State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
   }
   function persistRuntimeState() {
     writeChatVar(CV.state, {
       lastInjectedText: State.lastInjectedText,
       lastLocationText: State.lastLocationText,
       ammoBaseline: State.ammoBaseline,
+      tickerHeads: State.tickerHeads,
       savedAt: Date.now(),
     });
   }
@@ -214,10 +217,11 @@
     scheduleDispatch('floor-event');
   }
   function onChatChanged() {
-    // 换聊天：运行时状态重置，注入重建
+    // 换聊天：运行时状态重置（情报流也清空），注入重建
     State.lastInjectedText = '';
     State.lastLocationText = '';
     State.ammoBaseline = 0;
+    State.tickerHeads = [];
     if (!SETTINGS.enabled) return;
     scheduleDispatch('chat-changed');
   }
@@ -393,6 +397,8 @@
     if (text !== State.lastInjectedText) {
       if (IS_LIVE && injectReplace(INJECT_ID_SITUATION, text)) {
         State.lastInjectedText = text;
+        pushTickerHead(mode, hit ? hit.card.place : locationText);
+        if (els.dot) els.dot.classList.add('on');   // 更新提醒：展开后熄灭
         log(`态势注入已更新（${mode}/${reason}）`, hit ? `→ ${hit.card.place}` : '→ 兜底');
       }
     } else {
@@ -429,32 +435,31 @@
     : document;
 
   const UI_CSS = `
-  #ad-rail { position: fixed; right: 0; top: 12%; height: 62vh; width: 40px; z-index: 99990;
+  #ad-rail { position: fixed; right: 0; top: 28%; width: 30px; z-index: 99990;
     background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
     border: 1px solid rgba(148,163,184,0.28); border-right: none;
     border-radius: 8px 0 0 8px; display: flex; flex-direction: column; align-items: center;
-    cursor: pointer; user-select: none; transition: width .25s ease, box-shadow .3s ease; }
+    cursor: pointer; user-select: none; padding: 9px 0 7px;
+    transition: width .25s ease, box-shadow .3s ease; }
   #ad-rail:hover { box-shadow: -6px 0 24px rgba(251,191,36,0.13); }
-  #ad-rail:hover .ad-rail-label { color: #fbbf24; }
-  .ad-rail-label { writing-mode: vertical-rl; letter-spacing: 6px; font-size: 11px;
-    color: #94a3b8; padding-top: 14px; transition: color .25s; font-family: 'Courier New', monospace; }
-  .ad-rail-label b { color: #fbbf24; font-weight: normal; }
+  #ad-rail:hover .ad-rail-star { color: #fbbf24; }
+  .ad-rail-star { font-size: 12px; line-height: 1; color: rgba(251,191,36,0.55);
+    padding-bottom: 5px; transition: color .25s; }
   #ad-rail-dot { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24;
-    margin-top: 10px; opacity: 0; transition: opacity .3s; box-shadow: 0 0 8px rgba(251,191,36,0.55);
+    opacity: 0; transition: opacity .3s; box-shadow: 0 0 8px rgba(251,191,36,0.55);
     animation: ad-dot-pulse 1.6s ease-in-out infinite; }
   #ad-rail-dot.on { opacity: 1; }
   @keyframes ad-dot-pulse { 0%,100% { transform: scale(1); box-shadow: 0 0 4px rgba(251,191,36,0.55);} 50% { transform: scale(1.5); box-shadow: 0 0 12px rgba(251,191,36,0.55);} }
-  .ad-rail-ticker { flex: 1; overflow: hidden; margin: 12px 0; width: 100%; position: relative;
+  .ad-rail-ticker { height: 26vh; overflow: hidden; margin-top: 8px; width: 100%; position: relative;
     mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
     -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent); }
+  #ad-rail.empty .ad-rail-ticker { display: none; }
   .ad-rail-ticker ul { list-style: none; position: absolute; left: 0; right: 0; margin: 0; padding: 0;
     animation: ad-tick 14s linear infinite; }
   @keyframes ad-tick { from { transform: translateY(0); } to { transform: translateY(-50%); } }
   .ad-rail-ticker li { writing-mode: vertical-rl; letter-spacing: 3px; font-size: 9px;
-    color: #64748b; padding: 0 0 18px 0; display: block; margin: 0 auto; width: 20px; }
-  .ad-rail-ticker li::before { content: '✦ '; color: rgba(251,191,36,0.55); }
-  .ad-rail-fold { writing-mode: vertical-rl; font-size: 10px; letter-spacing: 4px;
-    color: #64748b; padding: 8px 0 12px; }
+    color: #94a3b8; padding: 0 0 16px 0; display: block; margin: 0 auto; width: 16px; }
+  .ad-rail-ticker li:first-child { color: #fde68a; }
 
   #ad-panel { position: fixed; right: -400px; top: 4vh; bottom: 4vh; width: 372px; z-index: 99995;
     background: linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98));
@@ -559,12 +564,11 @@
     style.textContent = UI_CSS;
     UI_DOC.head.appendChild(style);
 
-    // 折叠态贴边条
-    const rail = el('aside', { id: 'ad-rail', title: '世界情报栏' }, `
-      <div class="ad-rail-label">世界情报 <b>✦</b> GAZETTE</div>
+    // 折叠态贴边条（极简：✦ 手柄 + 未读点 + 情报轮播；空态收缩为小胶囊）
+    const rail = el('aside', { id: 'ad-rail', title: '世界情报 · 点击展开' }, `
+      <div class="ad-rail-star">✦</div>
       <div id="ad-rail-dot"></div>
-      <div class="ad-rail-ticker"><ul id="ad-ticker"></ul></div>
-      <div class="ad-rail-fold">点击展开 ▸</div>`);
+      <div class="ad-rail-ticker"><ul id="ad-ticker"></ul></div>`);
     UI_DOC.body.appendChild(rail);
 
     // 展开态面板
@@ -630,11 +634,27 @@
     setTimeout(() => t.remove(), 2200);
   }
 
-  // ticker：卡片池派系名 + 地点（S0 骨架数据源；S4 换 surface 头条）
+  // ticker：最新情报轮播（折叠态唯一内容）；空态时竖条收缩为小胶囊
+  // 地点短名：取剥 emoji 后按分隔符切段的倒数第二段（"悉尼·萨里山·绿顶酒馆·大堂"→"绿顶酒馆"）
+  function shortLoc(text) {
+    const parts = norm(text).split(/[·\-—]/).map(s => s.trim()).filter(Boolean);
+    const seg = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || '');
+    return seg.slice(0, 8);
+  }
+  function pushTickerHead(mode, placeOrLoc) {
+    const label = mode === 'card' ? '驻防' : mode === 'safe' ? '安全区' : '新地界';
+    const name = ((mode === 'card' ? String(placeOrLoc || '') : shortLoc(placeOrLoc)) || '未知地点').slice(0, 8);
+    const head = `${name}·${label}`;
+    if (State.tickerHeads[0] === head) return;
+    State.tickerHeads.unshift(head);
+    State.tickerHeads = State.tickerHeads.slice(0, 3);
+    renderTicker();
+  }
+
   function renderTicker() {
-    const cards = getCards();
-    let heads = cards.slice(0, 3).map(c => `${c.faction || '？'} · ${c.place}`);
-    if (!heads.length) heads = ['世界情报通道静默中'];
+    if (!els.rail || !els.ticker) return;
+    const heads = (State.tickerHeads || []).slice(0, 3);
+    els.rail.classList.toggle('empty', heads.length === 0);
     els.ticker.innerHTML = heads.concat(heads).map(t => `<li>${esc(t)}</li>`).join('');
   }
 
@@ -904,6 +924,7 @@
     // 引擎纯函数
     norm, matchCard, parseMenu, parseAttr, parseAmmoTotal, charList, computeScale,
     buildSituationText, buildSafeText, buildFallbackText,
+    shortLoc, pushTickerHead, renderTicker,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,
