@@ -83,7 +83,10 @@ const MOCK = (function () {
   return {
     // 测试辅助
     addFloor(vars) { store.message[floorCount++] = vars || {}; },
-    setFloorStat(statData) { store.message[Math.max(0, floorCount - 1)] = { stat_data: { '状态栏': statData } }; },
+    setFloorStat(statData) {
+      if (floorCount === 0) floorCount = 1;   // 空楼层表时先立一楼，否则 message_id:-1 解析不到
+      store.message[floorCount - 1] = { stat_data: { '状态栏': statData } };
+    },
     reset() {
       // 原地清空（不能重新赋值——MOCK.chat 持有引用，重新赋值会与之脱钩）
       for (const k of Object.keys(store.chat)) delete store.chat[k];
@@ -188,7 +191,7 @@ async function runAll() {
   assert('__AD__ 测试钩子暴露', !!AD);
   assert('LIVE 环境检测通过（mock API 全套）', AD.IS_LIVE === true);
   assert('悬浮窗挂载（#ad-rail）', !!document.getElementById('ad-rail'));
-  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具条按钮 ×3', document.querySelectorAll('#ad-panel .ad-toolbar button').length === 3);
+  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×3（报头内联）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 3);
   await waitFor(() => MOCK.injections.calls.length === 0 && true, 2000); // init 去抖静默期
   assert('无楼层时 init 不注入', MOCK.injections.calls.length === 0);
 
@@ -343,7 +346,29 @@ async function runAll() {
   AD.togglePanel(true, true);
   assert('展开后未读熄灭', !document.getElementById('ad-rail-dot').classList.contains('on'));
   assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
-  assert('派系分组卡渲染（3 卡片 3 派系）', document.querySelectorAll('#ad-wire .ad-faction').length >= 3);
+  // UI 段前的持久化段 reset 过楼层表，此处补一楼有效数据再 dispatch，刷新 nowline/hit
+  MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+  AD.dispatchNow('ui-setup');
+  assert('情报条目流渲染（每卡一条，无边框纯排版）', (() => {
+    const items = document.querySelectorAll('#ad-wire .ad-item');
+    return items.length === 3 && !document.querySelector('#ad-wire .ad-faction');
+  })());
+  assert('情报条目含派系与敌情菜单', (() => {
+    const first = document.querySelector('#ad-wire .ad-item');
+    return first.textContent.includes('凯特·利') && first.textContent.includes('萨里山剃刀党混混4-6') && first.textContent.includes('警戒');
+  })());
+  assert('当前态势行（地点+配发形态）', (() => {
+    const now = document.querySelector('#ad-wire .ad-nowline');
+    return now && now.textContent.includes('绿顶酒馆') && now.textContent.includes('驻防');
+  })());
+  assert('当前地点卡片高亮（hit 类）', (() => {
+    const hitEl = document.querySelector('#ad-wire .ad-item.hit');
+    return hitEl && hitEl.textContent.includes('绿顶酒馆');
+  })());
+  assert('工具按钮内联报头（无底部工具条）', (() => {
+    return document.querySelectorAll('.ad-head-btns button').length === 3
+      && !document.querySelector('#ad-panel .ad-toolbar') && !document.querySelector('#ad-panel .ad-colophon');
+  })());
   assert('折叠态极简结构（无静态品牌文案）', (() => {
     const rail = document.getElementById('ad-rail');
     return !rail.querySelector('.ad-rail-label') && !rail.querySelector('.ad-rail-fold')

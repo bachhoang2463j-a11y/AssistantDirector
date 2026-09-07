@@ -86,6 +86,7 @@
     } catch (e) { return defaultSettings(); }
   }
   function saveSettings(s) {
+    SETTINGS = s;   // 同步闭包变量——dispatchNow/事件监听读的是它，只写 localStorage 不生效
     try { localStorage.setItem(LS.settings, JSON.stringify(s)); } catch (e) { log('warn', '设置保存失败', e); }
   }
   function loadUiPrefs() {
@@ -179,6 +180,7 @@
   const State = {
     lastInjectedText: '',     // 幂等：相同内容不重注
     lastLocationText: '',     // 当前地点原文
+    lastMode: '',             // 最近一次配发形态（card/safe/fallback）
     ammoBaseline: 0,          // 弹药基准（历史最高，规模降档参照）
     lastCardsRef: '',         // 卡片池指纹（检测外部改动）
     tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
@@ -189,6 +191,7 @@
     const s = readChatVar(CV.state) || {};
     State.lastInjectedText = s.lastInjectedText || '';
     State.lastLocationText = s.lastLocationText || '';
+    State.lastMode = s.lastMode || '';
     State.ammoBaseline = s.ammoBaseline || 0;
     State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
   }
@@ -196,6 +199,7 @@
     writeChatVar(CV.state, {
       lastInjectedText: State.lastInjectedText,
       lastLocationText: State.lastLocationText,
+      lastMode: State.lastMode || '',
       ammoBaseline: State.ammoBaseline,
       tickerHeads: State.tickerHeads,
       savedAt: Date.now(),
@@ -364,6 +368,7 @@
   }
 
   function dispatchNow(reason) {
+    if (!SETTINGS.enabled) return;   // 总开关关闭：手动重算/事件触发一律不注入
     const stat = readLatestStatData();
     if (!stat) {
       log('无 stat_data 可用（MMS 未运行或尚无楼层变量），跳过本轮配发');
@@ -394,6 +399,7 @@
     }
 
     State.lastLocationText = locationText;
+    State.lastMode = mode;
     if (text !== State.lastInjectedText) {
       if (IS_LIVE && injectReplace(INJECT_ID_SITUATION, text)) {
         State.lastInjectedText = text;
@@ -467,47 +473,37 @@
     display: flex; flex-direction: column; font-family: 'Courier New', 'SimSun', monospace; color: #cbd5e1;
     transition: right .38s cubic-bezier(0.22, 1, 0.36, 1); box-shadow: -18px 0 48px rgba(0,0,0,0.5); }
   #ad-panel.open { right: 0; }
-  .ad-masthead { padding: 14px 16px 10px; border-bottom: 3px double #94a3b8; position: relative; }
-  .ad-masthead::after { content: ''; position: absolute; left: 16px; right: 16px; bottom: 3px; border-bottom: 1px solid rgba(148,163,184,0.28); }
-  .ad-mast-top { display: flex; justify-content: space-between; align-items: baseline;
-    font-size: 9px; letter-spacing: 2px; color: #64748b; margin-bottom: 6px; }
-  .ad-mast-title { text-align: center; font-size: 17px; letter-spacing: 8px; color: #e2e8f0;
-    font-weight: bold; text-indent: 8px; }
-  .ad-mast-title .co { color: #fbbf24; }
-  .ad-mast-sub { display: flex; justify-content: center; gap: 14px; margin-top: 7px;
-    font-size: 10px; letter-spacing: 2px; color: #94a3b8; }
-  .ad-mast-sub .stage { color: #fbbf24; }
-  .ad-mast-sub .sep::before { content: '·'; color: #94a3b8; }
-  .ad-wire { flex: 1; overflow-y: auto; padding: 12px 14px 18px; }
+  /* 报头：一行信息条 + 内联工具按钮 */
+  .ad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 7px 12px; border-bottom: 1px solid rgba(148,163,184,0.28); flex: none; }
+  .ad-head-info { font-size: 10.5px; letter-spacing: 1px; color: #94a3b8; white-space: nowrap; overflow: hidden; }
+  .ad-head-info .stage { color: #fbbf24; }
+  .ad-head-btns { display: flex; gap: 5px; flex: none; }
+  .ad-head-btns button { background: none; color: #94a3b8; border: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; padding: 2px 4px; line-height: 1; transition: color .2s; }
+  .ad-head-btns button:hover { color: #fbbf24; }
+  /* 当前态势行 */
+  .ad-nowline { flex: none; padding: 5px 12px; font-size: 10.5px; letter-spacing: 1px;
+    color: rgba(251,191,36,0.75); border-bottom: 1px solid rgba(148,163,184,0.18);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ad-nowline::before { content: '▶ '; }
+  /* 情报流主体：无边框纯排版条目 */
+  .ad-wire { flex: 1; overflow-y: auto; padding: 2px 0 10px; }
   .ad-wire::-webkit-scrollbar { width: 5px; }
   .ad-wire::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 3px; }
-  .ad-wire-rule { display: flex; align-items: center; gap: 10px; font-size: 9px; letter-spacing: 3px;
-    color: #64748b; margin: 4px 0 12px; }
-  .ad-wire-rule::before, .ad-wire-rule::after { content: ''; flex: 1; border-top: 1px solid rgba(148,163,184,0.28); }
-
-  .ad-faction { background: rgba(30,41,59,0.55); border: 1px solid rgba(148,163,184,0.28);
-    border-left: 3px solid rgba(251,191,36,0.55); border-radius: 6px;
-    padding: 10px 12px 11px; margin-bottom: 12px; transition: border-color .3s; }
-  .ad-faction:hover { border-left-color: #fbbf24; }
-  .ad-fac-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-  .ad-fac-name { font-size: 12px; letter-spacing: 3px; color: #e2e8f0; }
-  .ad-fac-name::before { content: '❧ '; color: rgba(251,191,36,0.55); }
-  .ad-fac-status { font-size: 8px; letter-spacing: 2px; padding: 2px 7px;
-    border: 1px solid rgba(148,163,184,0.28); border-radius: 99px; color: #94a3b8; }
-  .ad-fac-status.active { color: #fbbf24; border-color: rgba(251,191,36,0.55); background: rgba(251,191,36,0.14); }
-  .ad-intel { padding: 6px 0 6px 12px; position: relative; font-size: 12px; line-height: 1.75; }
-  .ad-intel + .ad-intel { border-top: 1px dashed rgba(148,163,184,0.16); }
-  .ad-intel::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 10px; border-left: 1px solid rgba(148,163,184,0.28); }
-  .ad-intel .dim { color: #64748b; font-size: 10px; }
-  .ad-colophon { border-top: 3px double #94a3b8; position: relative; padding: 7px 16px;
-    font-size: 8.5px; letter-spacing: 2px; color: #64748b; text-align: center; }
-  .ad-colophon::before { content: ''; position: absolute; left: 16px; right: 16px; top: 3px; border-top: 1px solid rgba(148,163,184,0.28); }
-  .ad-colophon b { color: rgba(251,191,36,0.55); font-weight: normal; }
-  .ad-toolbar { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid rgba(148,163,184,0.18); }
-  .ad-toolbar button { flex: 1; background: rgba(30,41,59,0.7); color: #cbd5e1;
-    border: 1px solid rgba(148,163,184,0.28); border-radius: 5px; font-family: inherit;
-    font-size: 10.5px; letter-spacing: 1px; padding: 5px 4px; cursor: pointer; transition: all .2s; }
-  .ad-toolbar button:hover { border-color: rgba(251,191,36,0.55); color: #fbbf24; }
+  .ad-item { padding: 6px 12px 7px; }
+  .ad-item + .ad-item { border-top: 1px solid rgba(148,163,184,0.14); }
+  .ad-item.hit { background: rgba(251,191,36,0.06); }
+  .ad-item-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+  .ad-item-place { font-size: 12.5px; color: #e2e8f0; letter-spacing: 1px; }
+  .ad-item-place::before { content: '● '; font-size: 8px; color: rgba(251,191,36,0.6); vertical-align: 2px; }
+  .ad-item-alert { font-size: 9px; letter-spacing: 2px; color: #64748b; }
+  .ad-item-alert.hot { color: #fbbf24; }
+  .ad-item-alert.safe { color: #4ade80; }
+  .ad-item-sub { font-size: 10.5px; color: #94a3b8; margin-bottom: 2px; }
+  .ad-item-sub .menu { color: #cbd5e1; }
+  .ad-item-reaction { font-size: 10px; line-height: 1.55; color: #64748b; }
+  .ad-empty { padding: 14px 16px; font-size: 10.5px; color: #64748b; letter-spacing: 1px; }
 
   #ad-modal { position: fixed; inset: 0; z-index: 99999; display: none;
     background: rgba(2,6,23,0.72); align-items: center; justify-content: center; }
@@ -571,26 +567,17 @@
       <div class="ad-rail-ticker"><ul id="ad-ticker"></ul></div>`);
     UI_DOC.body.appendChild(rail);
 
-    // 展开态面板
+    // 展开态面板：一行报头（信息+内联工具）→ 当前态势行 → 情报条目流
     const panel = el('aside', { id: 'ad-panel' }, `
-      <div class="ad-masthead">
-        <div class="ad-mast-top"><span>ASSISTANT DIRECTOR</span><span id="ad-mast-world">SYDNEY · 1925</span></div>
-        <div class="ad-mast-title">世界<span class="co"> gazette </span>情报增刊</div>
-        <div class="ad-mast-sub">
-          <span id="ad-mast-date">—</span>
-          <span class="sep stage" id="ad-mast-stage">—</span>
-        </div>
+      <div class="ad-head">
+        <span class="ad-head-info"><span id="ad-mast-date">—</span> · <span class="stage" id="ad-mast-stage">—</span></span>
+        <span class="ad-head-btns">
+          <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
+          <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
+          <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
+        </span>
       </div>
-      <div class="ad-wire" id="ad-wire">
-        <div class="ad-wire-rule">态 势 与 卡 片 池</div>
-        <div id="ad-wire-body"></div>
-      </div>
-      <div class="ad-toolbar">
-        <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻ 重算</button>
-        <button id="ad-btn-cards" title="态势卡片池管理">🗂 卡片</button>
-        <button id="ad-btn-settings" title="双模型端点与开关">⚙ 设置</button>
-      </div>
-      <div class="ad-colophon">本报仅刊载 <b>街头可见之事</b> · 真相须由读者自行抵达</div>`);
+      <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>`);
     UI_DOC.body.appendChild(panel);
 
     // 模态容器（设置/卡片/注入预览共用）
@@ -600,7 +587,7 @@
     els = { rail, panel, dot: rail.querySelector('#ad-rail-dot'), ticker: rail.querySelector('#ad-ticker'),
       wireBody: panel.querySelector('#ad-wire-body'),
       mastDate: panel.querySelector('#ad-mast-date'), mastStage: panel.querySelector('#ad-mast-stage'),
-      mastWorld: panel.querySelector('#ad-mast-world'), modal, modalBox: modal.querySelector('#ad-modal-box') };
+      modal, modalBox: modal.querySelector('#ad-modal-box') };
 
     // 交互
     rail.addEventListener('click', () => togglePanel(true));
@@ -658,52 +645,54 @@
     els.ticker.innerHTML = heads.concat(heads).map(t => `<li>${esc(t)}</li>`).join('');
   }
 
-  // 面板主体：当前态势 + 卡片池按派系分组（S1 占位形态，S4 换 surface 情报卡）
+  // 面板主体：当前态势行 + 情报条目流（S1 数据源=卡片池；S4 换 surface 真情报流）
+  function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; }
+  function compactMenu(menu) {
+    return parseMenu(menu).map(e => {
+      if (e.max > e.min) return `${e.name}${e.min}-${e.max}`;
+      if (e.max) return `${e.name}×${e.max}`;
+      return e.name;
+    }).join('·');
+  }
+
   function renderWire() {
+    if (!els.wireBody) return;
     const cards = getCards();
-    const groups = new Map();
-    for (const c of cards) {
-      const key = c.faction || '未标注派系';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(c);
-    }
+    const hit = State.lastLocationText ? matchCard(State.lastLocationText, cards) : null;
     let html = '';
     if (State.lastLocationText) {
-      html += `<div class="ad-faction"><div class="ad-fac-head">
-          <span class="ad-fac-name">当前态势</span>
-          <span class="ad-fac-status active" id="ad-cur-mode">—</span></div>
-        <div class="ad-intel">${esc(State.lastLocationText)}</div></div>`;
+      const modeLabel = State.lastMode === 'card' ? '驻防注入'
+        : State.lastMode === 'safe' ? '安全区' : '通用兜底';
+      html += `<div class="ad-nowline" title="${esc(State.lastLocationText)}">当前 ${esc(shortLoc(State.lastLocationText))} · ${modeLabel}</div>`;
     }
-    if (!groups.size) {
-      html += `<div class="ad-faction"><div class="ad-intel dim">卡片池为空——在 🗂 卡片 中手工填卡，或等待 S2 态势位自动产卡。</div></div>`;
+    if (!cards.length) {
+      html += `<div class="ad-empty">情报流为空——在 🗂 中导入卡片，或等待 S2 态势位自动产卡。</div>`;
     }
-    for (const [fac, list] of groups) {
-      const items = list.map(c => {
-        const alert = ALERT_LEVELS.includes(c.alert) ? c.alert : '常规';
-        const safe = c.safe || !parseMenu(c.menu).some(e => e.min || e.max);
-        const badge = safe ? '安全区' : alert;
-        return `<div class="ad-intel">${esc(c.place)} <span class="dim">· 戒备 ${esc(badge)}${c.source === 'instant' ? ' · 初判' : ''}</span></div>`;
-      }).join('');
-      html += `<div class="ad-faction"><div class="ad-fac-head">
-          <span class="ad-fac-name">${esc(fac)}</span>
-          <span class="ad-fac-status">${list.length} 处</span></div>${items}</div>`;
+    for (const c of cards) {
+      const entries = parseMenu(c.menu);
+      const safe = c.safe || !entries.some(e => e.min || e.max);
+      const menuStr = compactMenu(c.menu);
+      const alertCls = safe ? 'safe' : ((c.alert === '警戒' || c.alert === '严密') ? 'hot' : '');
+      html += `<div class="ad-item${hit && hit.card.place === c.place ? ' hit' : ''}">
+        <div class="ad-item-top"><span class="ad-item-place">${esc(c.place)}</span>
+          <span class="ad-item-alert ${alertCls}">${safe ? '安全区' : esc(c.alert || '常规')}</span></div>
+        <div class="ad-item-sub">${esc(c.faction)}${menuStr ? ` · <span class="menu">${esc(menuStr)}</span>` : ''}</div>
+        ${c.reaction ? `<div class="ad-item-reaction">${esc(trunc(c.reaction, 42))}</div>` : ''}
+      </div>`;
     }
     els.wireBody.innerHTML = html;
   }
 
-  // dispatch 后刷新状态徽标与报头
+  // dispatch 后刷新（状态行由 renderWire 从 State 生成）
   function updatePanelStatus(waiting, info) {
+    if (!els.wireBody) return;
     if (waiting != null) {
-      const cur = els.wireBody && els.wireBody.querySelector('#ad-cur-mode');
-      if (cur) cur.textContent = waiting;
+      const now = els.wireBody.querySelector('.ad-nowline');
+      if (now) now.textContent = waiting;
+      else els.wireBody.innerHTML = `<div class="ad-nowline">${esc(waiting)}</div>`;
       return;
     }
     renderWire(); renderTicker();
-    if (info && info.mode) {
-      const cur = els.wireBody && els.wireBody.querySelector('#ad-cur-mode');
-      if (cur) cur.textContent = info.mode === 'card' ? '驻防注入'
-        : info.mode === 'safe' ? '安全区注入' : '通用兜底';
-    }
   }
 
   // 报头：日期/阶段（"⏰ 1925年 · 6月13日 · 12:40 · 潜伏期" → 两段）
