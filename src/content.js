@@ -441,21 +441,58 @@
     : document;
 
   const UI_CSS = `
+  /* ── 主题变量：slate（默认 · MMS 深色基因）── */
+  #ad-rail, #ad-panel, #ad-modal, .ad-toast {
+    --ad-bg: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
+    --ad-box-bg: #0f172a;
+    --ad-overlay: rgba(2,6,23,0.72);
+    --ad-input-bg: rgba(30,41,59,0.7);
+    --ad-border: rgba(148,163,184,0.28);
+    --ad-panel-border: 1px solid rgba(148,163,184,0.28);
+    --ad-ink: #cbd5e1; --ad-ink-strong: #e2e8f0;
+    --ad-ink-dim: #94a3b8; --ad-ink-faint: #64748b;
+    --ad-accent: #fbbf24; --ad-accent-bright: #fde68a;
+    --ad-accent-dim: rgba(251,191,36,0.55); --ad-accent-faint: rgba(251,191,36,0.14);
+    --ad-line: rgba(148,163,184,0.14); --ad-line-strong: rgba(148,163,184,0.28);
+    --ad-hit: rgba(251,191,36,0.06); --ad-safe: #4ade80;
+    --ad-scroll: rgba(148,163,184,0.25);
+    --ad-shadow: -18px 0 48px rgba(0,0,0,0.5);
+    --ad-font: 'Courier New', 'SimSun', monospace;
+  }
+  /* ── 主题：paper（NewDay 报纸基因：米纸/墨色/暗红/衬线/纸纹）── */
+  #ad-rail.ad-theme-paper, #ad-panel.ad-theme-paper, #ad-modal.ad-theme-paper, .ad-toast.ad-theme-paper {
+    --ad-bg: radial-gradient(circle at 50% 50%, transparent 80%, rgba(0,0,0,0.08) 100%),
+             repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.015) 2px, rgba(0,0,0,0.015) 4px) #f4ecd8;
+    --ad-box-bg: #f4ecd8;
+    --ad-overlay: rgba(43,36,29,0.45);
+    --ad-input-bg: rgba(255,250,235,0.8);
+    --ad-border: #8c7355;
+    --ad-panel-border: 2px solid #8c7355;
+    --ad-ink: #2b241d; --ad-ink-strong: #1f1a14;
+    --ad-ink-dim: #54473b; --ad-ink-faint: #7a6a58;
+    --ad-accent: #8b2500; --ad-accent-bright: #a62b00;
+    --ad-accent-dim: rgba(139,37,0,0.55); --ad-accent-faint: rgba(139,37,0,0.12);
+    --ad-line: rgba(139,115,85,0.35); --ad-line-strong: #8c7355;
+    --ad-hit: rgba(139,37,0,0.07); --ad-safe: #2e6b34;
+    --ad-scroll: rgba(139,115,85,0.4);
+    --ad-shadow: 0 8px 25px rgba(0,0,0,0.35);
+    --ad-font: 'Noto Serif SC', 'Playfair Display', Georgia, serif;
+  }
+
   #ad-rail { position: fixed; right: 0; top: 28%; width: 30px; z-index: 99990;
-    background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96));
-    border: 1px solid rgba(148,163,184,0.28); border-right: none;
+    background: var(--ad-bg); border: var(--ad-panel-border); border-right: none;
     border-radius: 8px 0 0 8px; display: flex; flex-direction: column; align-items: center;
     cursor: pointer; user-select: none; padding: 9px 0 7px;
     transition: width .25s ease, box-shadow .3s ease; }
-  #ad-rail:hover { box-shadow: -6px 0 24px rgba(251,191,36,0.13); }
-  #ad-rail:hover .ad-rail-star { color: #fbbf24; }
-  .ad-rail-star { font-size: 12px; line-height: 1; color: rgba(251,191,36,0.55);
+  #ad-rail:hover { box-shadow: -6px 0 24px var(--ad-accent-faint); }
+  #ad-rail:hover .ad-rail-star { color: var(--ad-accent); }
+  .ad-rail-star { font-size: 12px; line-height: 1; color: var(--ad-accent-dim);
     padding-bottom: 5px; transition: color .25s; }
-  #ad-rail-dot { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24;
-    opacity: 0; transition: opacity .3s; box-shadow: 0 0 8px rgba(251,191,36,0.55);
+  #ad-rail-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ad-accent);
+    opacity: 0; transition: opacity .3s; box-shadow: 0 0 8px var(--ad-accent-dim);
     animation: ad-dot-pulse 1.6s ease-in-out infinite; }
   #ad-rail-dot.on { opacity: 1; }
-  @keyframes ad-dot-pulse { 0%,100% { transform: scale(1); box-shadow: 0 0 4px rgba(251,191,36,0.55);} 50% { transform: scale(1.5); box-shadow: 0 0 12px rgba(251,191,36,0.55);} }
+  @keyframes ad-dot-pulse { 0%,100% { transform: scale(1); box-shadow: 0 0 4px var(--ad-accent-dim);} 50% { transform: scale(1.5); box-shadow: 0 0 12px var(--ad-accent-dim);} }
   .ad-rail-ticker { height: 26vh; overflow: hidden; margin-top: 8px; width: 100%; position: relative;
     mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
     -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent); }
@@ -464,84 +501,95 @@
     animation: ad-tick 14s linear infinite; }
   @keyframes ad-tick { from { transform: translateY(0); } to { transform: translateY(-50%); } }
   .ad-rail-ticker li { writing-mode: vertical-rl; letter-spacing: 3px; font-size: 9px;
-    color: #94a3b8; padding: 0 0 16px 0; display: block; margin: 0 auto; width: 16px; }
-  .ad-rail-ticker li:first-child { color: #fde68a; }
+    color: var(--ad-ink-dim); padding: 0 0 16px 0; display: block; margin: 0 auto; width: 16px; }
+  .ad-rail-ticker li:first-child { color: var(--ad-accent-bright); }
 
   #ad-panel { position: fixed; right: -400px; top: 4vh; bottom: 4vh; width: 372px; z-index: 99995;
-    background: linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98));
-    border: 1px solid rgba(148,163,184,0.28); border-radius: 10px 0 0 10px;
-    display: flex; flex-direction: column; font-family: 'Courier New', 'SimSun', monospace; color: #cbd5e1;
-    transition: right .38s cubic-bezier(0.22, 1, 0.36, 1); box-shadow: -18px 0 48px rgba(0,0,0,0.5); }
+    background: var(--ad-bg); border: var(--ad-panel-border); border-right: none;
+    border-radius: 10px 0 0 10px; box-shadow: var(--ad-shadow);
+    display: flex; flex-direction: column; font-family: var(--ad-font); color: var(--ad-ink);
+    transition: right .38s cubic-bezier(0.22, 1, 0.36, 1); }
   #ad-panel.open { right: 0; }
   /* 报头：一行信息条 + 内联工具按钮 */
   .ad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-    padding: 7px 12px; border-bottom: 1px solid rgba(148,163,184,0.28); flex: none; }
-  .ad-head-info { font-size: 10.5px; letter-spacing: 1px; color: #94a3b8; white-space: nowrap; overflow: hidden; }
-  .ad-head-info .stage { color: #fbbf24; }
+    padding: 7px 12px; border-bottom: 1px solid var(--ad-line-strong); flex: none; }
+  .ad-head-info { font-size: 10.5px; letter-spacing: 1px; color: var(--ad-ink-dim); white-space: nowrap; overflow: hidden; }
+  .ad-head-info .stage { color: var(--ad-accent); }
   .ad-head-btns { display: flex; gap: 5px; flex: none; }
-  .ad-head-btns button { background: none; color: #94a3b8; border: none; cursor: pointer;
+  .ad-head-btns button { background: none; color: var(--ad-ink-dim); border: none; cursor: pointer;
     font-family: inherit; font-size: 12px; padding: 2px 4px; line-height: 1; transition: color .2s; }
-  .ad-head-btns button:hover { color: #fbbf24; }
+  .ad-head-btns button:hover { color: var(--ad-accent); }
   /* 当前态势行 */
   .ad-nowline { flex: none; padding: 5px 12px; font-size: 10.5px; letter-spacing: 1px;
-    color: rgba(251,191,36,0.75); border-bottom: 1px solid rgba(148,163,184,0.18);
+    color: var(--ad-accent-dim); border-bottom: 1px solid var(--ad-line);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ad-nowline::before { content: '▶ '; }
-  /* 情报流主体：无边框纯排版条目 */
+  /* 情报流主体：无边框纯排版条目，整体滚动，内容不截断 */
   .ad-wire { flex: 1; overflow-y: auto; padding: 2px 0 10px; }
   .ad-wire::-webkit-scrollbar { width: 5px; }
-  .ad-wire::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 3px; }
+  .ad-wire::-webkit-scrollbar-thumb { background: var(--ad-scroll); border-radius: 3px; }
   .ad-item { padding: 6px 12px 7px; }
-  .ad-item + .ad-item { border-top: 1px solid rgba(148,163,184,0.14); }
-  .ad-item.hit { background: rgba(251,191,36,0.06); }
+  .ad-item + .ad-item { border-top: 1px solid var(--ad-line); }
+  .ad-item.hit { background: var(--ad-hit); }
   .ad-item-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
-  .ad-item-place { font-size: 12.5px; color: #e2e8f0; letter-spacing: 1px; }
-  .ad-item-place::before { content: '● '; font-size: 8px; color: rgba(251,191,36,0.6); vertical-align: 2px; }
-  .ad-item-alert { font-size: 9px; letter-spacing: 2px; color: #64748b; }
-  .ad-item-alert.hot { color: #fbbf24; }
-  .ad-item-alert.safe { color: #4ade80; }
-  .ad-item-sub { font-size: 10.5px; color: #94a3b8; margin-bottom: 2px; }
-  .ad-item-sub .menu { color: #cbd5e1; }
-  .ad-item-reaction { font-size: 10px; line-height: 1.55; color: #64748b; }
-  .ad-empty { padding: 14px 16px; font-size: 10.5px; color: #64748b; letter-spacing: 1px; }
+  .ad-item-place { font-size: 12.5px; color: var(--ad-ink-strong); letter-spacing: 1px; font-weight: bold; }
+  .ad-item-place::before { content: '● '; font-size: 8px; color: var(--ad-accent-dim); vertical-align: 2px; }
+  .ad-item-alert { font-size: 9px; letter-spacing: 2px; color: var(--ad-ink-faint); }
+  .ad-item-alert.hot { color: var(--ad-accent); }
+  .ad-item-alert.safe { color: var(--ad-safe); }
+  .ad-item-sub { font-size: 10.5px; color: var(--ad-ink-dim); margin-bottom: 2px; line-height: 1.5; }
+  .ad-item-sub .menu { color: var(--ad-ink); }
+  .ad-item-reaction { font-size: 10px; line-height: 1.55; color: var(--ad-ink-faint); }
+  .ad-empty { padding: 14px 16px; font-size: 10.5px; color: var(--ad-ink-faint); letter-spacing: 1px; }
 
   #ad-modal { position: fixed; inset: 0; z-index: 99999; display: none;
-    background: rgba(2,6,23,0.72); align-items: center; justify-content: center; }
+    background: var(--ad-overlay); align-items: center; justify-content: center; }
   #ad-modal.open { display: flex; }
   .ad-modal-box { width: min(680px, 92vw); max-height: 86vh; overflow-y: auto;
-    background: #0f172a; border: 1px solid rgba(148,163,184,0.35); border-radius: 10px;
-    padding: 18px 20px; font-family: 'Courier New', 'SimSun', monospace; color: #cbd5e1;
+    background: var(--ad-box-bg); border: var(--ad-panel-border); border-radius: 10px;
+    padding: 18px 20px; font-family: var(--ad-font); color: var(--ad-ink);
     box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-  .ad-modal-box h3 { font-size: 13px; letter-spacing: 4px; color: #fbbf24; margin: 0 0 14px;
-    border-bottom: 1px solid rgba(148,163,184,0.28); padding-bottom: 8px; }
+  .ad-modal-box::-webkit-scrollbar { width: 5px; }
+  .ad-modal-box::-webkit-scrollbar-thumb { background: var(--ad-scroll); border-radius: 3px; }
+  .ad-modal-box h3 { font-size: 13px; letter-spacing: 4px; color: var(--ad-accent); margin: 0 0 14px;
+    border-bottom: 1px solid var(--ad-line-strong); padding-bottom: 8px; }
   .ad-form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; font-size: 11.5px; }
-  .ad-form-row label { width: 110px; color: #94a3b8; letter-spacing: 1px; flex: none; }
+  .ad-form-row label { width: 110px; color: var(--ad-ink-dim); letter-spacing: 1px; flex: none; }
   .ad-form-row input[type=text], .ad-form-row input[type=number], .ad-form-row textarea, .ad-form-row select {
-    flex: 1; background: rgba(30,41,59,0.7); border: 1px solid rgba(148,163,184,0.28); border-radius: 5px;
-    color: #e2e8f0; font-family: inherit; font-size: 11.5px; padding: 5px 8px; }
+    flex: 1; background: var(--ad-input-bg); border: 1px solid var(--ad-border); border-radius: 5px;
+    color: var(--ad-ink-strong); font-family: inherit; font-size: 11.5px; padding: 5px 8px; }
   .ad-form-row textarea { resize: vertical; min-height: 52px; line-height: 1.5; }
-  .ad-form-row input:focus, .ad-form-row textarea:focus { outline: none; border-color: rgba(251,191,36,0.55); }
-  .ad-sec-title { font-size: 11px; letter-spacing: 3px; color: #fbbf24; margin: 14px 0 8px; }
+  .ad-form-row input:focus, .ad-form-row textarea:focus, .ad-form-row select:focus { outline: none; border-color: var(--ad-accent-dim); }
+  .ad-sec-title { font-size: 11px; letter-spacing: 3px; color: var(--ad-accent); margin: 14px 0 8px; }
   .ad-sec-title::before { content: '✶ '; }
   .ad-card-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-    background: rgba(30,41,59,0.55); border: 1px solid rgba(148,163,184,0.2); border-radius: 6px;
+    background: var(--ad-input-bg); border: 1px solid var(--ad-line); border-radius: 6px;
     padding: 7px 10px; margin-bottom: 7px; font-size: 11.5px; cursor: pointer; }
-  .ad-card-item:hover { border-color: rgba(251,191,36,0.45); }
-  .ad-card-item .place { color: #e2e8f0; }
-  .ad-card-item .meta { color: #64748b; font-size: 10px; }
+  .ad-card-item:hover { border-color: var(--ad-accent-dim); }
+  .ad-card-item .place { color: var(--ad-ink-strong); }
+  .ad-card-item .meta { color: var(--ad-ink-faint); font-size: 10px; }
   .ad-btnrow { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  .ad-btnrow button { background: rgba(30,41,59,0.9); color: #cbd5e1; border: 1px solid rgba(148,163,184,0.35);
+  .ad-btnrow button { background: var(--ad-input-bg); color: var(--ad-ink); border: 1px solid var(--ad-line-strong);
     border-radius: 6px; font-family: inherit; font-size: 11px; letter-spacing: 1px;
     padding: 6px 14px; cursor: pointer; }
-  .ad-btnrow button:hover { border-color: #fbbf24; color: #fbbf24; }
-  .ad-btnrow button.primary { border-color: rgba(251,191,36,0.55); color: #fbbf24; }
+  .ad-btnrow button:hover { border-color: var(--ad-accent); color: var(--ad-accent); }
+  .ad-btnrow button.primary { border-color: var(--ad-accent-dim); color: var(--ad-accent); }
   .ad-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
-    background: rgba(15,23,42,0.95); border: 1px solid rgba(251,191,36,0.45); color: #fde68a;
+    background: var(--ad-box-bg); border: 1px solid var(--ad-accent-dim); color: var(--ad-accent-bright);
     border-radius: 8px; padding: 8px 18px; font-size: 12px; letter-spacing: 1px; z-index: 100000;
-    font-family: 'Courier New', monospace; box-shadow: 0 8px 28px rgba(0,0,0,0.5); }
+    font-family: var(--ad-font); box-shadow: 0 8px 28px rgba(0,0,0,0.5); }
   `;
 
   let els = {};
+  let currentTheme = 'slate';   // slate | paper（NewDay 报纸基因）
+
+  function applyTheme(theme) {
+    currentTheme = theme === 'paper' ? 'paper' : 'slate';
+    const on = currentTheme === 'paper';
+    for (const n of [els.rail, els.panel, els.modal]) {
+      if (n) n.classList.toggle('ad-theme-paper', on);
+    }
+  }
 
   function el(tag, attrs, html) {
     const n = UI_DOC.createElement(tag);
@@ -604,6 +652,7 @@
     panel.querySelector('#ad-btn-settings').addEventListener('click', openSettingsModal);
 
     if (loadUiPrefs().panelOpen) togglePanel(true, true);
+    applyTheme(loadUiPrefs().theme);
     renderWire(); renderTicker();
   }
 
@@ -616,7 +665,7 @@
   }
 
   function toast(msg) {
-    const t = el('div', { class: 'ad-toast' }, esc(msg));
+    const t = el('div', { class: 'ad-toast' + (currentTheme === 'paper' ? ' ad-theme-paper' : '') }, esc(msg));
     UI_DOC.body.appendChild(t);
     setTimeout(() => t.remove(), 2200);
   }
@@ -646,7 +695,6 @@
   }
 
   // 面板主体：当前态势行 + 情报条目流（S1 数据源=卡片池；S4 换 surface 真情报流）
-  function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; }
   function compactMenu(menu) {
     return parseMenu(menu).map(e => {
       if (e.max > e.min) return `${e.name}${e.min}-${e.max}`;
@@ -677,7 +725,7 @@
         <div class="ad-item-top"><span class="ad-item-place">${esc(c.place)}</span>
           <span class="ad-item-alert ${alertCls}">${safe ? '安全区' : esc(c.alert || '常规')}</span></div>
         <div class="ad-item-sub">${esc(c.faction)}${menuStr ? ` · <span class="menu">${esc(menuStr)}</span>` : ''}</div>
-        ${c.reaction ? `<div class="ad-item-reaction">${esc(trunc(c.reaction, 42))}</div>` : ''}
+        ${c.reaction ? `<div class="ad-item-reaction">${esc(c.reaction)}</div>` : ''}
       </div>`;
     }
     els.wireBody.innerHTML = html;
@@ -728,7 +776,11 @@
       <div class="ad-form-row"><label>maxTokens</label><input type="number" step="100" min="256" data-k="${slot}.maxTokens" value="${s[slot].maxTokens}"></div>`;
     openModal(`
       <h3>⚙ 副导演 · 设置</h3>
-      <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:#e2e8f0">
+      <div class="ad-form-row"><label>皮肤</label><select id="ad-set-theme">
+        <option value="slate">slate · 深色档案（默认）</option>
+        <option value="paper">paper · 1920s 报纸（NewDay 基因）</option>
+      </select></div>
+      <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
       <div class="dim" style="font-size:10px;color:#64748b;margin:4px 0 2px">S0 仅持久化配置；暗线位于 S3、态势位于 S2 接入调用。</div>
       ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
@@ -737,6 +789,7 @@
         <button class="primary" id="ad-set-save">保存</button>
         <button id="ad-set-close">关闭</button>
       </div>`);
+    els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       els.modalBox.querySelectorAll('[data-k]').forEach(input => {
         const path = input.getAttribute('data-k').split('.');
@@ -749,6 +802,9 @@
       saveSettings(SETTINGS);
       if (!SETTINGS.enabled) uninjectAll();
       else scheduleDispatch('settings-saved');
+      const theme = els.modalBox.querySelector('#ad-set-theme').value;
+      const p = loadUiPrefs(); p.theme = theme; saveUiPrefs(p);
+      applyTheme(theme);
       toast('设置已保存');
       closeModal();
     });
@@ -937,7 +993,7 @@
     // 引擎纯函数
     norm, matchCard, parseMenu, parseAttr, parseAmmoTotal, charList, computeScale,
     buildSituationText, buildSafeText, buildFallbackText,
-    shortLoc, pushTickerHead, renderTicker, stripJsonc,
+    shortLoc, pushTickerHead, renderTicker, renderWire, stripJsonc, applyTheme,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,

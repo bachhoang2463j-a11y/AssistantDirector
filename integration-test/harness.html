@@ -379,6 +379,24 @@ async function runAll() {
     return document.getElementById('ad-rail').classList.contains('empty')
       && document.querySelectorAll('#ad-ticker li').length === 0;
   })());
+  AD.state.tickerHeads = ['绿顶酒馆·驻防']; AD.renderTicker();   // 恢复演示态
+  assert('反应模式完整显示（长文本不截断）', (() => {
+    const long = '信使按接头规则行事，便装暗桩在售票厅与月台两端；若对方暴露侦探身份或被跟踪，暗桩喊扒手制造骚乱掩护撤离并中止接触；白日公共场合任何一方都避免火并。';
+    AD.setCards(AD.getCards().concat([{ place: '长文测试点', faction: '测试', menu: '', alert: '常规', reaction: long }]));
+    AD.renderWire();
+    const ok = document.getElementById('ad-wire').innerText.includes('任何一方都避免火并');
+    AD.setCards(CARDS); AD.renderWire();   // 还原
+    return ok;
+  })());
+  assert('皮肤系统（paper 主题：类切换 + 衬线变量生效）', (() => {
+    AD.applyTheme('paper');
+    const panel = document.getElementById('ad-panel');
+    const font = getComputedStyle(panel).fontFamily;
+    const okPaper = panel.classList.contains('ad-theme-paper') && /Georgia|Serif/i.test(font);
+    AD.applyTheme('slate');
+    const okBack = !panel.classList.contains('ad-theme-paper');
+    return okPaper && okBack;
+  })());
 
   /* ——— jsonc 导入容错 ——— */
   head('jsonc 导入容错');
