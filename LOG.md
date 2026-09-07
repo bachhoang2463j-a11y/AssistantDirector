@@ -72,3 +72,18 @@
 **遗留**：S2（态势位即时产卡）/S3（暗线人格）桩位已留；产物待用户导入真酒馆实测（导入方式：脚本库导入 `酒馆助手脚本-副导演.json`）。
 
 ---
+
+## 2026-09-08 ｜ fix：真酒馆导入后悬浮栏不可见——UI 挂载目标改为主页面 document（业务提交 `fbf20e2`）
+
+**变更行为**：content.js 模块 8 新增 `UI_DOC` 挂载目标常量（window !== window.parent 时取 `window.parent.document`）；buildUI 的 style/rail/panel/modal、toast、document click 监听全部改挂/绑定 `UI_DOC`；z-index 对齐 AiRadio 量级（rail 99990 / panel 99995 / modal 99999 / toast 100000）；build.mjs 产物 `enabled: true`（导入即启用）。
+
+**涉及文件**：`src/content.js`、`build.mjs`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（真机首测发现，IAB mock 层无法覆盖——mock 环境就是主页面执行，不存在 iframe）：
+- 用户真酒馆导入后右侧无悬浮栏。实机排查证据链：酒馆助手（JS-Slash-Runner）的全局脚本运行在 `<iframe v-show="false">`（`src/panel/script/Iframe.vue:2`）里；脚本 iframe `TH-script--Assistant Director--…` 存在且运行正常（iframe 内 `__AD__.IS_LIVE === true`，`#ad-rail`/`#ad-style` 均已构建），但挂在 display:none 的 iframe body 里——主页面自然不可见。
+- predefine.js 证实 TavernHelper API 全量代理进脚本 iframe（getVariables/injectPrompts/eventOn/SillyTavern getter），环境检测逻辑无需改动，仅挂载目标错误。
+- 修复后模拟验证（真酒馆页面建隐藏 iframe 注入新版 content，不改用户脚本库）：`#ad-rail`/`#ad-panel`/`#ad-style` 全部出现在主页面 document，rail 计算样式 fixed/right:0/z-index 99990；验证残留已清理。harness 回归 59/59 全绿。
+
+**遗留**：用户需删除旧版脚本后重新导入新版 JSON（或脚本库内更新 content）；z-index 100000 量级与 AiRadio 同层，若与其他全屏组件层叠冲突再调。
+
+---
