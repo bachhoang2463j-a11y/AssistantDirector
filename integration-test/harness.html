@@ -520,6 +520,14 @@ async function runAll() {
     window.getChatMessages = () => [{ message_id: 0, name: 'AI', role: 'assistant', is_hidden: false,
       message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。' + '长篇叙事正文。'.repeat(300) + '【正文尾部标记】', data: {}, extra: {} }];
 
+    // 配置先行（图鉴校验源显式配置 + 端点 + 调试），再跑图鉴断言
+    const s2 = AD.loadSettings();
+    s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
+    s2.bestiaryBook = 'COC-澳大利亚篇敌人与召唤物图鉴V3.0';   // 图鉴校验源显式配置（已去自动匹配）
+    s2.debug = true;
+    AD.saveSettings(s2);
+    AD.resetBestiaryCache();
+
     // ── 图鉴容错与规范化（等级前缀/keys 匹配）──
     const idx = await AD.getBestiaryIndex();
     assert('S0 图鉴索引载入（词条名 + keys）', idx && idx.length === 4 && idx[1].keys.includes('萨里山剃刀党混混'));
@@ -527,6 +535,7 @@ async function runAll() {
     assert('S2 名字匹配：词条名全等（带前缀）', AD.resolveBestiaryName('2级·悉尼常规巡警', idx) === '2级·悉尼常规巡警');
     assert('S3 名字匹配：key 别名命中', AD.resolveBestiaryName('码头打手', idx) === '2级·达令港码头武装打手');
     assert('S4 名字匹配：图鉴外词条返回 null', AD.resolveBestiaryName('不存在的敌人', idx) === null);
+    assert('S4b 名字匹配：模型罗马数字等级前缀（Ⅴ级）剥除后命中并规范化', AD.resolveBestiaryName('Ⅴ级·萨里山剃刀党混混', idx) === '1级·萨里山剃刀党混混');
     const vc = { place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' };
     assert('S5 校验通过且 menu 规范化写回（补等级前缀）', AD.validateCard(vc, idx) === null && vc.menu === '1级·萨里山剃刀党混混*3~5');
     assert('S6 校验拒绝：图鉴外 menu 词条', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }, idx) !== null);
@@ -542,12 +551,6 @@ async function runAll() {
     assert('S7b 信息完整性：长词条全量注入（无截断）', syncText.includes('【词条尾部标记】'));
     assert('S8 同步配置持久化往返', AD.loadSettings().worldSyncSituation.length === 2
       && AD.loadSettings().worldSyncSituation[0].entries[0] === '悉尼');
-
-    const s2 = AD.loadSettings();
-    s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
-    s2.debug = true;
-    AD.saveSettings(s2);
-    AD.resetBestiaryCache();
 
     // A. 成功产卡：闯入未登记地点 → 兜底注入 → 异步产卡入池 → 下一拍命中
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
@@ -634,6 +637,7 @@ async function runAll() {
     };
     const s3 = AD.loadSettings();
     s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s3.bestiaryBook = 'COC-澳大利亚篇敌人与召唤物图鉴V3.0';
     s3.debug = true;
     AD.saveSettings(s3);
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);

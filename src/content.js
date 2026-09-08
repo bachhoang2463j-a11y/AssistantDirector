@@ -578,8 +578,8 @@
 
   // —— 世界书图鉴索引（校验源 + 敌人名单源）—————————————————
 
-  // 图鉴词条名带等级前缀（"1级·萨里山剃刀党混混"），keys 里才有干净名
-  const TIER_PREFIX_RE = /^\d+\s*级\s*[·・•]\s*/;
+  // 图鉴词条名带等级前缀（"1级·萨里山剃刀党混混"，模型可能写成罗马数字"Ⅴ级·…"），keys 里才有干净名
+  const TIER_PREFIX_RE = /^[0-9０-９ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]+\s*级\s*[·・•]\s*/;
   function stripTier(name) { return String(name || '').replace(TIER_PREFIX_RE, ''); }
 
   let bestiaryCache = null;   // { index: {name, keys}[] | null, book: string }
@@ -588,21 +588,17 @@
     if (bestiaryCache) return bestiaryCache.index;
     let index = null;
     try {
-      if (IS_LIVE && typeof getWorldbook === 'function') {
-        const bookName = SETTINGS.bestiaryBook ||
-          (typeof getWorldbookNames === 'function'
-            ? (getWorldbookNames().find(n => n.includes('图鉴')) || '') : '');
-        if (bookName) {
-          const entries = await getWorldbook(bookName);
-          index = (entries || []).map(e => ({
-            name: e && e.name,
-            keys: (e && e.strategy && Array.isArray(e.strategy.keys) ? e.strategy.keys : [])
-              .map(String),
-          })).filter(x => x.name);
-          log(`图鉴索引载入：${bookName}（${index.length} 词条）`);
-        } else {
-          logWarn('图鉴世界书未配置，且未找到名称含"图鉴"的世界书——menu 校验降级为结构校验');
-        }
+      // 图鉴校验源必须显式配置（设置下拉选择），不做自动匹配——未配置即降级为结构校验并警告
+      if (IS_LIVE && typeof getWorldbook === 'function' && SETTINGS.bestiaryBook) {
+        const entries = await getWorldbook(SETTINGS.bestiaryBook);
+        index = (entries || []).map(e => ({
+          name: e && e.name,
+          keys: (e && e.strategy && Array.isArray(e.strategy.keys) ? e.strategy.keys : [])
+            .map(String),
+        })).filter(x => x.name);
+        log(`图鉴索引载入：${SETTINGS.bestiaryBook}（${index.length} 词条）`);
+      } else if (!SETTINGS.bestiaryBook) {
+        logWarn('图鉴世界书未配置——menu 白名单校验降级为结构校验（⚙ 设置 → 图鉴世界书）');
       }
     } catch (e) { logWarn('图鉴读取失败，menu 白名单校验降级为结构校验', e); }
     bestiaryCache = { index };
@@ -828,10 +824,11 @@
       '你是跑团世界模拟器的"暗线人格"（战略层导演）：克制、只依据已发生事实推演，禁止发明无出处的事件。',
       '任务：根据全部输入资料，输出一份 JSON 战略报告，推演各派系在玩家视线之外的动向。',
       '规则：',
+      '0. factions 是报告的核心，不可为空：至少给出 1 条派系动向（无新动向时延续上次报告的三态与判断）。',
       '1. factions：每派系一条。surface=街头可见的公开征兆（一句话，将展示给玩家，不得含真相）；truth=幕后真相（仅注入正文AI）；两者必须成对、指向同一动向的两个层次。causes=楼层出处数组（引用输入中真实存在的楼层号或事件描述，如"楼23"）。state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
       '2. 墓碑名单中的派系禁止以任何形式复活或提及。',
       '3. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
-      '4. garrisons：态势卡片复审——已知地点更新戒备/菜单/反应，新地点补卡。结构 {place, aliases, faction, menu, alert, reaction, verdict}；menu 敌方词条只能从【可选敌人名单】选用，alert 只能取 松懈/常规/警戒/严密。',
+      '4. garrisons：态势卡片复审——已知地点更新戒备/菜单/反应，新地点补卡。结构 {place, aliases, faction, menu, alert, reaction, verdict}；menu 敌方词条必须从【可选敌人名单】中原文照抄（禁止自创或改写等级前缀，如"Ⅴ级"），仅在原词后加 *min~max 数量后缀；alert 只能取 松懈/常规/警戒/严密。',
       '5. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
       '6. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"garrisons":[…],"ambush预约":[…]}',
     ].join('\n');
@@ -1068,7 +1065,7 @@
     const sys = [
       '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为每个给定地点生成一张驻防态势卡。',
       '规则：',
-      '1. menu 是可选敌方菜单，词条名只能从【可选敌人名单】中选用（可用原词或其简写），格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
+      '1. menu 是可选敌方菜单，词条名必须从【可选敌人名单】中原文照抄（禁止自创或改写等级前缀），仅在原词后加 *min~max 数量后缀，格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
       '2. alert 只能取：松懈/常规/警戒/严密。',
       '3. faction 用派系名（优先从【名册】选用；民用/中立场所可标注"无（中立场所）"类描述）。',
       '4. reaction 一句话：何类行为被容忍、何类触发敌意。verdict 一句话判定标准：何种行为构成对戒备的挑衅/侵入/暴露。',
@@ -1773,7 +1770,11 @@
       </select></div>
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
-      <div class="ad-form-row"><label>图鉴世界书</label><input type="text" data-k="bestiaryBook" value="${esc(s.bestiaryBook || '')}" placeholder="留空自动匹配名称含「图鉴」的世界书"></div>
+      <div class="ad-form-row"><label>图鉴世界书</label><select data-k="bestiaryBook">
+        <option value="">— 未配置（menu 不校验）—</option>
+        ${(IS_LIVE && typeof getWorldbookNames === 'function' ? getWorldbookNames() : [])
+          .map(b => `<option value="${esc(b)}" ${s.bestiaryBook === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+      </select></div>
       <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
