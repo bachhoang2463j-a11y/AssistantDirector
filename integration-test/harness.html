@@ -99,6 +99,41 @@ const MOCK = (function () {
 })();
 
 /* ════════════════════════════════════════════════════════════════════
+   mock SillyTavern（副导演楼层上下文优先路径 + LWB 摘要通路）
+   ════════════════════════════════════════════════════════════════════ */
+const ST_MOCK = (function () {
+  const chat = [];
+  for (let i = 0; i < 30; i++) {
+    if (i % 5 === 3) chat.push({ mes: `玩家输入第${i}楼`, is_user: true, is_hidden: false });
+    else if (i % 7 === 6) chat.push({ mes: `被LWB隐藏的旧楼${i}`, is_user: false, is_hidden: true });
+    else chat.push({ mes: `AI叙事第${i}楼：夜色中的悉尼。` + (i === 10 ? '\n```状态栏代码块```\n' : ''), is_user: false, is_hidden: false });
+  }
+  const aiIds = chat.map((m, i) => (!m.is_user && !m.is_hidden) ? i : -1).filter(i => i >= 0);
+  window.SillyTavern = {
+    chat,
+    chatMetadata: {
+      extensions: {
+        LittleWhiteBox: {
+          storySummary: {
+            lastSummarizedMesId: 14,
+            json: {
+              keywords: [{ text: '黑法老兄弟会', weight: '核心' }, { text: '剃刀帮战争', weight: '核心' }],
+              events: [
+                { timeLabel: '1925年6月12日 08:45', title: '悉尼港海关大厅·入境刁难化解',
+                  summary: '爱德华出示军情五处信函施压放行。(角色：「台词」) #1-3' },
+                { timeLabel: '1925年6月12日 14:50', title: '伦道夫仓库·潜入搜查禁区',
+                  summary: '玛德琳与索恩发现黑法老长袍与祭祀木棍。 #1-3' },
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+  return { chat, aiIds };
+})();
+
+/* ════════════════════════════════════════════════════════════════════
    测试数据（取自真实聊天记录 #27 楼 stat_data 的结构）
    ════════════════════════════════════════════════════════════════════ */
 const CH = (name, hp, hpMax, ammoStr) => ({
@@ -402,6 +437,68 @@ async function runAll() {
     return okPaper && okBack;
   })());
 
+  /* ——— 副导演双通道上下文（楼层窗口 / LWB 摘要 / 两套世界书配置 / 迁移）——— */
+  head('副导演双通道上下文');
+  {
+    // 世界书 mock（双通道与 S2 段共用；词条名带等级前缀 + keys，对齐真实 V3.0 结构）
+    window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0', '剧情世界书'];
+    window.getWorldbook = async (name) => {
+      if (name === '剧情世界书') return [
+        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' + '很长的城市背景资料。'.repeat(300) + '【词条尾部标记】' },
+        { name: '当地邪教：沙蝎教派', content: '潜伏在内陆的邪教组织，与内陆货运有隐秘关联。' },
+      ];
+      return [
+        { name: '澳大利亚战役敌人图鉴·总览与索引', content: '本图鉴整合了全部敌方势力：街头犯罪/执法/邪教/眷族四类。' },
+        { name: '1级·萨里山剃刀党混混', strategy: { keys: ['萨里山剃刀党混混', '剃刀党混混'] } },
+        { name: '2级·达令港码头武装打手', strategy: { keys: ['达令港码头武装打手', '码头打手'] } },
+        { name: '2级·悉尼常规巡警', strategy: { keys: ['悉尼常规巡警', '悉尼巡警'] } },
+      ];
+    };
+    AD.resetBestiaryCache();
+
+    // 楼层窗口：mock 30 楼（AI 25 / 玩家 4 / hidden… 动态计数）
+    const aiCount = ST_MOCK.aiIds.length;
+    const last20 = ST_MOCK.aiIds.slice(-20);
+    const ctx = AD.getShadowlineFloorContext();
+    assert('F1 默认窗口取最近 20 个 AI 楼', last20.every(id => ctx.includes(`AI叙事第${id}楼`))
+      && !ctx.includes(`AI叙事第${ST_MOCK.aiIds[0]}楼`), `AI楼共${aiCount}个`);
+    assert('F2 排除玩家输入', !ctx.includes('玩家输入'));
+    assert('F3 排除 LWB 隐藏楼', !ctx.includes('被LWB隐藏'));
+    assert('F4 楼层号标注（causes 出处用）', ctx.includes('【楼层 '));
+    assert('F5 代码块剥除', !ctx.includes('状态栏代码块'));
+    const sF = AD.loadSettings(); sF.shadowlineFloors = 0; AD.saveSettings(sF);
+    const ctxAll = AD.getShadowlineFloorContext();
+    assert('F6 0=全部历史 AI 楼', ST_MOCK.aiIds.every(id => ctxAll.includes(`AI叙事第${id}楼`)));
+    sF.shadowlineFloors = 20; AD.saveSettings(sF);
+
+    // LWB 摘要（早期历史载体）
+    const lwb = AD.getLwbSummaryText();
+    assert('L1 LWB 摘要格式化（关键词+事件+楼层出处）', lwb.includes('黑法老兄弟会')
+      && lwb.includes('悉尼港海关大厅·入境刁难化解') && lwb.includes('#1-3'));
+
+    // 两套世界书配置独立
+    const sW2 = AD.loadSettings();
+    sW2.worldSyncSituation = [{ book: '剧情世界书', entries: ['悉尼'] }];
+    sW2.worldSyncShadowline = [{ book: '剧情世界书', entries: ['当地邪教：沙蝎教派'] }];
+    AD.saveSettings(sW2);
+    const sitText = await AD.getSyncedWorldbookText('situation');
+    const shText = await AD.getSyncedWorldbookText('shadowline');
+    assert('W1 两套配置独立（态势位只含自己勾的词条）', sitText.includes('新南威尔士') && !sitText.includes('邪教组织'));
+    assert('W2 两套配置独立（暗线位只含自己勾的词条）', shText.includes('邪教组织') && !shText.includes('新南威尔士'));
+    assert('P1 两套配置 + 楼层窗口持久化往返', AD.loadSettings().worldSyncSituation.length === 1
+      && AD.loadSettings().worldSyncShadowline[0].entries[0] === '当地邪教：沙蝎教派'
+      && AD.loadSettings().shadowlineFloors === 20);
+
+    // 迁移：旧单一 worldSync → 复制到两套
+    localStorage.setItem('ad_settings_v1', JSON.stringify({
+      enabled: true, worldSync: [{ book: '旧世界书', entries: ['旧词条'] }] }));
+    const migrated = AD.loadSettings();
+    assert('M1 旧 worldSync 迁移复制到两套', migrated.worldSyncSituation.length === 1
+      && migrated.worldSyncShadowline.length === 1
+      && migrated.worldSyncSituation[0].book === '旧世界书');
+    AD.saveSettings(AD.loadSettings());   // 写回新键格式，消除旧键影响
+  }
+
   /* ——— S2 态势位即时产卡（mock LLM 环境）——— */
   head('S2 态势位即时产卡');
   {
@@ -416,20 +513,6 @@ async function runAll() {
     };
     window.getChatMessages = () => [{ message_id: 0, name: 'AI', role: 'assistant', is_hidden: false,
       message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。' + '长篇叙事正文。'.repeat(300) + '【正文尾部标记】', data: {}, extra: {} }];
-    window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0', '剧情世界书'];
-    window.getWorldbook = async (name) => {
-      if (name === '剧情世界书') return [
-        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' + '很长的城市背景资料。'.repeat(300) + '【词条尾部标记】' },
-        { name: '当地邪教：沙蝎教派', content: '潜伏在内陆的邪教组织，与内陆货运有隐秘关联。' },
-      ];
-      return [   // 图鉴（词条名带等级前缀，keys 含干净名——对齐真实 V3.0 结构）
-        { name: '澳大利亚战役敌人图鉴·总览与索引', content: '本图鉴整合了全部敌方势力：街头犯罪/执法/邪教/眷族四类。' },
-        { name: '1级·萨里山剃刀党混混', strategy: { keys: ['萨里山剃刀党混混', '剃刀党混混'] } },
-        { name: '2级·达令港码头武装打手', strategy: { keys: ['达令港码头武装打手', '码头打手'] } },
-        { name: '2级·悉尼常规巡警', strategy: { keys: ['悉尼常规巡警', '悉尼巡警'] } },
-      ];
-    };
-    AD.resetBestiaryCache();
 
     // ── 图鉴容错与规范化（等级前缀/keys 匹配）──
     const idx = await AD.getBestiaryIndex();
@@ -442,17 +525,17 @@ async function runAll() {
     assert('S5 校验通过且 menu 规范化写回（补等级前缀）', AD.validateCard(vc, idx) === null && vc.menu === '1级·萨里山剃刀党混混*3~5');
     assert('S6 校验拒绝：图鉴外 menu 词条', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }, idx) !== null);
 
-    // ── 世界书同步（用户自选 书→词条，内容注入产卡输入）──
+    // ── 世界书同步（态势位侧；内容注入产卡输入）──
     const sW = AD.loadSettings();
-    sW.worldSync = [{ book: '剧情世界书', entries: ['悉尼'] },
+    sW.worldSyncSituation = [{ book: '剧情世界书', entries: ['悉尼'] },
       { book: 'COC-澳大利亚篇敌人与召唤物图鉴V3.0', entries: ['澳大利亚战役敌人图鉴·总览与索引'] }];
     AD.saveSettings(sW);
-    const syncText = await AD.getSyncedWorldbookText();
+    const syncText = await AD.getSyncedWorldbookText('situation');
     assert('S7 同步资料组装（多书多词条带书名头）', syncText.includes('【剧情世界书 · 悉尼】')
       && syncText.includes('新南威尔士') && syncText.includes('总览与索引') && syncText.includes('敌方势力'));
     assert('S7b 信息完整性：长词条全量注入（无截断）', syncText.includes('【词条尾部标记】'));
-    assert('S8 同步配置持久化往返', AD.loadSettings().worldSync.length === 2
-      && AD.loadSettings().worldSync[0].entries[0] === '悉尼');
+    assert('S8 同步配置持久化往返', AD.loadSettings().worldSyncSituation.length === 2
+      && AD.loadSettings().worldSyncSituation[0].entries[0] === '悉尼');
 
     const s2 = AD.loadSettings();
     s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
@@ -523,7 +606,8 @@ async function runAll() {
     // 清理：还原设置（不留 mock 端点/同步配置污染 localStorage 与下轮回归）
     const s2z = AD.loadSettings();
     s2z.situation = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 1000 };
-    s2z.worldSync = [];
+    s2z.worldSyncSituation = [];
+    s2z.worldSyncShadowline = [];
     AD.saveSettings(s2z);
   }
 

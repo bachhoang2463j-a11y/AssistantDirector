@@ -71,8 +71,16 @@
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
       bestiaryBook: '',         // 图鉴世界书名（校验源+敌人名单；留空自动匹配名称含"图鉴"的世界书）
-      worldSync: [],            // 世界书同步：[{ book: '书名', entries: ['词条名', …] }]——词条内容注入态势位/暗线位输入
+      worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
+      worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
+      shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
     };
+  }
+  function normalizeSync(list) {
+    return Array.isArray(list)
+      ? list.filter(s => s && typeof s.book === 'string' && Array.isArray(s.entries))
+          .map(s => ({ book: s.book, entries: s.entries.map(String) }))
+      : [];
   }
   function loadSettings() {
     try {
@@ -80,14 +88,18 @@
       if (!raw) return defaultSettings();
       const saved = JSON.parse(raw);
       const def = defaultSettings();
+      // 迁移：旧单一 worldSync（无新键时）→ 复制到两套
+      const legacy = normalizeSync(saved.worldSync);
+      const hasSit = Array.isArray(saved.worldSyncSituation);
+      const migrate = legacy.length && !hasSit && !Array.isArray(saved.worldSyncShadowline);
       return {
         enabled: saved.enabled !== false,
         shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
         situation: Object.assign(def.situation, saved.situation || {}),
         bestiaryBook: typeof saved.bestiaryBook === 'string' ? saved.bestiaryBook : '',
-        worldSync: Array.isArray(saved.worldSync)
-          ? saved.worldSync.filter(s => s && typeof s.book === 'string' && Array.isArray(s.entries))
-          : [],
+        worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
+        worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
+        shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
       };
     } catch (e) { return defaultSettings(); }
   }
@@ -541,10 +553,10 @@
     return index.map(e => e.keys[0] || stripTier(e.name)).filter(Boolean);
   }
 
-  // —— 世界书同步（用户自选 世界书→词条；内容全量注入态势位/暗线位输入）—————
+  // —— 世界书同步（按位独立配置：'situation' 态势位产卡 / 'shadowline' 暗线位报告）—————
   // 信息完整性优先：不做长度截断——缺信息导致的瞎编比长输入的稀释更危险
-  async function getSyncedWorldbookText() {
-    const sync = SETTINGS.worldSync || [];
+  async function getSyncedWorldbookText(slot) {
+    const sync = (slot === 'shadowline' ? SETTINGS.worldSyncShadowline : SETTINGS.worldSyncSituation) || [];
     if (!sync.length) return '';
     const parts = [];
     for (const src of sync) {
@@ -561,16 +573,77 @@
     return parts.join('\n\n');
   }
 
-  // 最新楼正文（产卡语境输入；剥代码块/状态栏/Combat_block，全量不截断）
+  // —— 副导演楼层上下文：最近 N 楼 AI 楼层原文（排除玩家输入与隐藏楼层，全量）—————
+  // N = SETTINGS.shadowlineFloors（默认 20，对齐 LWB 总结窗口；0=全部历史）；每楼带楼层号（causes 出处）
+  function getShadowlineFloorContext() {
+    const limit = Number.isFinite(SETTINGS.shadowlineFloors) ? SETTINGS.shadowlineFloors : 20;
+    let floors = null;
+    try {
+      // 优先直读酒馆原生消息数组（SillyTavern.chat 引用；字段 mes/message、is_user、is_hidden 兼容）
+      const chat = (typeof SillyTavern !== 'undefined' && SillyTavern && SillyTavern.chat) || null;
+      if (Array.isArray(chat)) {
+        floors = [];
+        for (let i = 0; i < chat.length; i++) {
+          const m = chat[i];
+          if (!m || m.is_user || m.is_hidden) continue;
+          const text = String(m.mes != null ? m.mes : (m.message || ''));
+          if (!text.trim()) continue;
+          floors.push({ id: i, text });
+        }
+      }
+    } catch (e) { floors = null; }
+    if (floors === null) {
+      // 回退：getChatMessages 全取后过滤（message_id 即楼层号）
+      try {
+        const msgs = getChatMessages('all', { role: 'assistant', hide_state: 'unhidden' });
+        floors = (Array.isArray(msgs) ? msgs : [])
+          .filter(m => m && m.message && String(m.message).trim())
+          .map(m => ({ id: m.message_id, text: String(m.message) }));
+      } catch (e) { floors = []; }
+    }
+    if (limit > 0) floors = floors.slice(-limit);
+    return floors
+      .map(f => `【楼层 ${f.id}】\n${stripBlocks(f.text)}`)
+      .join('\n\n');
+  }
+
+  // 剥代码块/状态栏/Combat_block（正文语境输入通用）
+  function stripBlocks(text) {
+    return String(text || '')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/<Status_block>[\s\S]*?<\/Status_block>/gi, '')
+      .replace(/<Combat_block>[\s\S]*?<\/Combat_block>/gi, '');
+  }
+
+  // —— LWB 结构化总结（副导演的早期历史载体：正文 AI 视野里 20 楼之前就是这份总结）—————
+
+  function getLwbSummaryText() {
+    try {
+      const store = (typeof SillyTavern !== 'undefined' && SillyTavern && SillyTavern.chatMetadata
+        && SillyTavern.chatMetadata.extensions && SillyTavern.chatMetadata.extensions.LittleWhiteBox
+        && SillyTavern.chatMetadata.extensions.LittleWhiteBox.storySummary) || null;
+      if (!store || !store.json) return '';
+      const data = store.json;
+      const parts = [];
+      if (Array.isArray(data.keywords) && data.keywords.length) {
+        parts.push(`关键词：${data.keywords.map(k => k && k.text).filter(Boolean).join('、')}`);
+      }
+      if (Array.isArray(data.events) && data.events.length) {
+        const lines = data.events.map(ev =>
+          `${ev.timeLabel || ''}｜${ev.title || ''}：${ev.summary || ''}`);
+        parts.push(`已发生事件（含楼层出处）：\n${lines.join('\n')}`);
+      }
+      return parts.join('\n\n');
+    } catch (e) { return ''; }
+  }
+
+  // 最新楼正文（产卡语境输入；全量不截断）
   function readLatestFloorTail() {
     try {
       const msgs = getChatMessages(-1);
       const m = Array.isArray(msgs) ? msgs[0] : null;
       if (!m || !m.message) return '';
-      return String(m.message)
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/<Status_block>[\s\S]*?<\/Status_block>/gi, '')
-        .replace(/<Combat_block>[\s\S]*?<\/Combat_block>/gi, '');
+      return stripBlocks(m.message);
     } catch (e) { return ''; }
   }
 
@@ -644,7 +717,7 @@
     const cfg = SETTINGS.situation;
     if (!cfg.baseUrl || !cfg.model) { log('态势位端点未配置，跳过即时产卡'); return; }
     const bestiary = await getBestiaryIndex();
-    const [worldSync] = await Promise.all([getSyncedWorldbookText()]);
+    const [worldSync] = await Promise.all([getSyncedWorldbookText('situation')]);
     const roster = [...new Set(getCards().map(c => c.faction).filter(Boolean))];
     const floorTail = readLatestFloorTail();
     const ctx = { bestiary, roster, floorTail,
@@ -1232,10 +1305,13 @@
 
   // —— 设置弹窗（可重渲染：世界书同步的增删/选书操作不丢其他输入）———
 
-  let editSync = null;   // 编辑中的 worldSync 副本 [{ book, entries }]
+  let editSync = null;   // 编辑中的两套 worldSync 副本 { situation: [], shadowline: [] }
 
   function openSettingsModal() {
-    editSync = JSON.parse(JSON.stringify(SETTINGS.worldSync || []));
+    editSync = {
+      situation: JSON.parse(JSON.stringify(SETTINGS.worldSyncSituation || [])),
+      shadowline: JSON.parse(JSON.stringify(SETTINGS.worldSyncShadowline || [])),
+    };
     renderSettingsModal();
   }
 
@@ -1251,8 +1327,8 @@
     });
   }
 
-  function openSyncPicker(idx) {
-    const src = editSync[idx];
+  function openSyncPicker(slot, idx) {
+    const src = editSync[slot][idx];
     if (!src || !src.book) { toast('请先选择世界书'); return; }
     openModal(`<h3>📖 选择同步词条</h3><div class="dim">加载 ${esc(src.book)} 词条列表…</div>`);
     Promise.resolve(getWorldbook(src.book)).then(entries => {
@@ -1261,7 +1337,7 @@
           <label style="width:auto;color:var(--ad-ink)"><input type="checkbox" data-entry="${esc(name)}" ${src.entries.includes(name) ? 'checked' : ''}> ${esc(name)}</label>
         </div>`).join('') || '<div class="dim">该世界书无词条。</div>';
       openModal(`<h3>📖 选择同步词条 · ${esc(src.book)}</h3>
-        <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">勾选的词条内容将注入态势位（及未来暗线位）的输入。</div>
+        <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">勾选的词条内容将注入${slot === 'shadowline' ? '暗线位（报告）' : '态势位（产卡）'}的输入。</div>
         <div style="max-height:52vh;overflow-y:auto">${items}</div>
         <div class="ad-btnrow"><button class="primary" id="ad-sync-pick-ok">确定</button><button id="ad-sync-pick-back">返回</button></div>`);
       els.modalBox.querySelector('#ad-sync-pick-ok').addEventListener('click', () => {
@@ -1273,6 +1349,24 @@
     }).catch(() => { toast('世界书读取失败'); renderSettingsModal(); });
   }
 
+  function syncSectionHtml(slot, title) {
+    const rows = (editSync[slot] || []).map((src, i) => `
+      <div class="ad-form-row">
+        <select data-sync-book="${slot}:${i}" style="flex:1">
+          <option value="">— 选择世界书 —</option>
+          ${syncSectionHtml.bookNames.map(b => `<option value="${esc(b)}" ${src.book === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+        </select>
+        <button data-sync-pick="${slot}:${i}" style="flex:none">选词条${src.entries.length ? `（${src.entries.length}）` : ''}</button>
+        <button data-sync-del="${slot}:${i}" style="flex:none;padding:5px 8px">✕</button>
+      </div>
+      ${src.entries.length ? `<div class="dim" style="font-size:9.5px;margin:-3px 0 6px;color:var(--ad-ink-faint)">${src.entries.map(esc).join(' · ')}</div>` : ''}`)
+      .join('');
+    return `
+      <div class="ad-sec-title">${title}</div>
+      ${rows || `<div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:6px">未配置——选世界书并勾选要注入的词条。</div>`}
+      <div class="ad-btnrow" style="margin-top:2px"><button data-sync-add="${slot}">＋ 添加世界书来源</button></div>`;
+  }
+
   function renderSettingsModal() {
     const s = SETTINGS;
     const ep = (slot, title) => `
@@ -1282,18 +1376,7 @@
       <div class="ad-form-row"><label>Model</label><input type="text" data-k="${slot}.model" value="${esc(s[slot].model)}" placeholder="模型名"></div>
       <div class="ad-form-row"><label>温度</label><input type="number" step="0.1" min="0" max="2" data-k="${slot}.temperature" value="${s[slot].temperature}"></div>
       <div class="ad-form-row"><label>maxTokens</label><input type="number" step="100" min="256" data-k="${slot}.maxTokens" value="${s[slot].maxTokens}"></div>`;
-    const bookNames = (IS_LIVE && typeof getWorldbookNames === 'function') ? getWorldbookNames() : [];
-    const syncRows = (editSync || []).map((src, i) => `
-      <div class="ad-form-row">
-        <select data-sync-book="${i}" style="flex:1">
-          <option value="">— 选择世界书 —</option>
-          ${bookNames.map(b => `<option value="${esc(b)}" ${src.book === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
-        </select>
-        <button data-sync-pick="${i}" style="flex:none">选词条${src.entries.length ? `（${src.entries.length}）` : ''}</button>
-        <button data-sync-del="${i}" style="flex:none;padding:5px 8px">✕</button>
-      </div>
-      ${src.entries.length ? `<div class="dim" style="font-size:9.5px;margin:-3px 0 6px;color:var(--ad-ink-faint)">${src.entries.map(esc).join(' · ')}</div>` : ''}`)
-      .join('');
+    syncSectionHtml.bookNames = (IS_LIVE && typeof getWorldbookNames === 'function') ? getWorldbookNames() : [];
     openModal(`
       <h3>⚙ 副导演 · 设置</h3>
       <div class="ad-form-row"><label>皮肤</label><select id="ad-set-theme">
@@ -1303,10 +1386,10 @@
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
       <div class="ad-form-row"><label>图鉴世界书</label><input type="text" data-k="bestiaryBook" value="${esc(s.bestiaryBook || '')}" placeholder="留空自动匹配名称含「图鉴」的世界书"></div>
-      <div class="ad-sec-title">世界书同步（词条内容 → 产卡/推演输入）</div>
-      ${syncRows || '<div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:6px">未配置——例：图鉴世界书勾选「总览与索引」；剧情世界书勾选派系/背景词条。</div>'}
-      <div class="ad-btnrow" style="margin-top:2px"><button id="ad-sync-add">＋ 添加世界书来源</button></div>
-      <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin:8px 0 2px">态势位（S2）随地点即时产卡；暗线位（S3）天级推演。</div>
+      <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
+        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
+      ${syncSectionHtml('shadowline', '副导演 · 世界书同步（→ 报告输入）')}
+      ${syncSectionHtml('situation', '态势位 · 世界书同步（→ 产卡输入）')}
       ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
       ${ep('situation', '态势位（快速小模型 · 随地点）')}
       <div class="ad-btnrow">
@@ -1315,33 +1398,45 @@
       </div>`);
     els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
 
-    els.modalBox.querySelector('#ad-sync-add').addEventListener('click', () => {
-      collectFormToSettings();
-      editSync.push({ book: '', entries: [] });
-      renderSettingsModal();
-    });
-    els.modalBox.querySelectorAll('[data-sync-book]').forEach(sel => {
-      sel.addEventListener('change', () => {
-        collectFormToSettings();
-        editSync[+sel.getAttribute('data-sync-book')].book = sel.value;
-        editSync[+sel.getAttribute('data-sync-book')].entries = [];
-        renderSettingsModal();
+    const bindSyncOps = () => {
+      els.modalBox.querySelectorAll('[data-sync-add]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          collectFormToSettings();
+          editSync[btn.getAttribute('data-sync-add')].push({ book: '', entries: [] });
+          renderSettingsModal();
+        });
       });
-    });
-    els.modalBox.querySelectorAll('[data-sync-pick]').forEach(btn => {
-      btn.addEventListener('click', () => { collectFormToSettings(); openSyncPicker(+btn.getAttribute('data-sync-pick')); });
-    });
-    els.modalBox.querySelectorAll('[data-sync-del]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        collectFormToSettings();
-        editSync.splice(+btn.getAttribute('data-sync-del'), 1);
-        renderSettingsModal();
+      els.modalBox.querySelectorAll('[data-sync-book]').forEach(sel => {
+        sel.addEventListener('change', () => {
+          collectFormToSettings();
+          const [slot, i] = sel.getAttribute('data-sync-book').split(':');
+          editSync[slot][+i].book = sel.value;
+          editSync[slot][+i].entries = [];
+          renderSettingsModal();
+        });
       });
-    });
+      els.modalBox.querySelectorAll('[data-sync-pick]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          collectFormToSettings();
+          const [slot, i] = btn.getAttribute('data-sync-pick').split(':');
+          openSyncPicker(slot, +i);
+        });
+      });
+      els.modalBox.querySelectorAll('[data-sync-del]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          collectFormToSettings();
+          const [slot, i] = btn.getAttribute('data-sync-del').split(':');
+          editSync[slot].splice(+i, 1);
+          renderSettingsModal();
+        });
+      });
+    };
+    bindSyncOps();
 
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       collectFormToSettings();
-      SETTINGS.worldSync = editSync.filter(x => x.book && x.entries.length);
+      SETTINGS.worldSyncSituation = editSync.situation.filter(x => x.book && x.entries.length);
+      SETTINGS.worldSyncShadowline = editSync.shadowline.filter(x => x.book && x.entries.length);
       saveSettings(SETTINGS);
       resetBestiaryCache();   // 图鉴世界书配置可能已变
       if (!SETTINGS.enabled) uninjectAll();
@@ -1540,7 +1635,8 @@
     shortLoc, pushTickerHead, renderTicker, renderWire, stripJsonc, applyTheme,
     // S2：LLM 客户端与态势位
     callLLM, extractJson, getBestiaryIndex, bestiaryMenuList, resolveBestiaryName,
-    getSyncedWorldbookText, resetBestiaryCache, readLatestFloorTail,
+    getSyncedWorldbookText, getShadowlineFloorContext, getLwbSummaryText,
+    resetBestiaryCache, readLatestFloorTail,
     collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant, stripTier,
     // 状态与数据
     state: State, settings: () => SETTINGS,
