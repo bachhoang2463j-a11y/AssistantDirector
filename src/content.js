@@ -74,6 +74,7 @@
       worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
       worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
       shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
+      debug: false,             // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
   function normalizeSync(list) {
@@ -100,6 +101,7 @@
         worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
         worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
         shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
+        debug: saved.debug === true,
       };
     } catch (e) { return defaultSettings(); }
   }
@@ -504,9 +506,19 @@
   // 5. LLM 客户端（OpenAI 兼容 /chat/completions 非流式）
   // ═════════════════════════════════════════════════════════════════════
 
-  async function callLLM(cfg, messages, { timeoutMs = 90000 } = {}) {
+  // —— LLM 调试日志（环形缓冲，最近 20 次请求/响应；设置开启后记录并在控制台输出）———
+
+  const DebugLog = [];
+  function debugRecord(entry) {
+    DebugLog.push(entry);
+    if (DebugLog.length > 20) DebugLog.shift();
+    if (SETTINGS.debug) log('[LLM]', entry.label, entry.url, entry.ok ? `ok ${entry.ms}ms` : 'FAIL', entry.ms + 'ms');
+  }
+
+  async function callLLM(cfg, messages, { timeoutMs = 90000, label = 'llm' } = {}) {
     if (!cfg || !cfg.baseUrl || !cfg.model) throw new Error('端点未配置（Base URL / Model 必填）');
     const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
+    const t0 = Date.now();
     let res;
     try {
       res = await fetch(url, {
@@ -523,11 +535,18 @@
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
-    } catch (e) { throw new Error(`请求失败：${e.message || e}`); }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      if (SETTINGS.debug) debugRecord({ label, url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: e.message || String(e) });
+      throw new Error(`请求失败：${e.message || e}`);
+    }
+    if (!res.ok) {
+      if (SETTINGS.debug) debugRecord({ label, url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: `HTTP ${res.status}` });
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     const content = data && data.choices && data.choices[0] && data.choices[0].message
       && data.choices[0].message.content;
+    if (SETTINGS.debug) debugRecord({ label, url, model: cfg.model, messages, raw: content || '', ok: !!content, ms: Date.now() - t0, error: content ? '' : '响应缺少 content' });
     if (!content) throw new Error('响应缺少 choices[0].message.content');
     return content;
   }
@@ -945,8 +964,13 @@
   async function generateShadowlineReport(reason) {
     if (Trigger.busy) return;
     const cfg = SETTINGS.shadowline;
-    if (!cfg.baseUrl || !cfg.model) { log(`暗线位端点未配置，跳过${reason}触发`); return; }
+    if (!cfg.baseUrl || !cfg.model) {
+      log(`暗线位端点未配置，跳过${reason}触发`);
+      toast('暗线位端点未配置——⚙ 设置 → 暗线位（Base URL / Model）');
+      return;
+    }
     Trigger.busy = true; Trigger.busyReason = reason;
+    if (reason === 'manual') toast('📡 暗线推演已启动…完成后自动弹出报告');
     try {
       const stat = readLatestStatData();
       if (!stat) { log('报告触发但无 stat_data，跳过'); return; }
@@ -957,7 +981,7 @@
       let lastErr = '';
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          const raw = await callLLM(cfg, messages, { timeoutMs: 180000 });
+          const raw = await callLLM(cfg, messages, { timeoutMs: 180000, label: 'shadowline' });
           const parsed = extractJson(raw);
           const { report, errs } = validateReport(parsed, ctx, bestiary);
           if (errs.length) logWarn('报告校验丢弃项：', errs.join('；'));
@@ -1074,7 +1098,7 @@
     let lastErr = '';
     for (let attempt = 1; attempt <= 2; attempt++) {          // 失败/全拒 → 重试 ≤1
       try {
-        const raw = await callLLM(cfg, buildInstantMessages(places, ctx));
+        const raw = await callLLM(cfg, buildInstantMessages(places, ctx), { label: 'instant' });
         const arr = extractJson(raw);
         const list = Array.isArray(arr) ? arr : [arr];
         const okCards = [];
@@ -1198,7 +1222,7 @@
     border-bottom: 1px solid var(--ad-line-strong); padding-bottom: 3px; margin-bottom: 2px;
     font-size: 8.5px; letter-spacing: 1px; color: var(--ad-ink-dim); text-transform: uppercase;
     font-family: 'Courier Prime', 'Courier New', monospace;
-    padding-right: 75px;
+    padding-right: 118px;
   }
   .ad-theme-paper .ad-head-ears .ear-motto { font-style: italic; color: var(--ad-accent); font-family: var(--ad-font); }
   .ad-theme-paper .ad-head-main {
@@ -1213,11 +1237,11 @@
     margin: 2px 0 3px;
   }
   .ad-theme-paper .ad-head-btns {
-    position: absolute; right: 10px; top: 7px; z-index: 20; display: flex; gap: 4px;
+    position: absolute; right: 10px; top: 7px; z-index: 20; display: flex; gap: 3px;
   }
   .ad-theme-paper .ad-head-btns button {
     background: rgba(244, 238, 219, 0.9); border: 1px solid var(--ad-line-strong);
-    border-radius: 2px; color: var(--ad-ink-dim); padding: 1px 5px; font-size: 11px;
+    border-radius: 2px; color: var(--ad-ink-dim); padding: 1px 4px; font-size: 11px;
     line-height: 1.2; cursor: pointer; transition: all .15s;
   }
   .ad-theme-paper .ad-head-btns button:hover {
@@ -1670,6 +1694,15 @@
   }
 
   // 把表单输入收进 SETTINGS（不持久化——供 sync 操作重渲前保存现场）
+  // worldSync 即时持久化：选书/勾词条/增删立即写回（不依赖"保存"按钮）；
+  // 已选书未勾词条的来源保留（filter 只去 book 空的），防止"选书后重开被清空"
+  function persistSyncNow() {
+    SETTINGS.worldSyncSituation = editSync.situation.filter(x => x && x.book);
+    SETTINGS.worldSyncShadowline = editSync.shadowline.filter(x => x && x.book);
+    saveSettings(SETTINGS);
+  }
+
+  // 把表单输入收进 SETTINGS（不持久化——供 sync 操作重渲前保存现场）
   function collectFormToSettings() {
     els.modalBox.querySelectorAll('[data-k]').forEach(input => {
       const path = input.getAttribute('data-k').split('.');
@@ -1697,6 +1730,7 @@
       els.modalBox.querySelector('#ad-sync-pick-ok').addEventListener('click', () => {
         src.entries = [...els.modalBox.querySelectorAll('[data-entry]:checked')]
           .map(n => n.getAttribute('data-entry'));
+        persistSyncNow();   // 勾选即时保持
         renderSettingsModal();
       });
       els.modalBox.querySelector('#ad-sync-pick-back').addEventListener('click', renderSettingsModal);
@@ -1742,6 +1776,9 @@
       <div class="ad-form-row"><label>图鉴世界书</label><input type="text" data-k="bestiaryBook" value="${esc(s.bestiaryBook || '')}" placeholder="留空自动匹配名称含「图鉴」的世界书"></div>
       <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
+      <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
+        <input type="checkbox" data-k="debug" ${s.debug ? 'checked' : ''}> 记录 LLM 请求/响应（控制台 + 日志查看）</label></div>
+      <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button></div>
       ${syncSectionHtml('shadowline', '副导演 · 世界书同步（→ 报告输入）')}
       ${syncSectionHtml('situation', '态势位 · 世界书同步（→ 产卡输入）')}
       ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
@@ -1766,6 +1803,7 @@
           const [slot, i] = sel.getAttribute('data-sync-book').split(':');
           editSync[slot][+i].book = sel.value;
           editSync[slot][+i].entries = [];
+          persistSyncNow();   // 选书即时保持
           renderSettingsModal();
         });
       });
@@ -1781,17 +1819,21 @@
           collectFormToSettings();
           const [slot, i] = btn.getAttribute('data-sync-del').split(':');
           editSync[slot].splice(+i, 1);
+          persistSyncNow();   // 删除即时保持
           renderSettingsModal();
         });
       });
     };
     bindSyncOps();
 
+    els.modalBox.querySelector('#ad-debug-open').addEventListener('click', () => {
+      collectFormToSettings();   // 先收表单（含调试开关），再打开日志
+      openDebugModal();
+    });
+
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       collectFormToSettings();
-      SETTINGS.worldSyncSituation = editSync.situation.filter(x => x.book && x.entries.length);
-      SETTINGS.worldSyncShadowline = editSync.shadowline.filter(x => x.book && x.entries.length);
-      saveSettings(SETTINGS);
+      persistSyncNow();
       resetBestiaryCache();   // 图鉴世界书配置可能已变
       if (!SETTINGS.enabled) uninjectAll();
       else scheduleDispatch('settings-saved');
@@ -1802,6 +1844,37 @@
       closeModal();
     });
     els.modalBox.querySelector('#ad-set-close').addEventListener('click', closeModal);
+  }
+
+  // —— LLM 调试日志弹窗（最近 20 次请求/响应；debug 开关开启时记录）—————————
+
+  function openDebugModal() {
+    const rows = DebugLog.slice().reverse().map((e, i) => `
+      <div class="ad-card-item" data-dbg="${DebugLog.length - 1 - i}" style="cursor:pointer">
+        <span class="place">${esc(e.label)} · ${esc(e.model || '')}</span>
+        <span class="meta">${new Date(e.ms ? Date.now() - e.ms : Date.now()).toLocaleTimeString()} 前触发 · ${e.ok ? '✓ ' + e.ms + 'ms' : '✗ ' + esc(e.error || '')}</span>
+      </div>`).join('') || '<div class="dim" style="padding:10px 4px">暂无记录——开启调试模式后，每次 LLM 调用（产卡/推演）会记录请求与响应。</div>';
+    openModal(`
+      <h3>🐞 LLM 调试日志（${DebugLog.length}）</h3>
+      <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">点击条目查看完整请求/响应。仅调试模式开启时记录（环形保留 20 条，刷新页面清空）。</div>
+      ${rows}
+      <div class="ad-btnrow"><button id="ad-dbg-back">返回设置</button></div>`);
+    els.modalBox.querySelectorAll('[data-dbg]').forEach(n => {
+      n.addEventListener('click', () => {
+        const e = DebugLog[+n.getAttribute('data-dbg')];
+        if (!e) return;
+        openModal(`
+          <h3>🐞 ${esc(e.label)} · ${esc(e.model || '')} · ${e.ok ? '✓' : '✗ ' + esc(e.error || '')}</h3>
+          <div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-bottom:6px">${esc(e.url)} · ${e.ms}ms</div>
+          <div class="ad-sec-title">请求 messages</div>
+          <textarea readonly style="width:100%;height:200px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(JSON.stringify(e.messages, null, 1))}</textarea>
+          <div class="ad-sec-title">响应原文</div>
+          <textarea readonly style="width:100%;height:200px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(e.raw || '（空）')}</textarea>
+          <div class="ad-btnrow"><button id="ad-dbg-back2">返回日志</button></div>`);
+        els.modalBox.querySelector('#ad-dbg-back2').addEventListener('click', openDebugModal);
+      });
+    });
+    els.modalBox.querySelector('#ad-dbg-back').addEventListener('click', renderSettingsModal);
   }
 
   // —— 报告查看弹窗（GM：最新暗线报告概览 + 完整 JSON + 重新推演）———————
@@ -2032,6 +2105,7 @@
     checkTriggers, generateShadowlineReport, buildShadowlineContext, buildShadowlineMessages,
     validateReport, buildShadowlineInjection, mergeGarrisons, checkAmbush,
     getRoster, saveRoster, Trigger, statDateKey, statStage, statCity, openReportModal,
+    DebugLog, openDebugModal, persistSyncNow,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,

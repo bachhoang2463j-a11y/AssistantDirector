@@ -485,6 +485,12 @@ async function runAll() {
     const shText = await AD.getSyncedWorldbookText('shadowline');
     assert('W1 两套配置独立（态势位只含自己勾的词条）', sitText.includes('新南威尔士') && !sitText.includes('邪教组织'));
     assert('W2 两套配置独立（暗线位只含自己勾的词条）', shText.includes('邪教组织') && !shText.includes('新南威尔士'));
+    const sKeep = AD.loadSettings();
+    sKeep.worldSyncSituation = [{ book: '剧情世界书', entries: [] }];
+    AD.saveSettings(sKeep);
+    assert('W3 已选书未勾词条的来源保留（选书不丢失）', AD.loadSettings().worldSyncSituation.length === 1
+      && AD.loadSettings().worldSyncSituation[0].book === '剧情世界书');
+    sKeep.worldSyncSituation = sW2.worldSyncSituation; AD.saveSettings(sKeep);   // 还原 W 段原配置
     assert('P1 两套配置 + 楼层窗口持久化往返', AD.loadSettings().worldSyncSituation.length === 1
       && AD.loadSettings().worldSyncShadowline[0].entries[0] === '当地邪教：沙蝎教派'
       && AD.loadSettings().shadowlineFloors === 20);
@@ -539,6 +545,7 @@ async function runAll() {
 
     const s2 = AD.loadSettings();
     s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
+    s2.debug = true;
     AD.saveSettings(s2);
     AD.resetBestiaryCache();
 
@@ -566,6 +573,8 @@ async function runAll() {
     AD.dispatchNow('s2a3');
     await waitFor(() => true, 1500);
     assert('A6 已登记地点不重复产卡（tried + 卡池命中）', fetchCalls === callsA + 1);
+    assert('A7 调试日志记录产卡请求/响应（label+raw）', AD.DebugLog.some(e => e.label === 'instant'
+      && e.ok && e.raw.includes('苦力棚屋') && Array.isArray(e.messages) && e.messages.length === 2));
 
     // B. 非法 menu：拒绝 → 重试一次 → 仍拒 → 回落保持兜底
     responder = () => JSON.stringify([{ place: '黑仓库', faction: '神秘组织',
@@ -603,11 +612,12 @@ async function runAll() {
     AD.dispatchNow('s2d');
     await waitFor(() => true, 1500);
     assert('D1 端点未配置 → 不发起 LLM 调用（纯兜底）', fetchCalls === callsD);
-    // 清理：还原设置（不留 mock 端点/同步配置污染 localStorage 与下轮回归）
+    // 清理：还原设置（不留 mock 端点/同步配置/调试开关污染 localStorage 与下轮回归）
     const s2z = AD.loadSettings();
     s2z.situation = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 1000 };
     s2z.worldSyncSituation = [];
     s2z.worldSyncShadowline = [];
+    s2z.debug = false;
     AD.saveSettings(s2z);
   }
 
@@ -624,6 +634,7 @@ async function runAll() {
     };
     const s3 = AD.loadSettings();
     s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s3.debug = true;
     AD.saveSettings(s3);
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
     window.insertOrAssignVariables({ $ad_roster: { factions: ['伦道夫船运（黑法老触点）'], tombstones: ['墓碑派系'] } }, { type: 'chat' });
@@ -682,6 +693,8 @@ async function runAll() {
       && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）')
       && !MOCK.chat['$ad_roster'].factions.includes('墓碑派系'));
     assert('T6 预约存档 $ad_pending', MOCK.chat['$ad_pending'] && MOCK.chat['$ad_pending'].ambush.length === 1);
+    assert('T10 调试日志记录推演请求/响应（label=shadowline）', AD.DebugLog.some(e => e.label === 'shadowline'
+      && e.ok && e.raw.includes('双线绞合期')));
 
     // T7 newday 跨日自动触发
     const genBefore = MOCK.chat['$ad_report'].generatedAt;
