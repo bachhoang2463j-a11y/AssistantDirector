@@ -856,41 +856,25 @@
   // —— 报告硬校验（§4.3：不过即丢弃该条/重试，不阻塞其余产出）—————————
 
   const TRI_STATES = ['推断中', '已渗透', '已兑现'];
-  function causeFloorIds(causes) {
-    const ids = [];
-    for (const c of (causes || [])) {
-      const m = String(c).match(/楼\s*(\d+)|#(\d+)/);
-      if (m) ids.push(+(m[1] || m[2]));
-    }
-    return ids;
-  }
-  function validateReport(report, ctx, bestiaryIndex) {
-    const errs = [];
+  function validateReport(report, ctx) {
     if (!report || typeof report !== 'object') return { report: null, errs: ['报告非对象'] };
-    const rosterNames = new Set([...ctx.knownFactions, ...(report.roster_ops || [])]);
-    const tombstones = new Set(ctx.roster.tombstones);
-    // factions
-    const factions = [];
-    for (const f of (report.factions || [])) {
-      if (!f || !f.name) { errs.push('faction 缺少 name，丢弃'); continue; }
-      if (tombstones.has(f.name)) { errs.push(`墓碑派系 ${f.name} 禁止复活，丢弃`); continue; }
-      if (!f.truth || !f.surface) { errs.push(`${f.name}：truth/surface 必须成对，丢弃`); continue; }
+    // 零校验模式（用户指示：先跑通看效果，未要求前不加限制）——只做结构整形与字段补默认，
+    // 不丢弃任何条目、不触发重试，杜绝"生成了却静默丢弃"的 token 浪费
+    const factions = (report.factions || []).map((f, i) => {
+      f = (f && typeof f === 'object') ? f : {};
+      if (!f.name) logWarn(`faction#${i} 缺少 name，已补默认`);
+      f.name = f.name || `未命名派系${i + 1}`;
+      if (!f.truth || !f.surface) logWarn(`${f.name}：truth/surface 不全，已补占位`);
+      f.truth = f.truth || '（真相未明）';
+      f.surface = f.surface || '（街头暂无可察异动）';
+      f.causes = (Array.isArray(f.causes) && f.causes.length) ? f.causes : ['（出处未标注）'];
       if (!TRI_STATES.includes(f.state)) f.state = '推断中';
-      const floors = causeFloorIds(f.causes);
-      if (!Array.isArray(f.causes) || !f.causes.length || !floors.length) {
-        errs.push(`${f.name}：causes 缺楼层出处，丢弃`); continue;
-      }
-      if (!floors.every(id => id >= 0 && id <= Math.max(Trigger.lastFloorId, 0) + 100)) {
-        errs.push(`${f.name}：causes 楼层号不存在，丢弃`); continue;
-      }
-      factions.push(f);
-    }
-    // resistance（结构宽松，尽量保留）
+      return f;
+    });
     const resistance = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
     resistance.forbidden = (resistance.forbidden || []).filter(x => x && x.truth && x.path);
     resistance.partial = (resistance.partial || []).map(String).filter(Boolean);
     resistance.friction = (resistance.friction || []).map(String).filter(Boolean);
-    // ambush 预约（结构宽松：需有条件对象）——garrisons 已移除（态势由态势位全权负责）
     const ambush = (report['ambush预约'] || []).filter(a => a && a['派系'] && a['条件'] && typeof a['条件'] === 'object');
     return {
       report: {
@@ -899,7 +883,7 @@
         roster_ops: (report.roster_ops || []).map(String).filter(Boolean),
         'ambush预约': ambush,
         generatedAt: Date.now(), reason: Trigger.busyReason || '',
-      }, errs,
+      }, errs: [],
     };
   }
 
@@ -933,7 +917,7 @@
   // —— 报告生成主流程 ——————————————————————————————————————
 
   async function generateShadowlineReport(reason) {
-    if (Trigger.busy) return;
+    if (Trigger.busy) { toast('📡 推演进行中，请稍候（上次任务未完成）'); return; }
     const cfg = SETTINGS.shadowline;
     if (!cfg.baseUrl || !cfg.model) {
       log(`暗线位端点未配置，跳过${reason}触发`);
@@ -947,55 +931,62 @@
       if (!stat) { log('报告触发但无 stat_data，跳过'); return; }
       const ctx = await buildShadowlineContext(stat);
       const messages = buildShadowlineMessages(ctx);
-      let lastErr = '';
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      // 调用 + 解析：仅当完全拿不到 JSON（网络失败/输出非 JSON——token 无法利用）才重试一次；
+      // 解析成功后无论校验提示多少条都宽容落地，绝不因校验丢弃整份报告浪费 token
+      let parsed = null, lastErr = '';
+      for (let attempt = 1; attempt <= 2 && !parsed; attempt++) {
         try {
           const raw = await callLLM(cfg, messages, { timeoutMs: 180000, label: 'shadowline' });
-          const parsed = extractJson(raw);
-          const { report, errs } = validateReport(parsed, ctx);
-          if (errs.length) logWarn('报告校验丢弃项：', errs.join('；'));
-          if (!report || !report.factions.length) {
-            throw new Error(`报告有效产出为空（${errs.join('；') || '无 factions'}）`);
-          }
-          // 存档 + 分发（garrisons 已移除——态势由态势位全权负责，暗线不分散注意力）
-          writeChatVar(CV.report, report);
-          // 名册自动注册（新派系轻量登场）
-          const roster = getRoster();
-          for (const f of report.factions) if (!roster.factions.includes(f.name)) roster.factions.push(f.name);
-          for (const op of report.roster_ops) if (op && !roster.factions.includes(op)) roster.factions.push(op);
-          saveRoster(roster);
-          // 提炼注入（持续在场替换式）
-          const injectText = buildShadowlineInjection(report);
-          if (IS_LIVE) {
-            if (injectedIds.includes(INJECT_ID_SHADOWLINE)) uninjectPrompts([INJECT_ID_SHADOWLINE]);
-            injectPrompts([{ id: INJECT_ID_SHADOWLINE, position: 'in_chat', depth: 0, role: 'system', content: injectText }]);
-            if (!injectedIds.includes(INJECT_ID_SHADOWLINE)) injectedIds.push(INJECT_ID_SHADOWLINE);
-          }
-          // 预约存档（$ad_pending）
-          if (report['ambush预约'] && report['ambush预约'].length) {
-            writeChatVar(CV.pending, { ambush: report['ambush预约'], savedAt: Date.now() });
-          }
-          Trigger.floorsSinceReport = 0;
-          Trigger.lastReportDate = statDateKey(stat) || Trigger.lastReportDate;
-          Trigger.lastStage = statStage(stat) || Trigger.lastStage;
-          Trigger.lastCity = statCity(stat) || Trigger.lastCity;
-          // S4 最小版：surface 公开征兆上折叠条 ticker（最新两条，倒序插入）
-          for (const f of report.factions.slice(0, 2).reverse()) {
-            const head = `${String(f.name || '').slice(0, 5)}：${String(f.surface || '').slice(0, 12)}`;
-            if (State.tickerHeads[0] !== head) {
-              State.tickerHeads.unshift(head);
-              State.tickerHeads = State.tickerHeads.slice(0, 3);
-            }
-          }
-          renderTicker();
-          toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系动向`);
-          log(`暗线报告完成（${reason}，第 ${attempt} 次尝试）`, `派系 ${report.factions.length}，预约 ${report['ambush预约'].length}`);
-          openReportModal(report);   // GM 查看弹窗（手动/自动触发均弹出）
-          return;
-        } catch (e) { lastErr = e.message || String(e); logWarn(`暗线报告第 ${attempt} 次失败：${lastErr}`); }
+          parsed = extractJson(raw);
+        } catch (e) {
+          lastErr = e.message || String(e);
+          logWarn(`暗线报告第 ${attempt} 次调用失败：${lastErr}`);
+          if (attempt === 1) toast('📡 首次调用失败，重试中…', 4000);
+        }
       }
-      logWarn(`暗线报告最终失败（保持上次注入）：${lastErr}`);
-      toast('暗线报告生成失败（详见控制台）');
+      if (!parsed) {
+        logWarn(`暗线报告最终失败（保持上次注入）：${lastErr}`);
+        toast(`暗线报告生成失败：${lastErr}`, 6000);
+        return;
+      }
+      const { report, errs } = validateReport(parsed, ctx);
+      if (errs.length) logWarn('报告宽容提示（条目已保留）：', errs.join('；'));
+      if (!report) { toast('暗线报告生成失败：报告结构异常', 6000); return; }
+      if (!report.factions.length) logWarn('报告 factions 为空——已存档落地（不重试不丢弃）');
+      // 存档 + 分发（garrisons 已移除——态势由态势位全权负责，暗线不分散注意力）
+      writeChatVar(CV.report, report);
+      // 名册自动注册（新派系轻量登场）
+      const roster = getRoster();
+      for (const f of report.factions) if (!roster.factions.includes(f.name)) roster.factions.push(f.name);
+      for (const op of report.roster_ops) if (op && !roster.factions.includes(op)) roster.factions.push(op);
+      saveRoster(roster);
+      // 提炼注入（持续在场替换式）
+      const injectText = buildShadowlineInjection(report);
+      if (IS_LIVE) {
+        if (injectedIds.includes(INJECT_ID_SHADOWLINE)) uninjectPrompts([INJECT_ID_SHADOWLINE]);
+        injectPrompts([{ id: INJECT_ID_SHADOWLINE, position: 'in_chat', depth: 0, role: 'system', content: injectText }]);
+        if (!injectedIds.includes(INJECT_ID_SHADOWLINE)) injectedIds.push(INJECT_ID_SHADOWLINE);
+      }
+      // 预约存档（$ad_pending）
+      if (report['ambush预约'] && report['ambush预约'].length) {
+        writeChatVar(CV.pending, { ambush: report['ambush预约'], savedAt: Date.now() });
+      }
+      Trigger.floorsSinceReport = 0;
+      Trigger.lastReportDate = statDateKey(stat) || Trigger.lastReportDate;
+      Trigger.lastStage = statStage(stat) || Trigger.lastStage;
+      Trigger.lastCity = statCity(stat) || Trigger.lastCity;
+      // S4 最小版：surface 公开征兆上折叠条 ticker（最新两条，倒序插入）
+      for (const f of report.factions.slice(0, 2).reverse()) {
+        const head = `${String(f.name || '').slice(0, 5)}：${String(f.surface || '').slice(0, 12)}`;
+        if (State.tickerHeads[0] !== head) {
+          State.tickerHeads.unshift(head);
+          State.tickerHeads = State.tickerHeads.slice(0, 3);
+        }
+      }
+      renderTicker();
+      toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系动向`);
+      log('暗线报告完成', `派系 ${report.factions.length}，预约 ${report['ambush预约'].length}`);
+      openReportModal(report);   // GM 查看弹窗（手动/自动触发均弹出）
     } finally {
       Trigger.busy = false; Trigger.busyReason = '';
     }
@@ -1020,16 +1011,10 @@
 
   // 卡片硬校验：结构 + menu 敌人名单（用户手输的战役名单为唯一权威，双向包含容错）；返回 null=通过
   function validateCard(card) {
+    // 零校验模式：仅拦废数据（缺 place/faction 无法使用），menu/alert/aliases 宽容收下
     if (!card || typeof card !== 'object') return '非对象';
     if (!card.place || typeof card.place !== 'string') return '缺少 place';
     if (!card.faction || typeof card.faction !== 'string') return '缺少 faction';
-    if (card.alert && !ALERT_LEVELS.includes(card.alert)) return `alert 非法（${card.alert}）`;
-    if (card.aliases != null && !Array.isArray(card.aliases)) return 'aliases 非数组';
-    if (card.menu) {
-      const pool = getEnemyPool();
-      const bad = parseMenu(card.menu).map(e => e.name).filter(n => !inEnemyPool(n, pool));
-      if (bad.length) return `menu 词条不在敌人名单内：${bad.join('、')}`;
-    }
     return null;
   }
 
@@ -1103,6 +1088,7 @@
       }
     }
     logWarn(`即时产卡最终失败（保持兜底注入）：${lastErr}`);
+    toast(`产卡失败：${lastErr}`, 5000);
   }
 
   // dispatchNow 接线点：主地点未命中 + 分兵点位未命中 → 一次异步产卡（busy 防并发）
@@ -1509,10 +1495,10 @@
     if (willOpen && !silent) renderWire();
   }
 
-  function toast(msg) {
+  function toast(msg, ms = 2200) {
     const t = el('div', { class: 'ad-toast' + (currentTheme === 'paper' ? ' ad-theme-paper' : '') }, esc(msg));
     UI_DOC.body.appendChild(t);
-    setTimeout(() => t.remove(), 2200);
+    setTimeout(() => t.remove(), ms);
   }
 
   // ticker：最新情报轮播（折叠态唯一内容）；空态时竖条收缩为小胶囊

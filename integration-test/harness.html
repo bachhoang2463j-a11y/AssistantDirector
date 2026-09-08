@@ -539,10 +539,10 @@ async function runAll() {
     const pool = AD.getEnemyPool();
     assert('E1 敌人名单解析（逗号/换行分隔）', pool.length === 3 && pool[0] === '达令港码头武装打手' && pool[2] === '萨里山剃刀党混混');
     assert('E2 名单内 menu 词条通过', AD.validateCard({ place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' }) === null);
-    assert('E3 名单外 menu 词条拒绝', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }) !== null);
     const vcPool = { place: 'X', faction: 'Y', menu: '未知敌人*2', alert: '常规' };
     const savedPool = s2.enemyPool; s2.enemyPool = ''; AD.saveSettings(s2);
     assert('E4 未配名单则不校验 menu（人类权威）', AD.validateCard(vcPool) === null);
+    assert('E5 零校验模式：名单外词条也收下（先跑通看效果）', AD.validateCard({ place: 'X', faction: 'Y', menu: '名单外敌人*9', alert: '松懈' }) === null);
     s2.enemyPool = savedPool; AD.saveSettings(s2);
     assert('L1 地标键：大区后首字段（含子标题）', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前') === '澳大利亚酒店 - 总督套房');
     assert('L2 地标键：房间级变化不改变键', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 玄关') === '澳大利亚酒店 - 总督套房');
@@ -596,18 +596,17 @@ async function runAll() {
     await waitFor(() => true, 1500);
     assert('A8 地标没变不产卡（房间级小变化，地标键触发）', fetchCalls === a8Calls);
 
-    // B. 非法 menu：拒绝 → 重试一次 → 仍拒 → 回落保持兜底
-    responder = () => JSON.stringify([{ place: '黑仓库', faction: '神秘组织',
-      menu: '不存在的敌人*3', alert: '常规' }]);
+    // B. 零校验：menu 任意词条直接入池，单次调用不因校验重试
+    responder = () => JSON.stringify([{ place: '黑仓库区', faction: '神秘组织',
+      menu: '不存在的敌人*3', alert: '常规', reaction: '驱赶生人。', verdict: '闯入即敌对。' }]);
     MOCK.setFloorStat(STAT('📍 悉尼 · 达令港 · 黑仓库区 · 码头北端', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
     const callsB = fetchCalls;
     AD.dispatchNow('s2b');
-    await waitFor(() => fetchCalls >= callsB + 2, 8000);
-    assert('B1 非法 menu 被白名单拒绝并重试一次后放弃', fetchCalls === callsB + 2, `+${fetchCalls - callsB}`);
-    assert('B2 被拒卡片不入池（保持兜底注入）', !AD.getCards().some(c => c.place === '黑仓库')
-      && MOCK.injections.calls[MOCK.injections.calls.length - 1].content.includes('黑仓库区'));
+    const bGot = await waitFor(() => AD.getCards().some(c => c.place === '黑仓库区'), 8000);
+    assert('B1 零校验：menu 名单外词条直接入池（不重试不浪费 token）', bGot && fetchCalls === callsB + 1
+      && AD.getCards().find(c => c.place === '黑仓库区').menu === '不存在的敌人*3');
     await waitFor(() => true, 1200);
-    assert('B3 失败地点不反复重试（tried 生效）', fetchCalls === callsB + 2);
+    assert('B3 同地点不重复产卡（tried 生效）', fetchCalls === callsB + 1);
 
     // C. 分兵多卡：主地点命中，角色"不在场，前往X" → 一次产卡
     responder = () => JSON.stringify([{ place: '禧市茶楼', faction: '禧市洪门堂口',
@@ -695,8 +694,8 @@ async function runAll() {
     await AD.generateShadowlineReport('harness');
     const rep = MOCK.chat['$ad_report'];
     assert('T1 报告存档 $ad_report（含触发原因）', rep && rep.factions && rep.reason === 'harness');
-    assert('T2 校验丢弃：无 causes / 墓碑派系（2/4 存活）', rep.factions.length === 2
-      && rep.factions.every(f => ['凯特·利（萨里山）', '麦凯探长（飞行小队）'].includes(f.name)));
+    assert('T2 零校验：全部条目保留（含无 causes/墓碑派系，仅字段补默认）', rep.factions.length === 4
+      && rep.factions.some(f => f.name === '无出处派系' && f.causes[0] === '（出处未标注）'));
     assert('T3 提炼注入 ad_shadowline（三态标注+渗透+禁泄）', (() => {
       const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
       return inj && inj.content.includes('事实提醒') && inj.content.includes('空白搜查令已备')
@@ -711,9 +710,8 @@ async function runAll() {
         && green.menu === '萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2'
         && !AD.getCards().some(c => c.place === '黑仓库新区');
     })());
-    assert('T5 名册自动注册（新派系入册，墓碑不动）', MOCK.chat['$ad_roster'].factions.includes('凯特·利（萨里山）')
-      && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）')
-      && !MOCK.chat['$ad_roster'].factions.includes('墓碑派系'));
+    assert('T5 名册自动注册（报告派系全部入册）', MOCK.chat['$ad_roster'].factions.includes('凯特·利（萨里山）')
+      && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）'));
     assert('T6 预约存档 $ad_pending', MOCK.chat['$ad_pending'] && MOCK.chat['$ad_pending'].ambush.length === 1);
     assert('T10 调试日志记录推演请求/响应（label=shadowline）', AD.DebugLog.some(e => e.label === 'shadowline'
       && e.ok && e.raw.includes('双线绞合期')));
