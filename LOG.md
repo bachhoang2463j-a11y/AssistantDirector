@@ -243,3 +243,19 @@
 - S3 暗线报告输入将沿用同一原则（LWB 摘要 + 全量增量窗口 + 全量世界书同步）。
 
 ---
+
+## 2026-09-08 ｜ feat：双通道上下文（两套世界书配置 + 副导演楼层窗口）（业务提交 `6f95c7b`）
+
+**变更行为**：SETTINGS.worldSync 拆为 worldSyncSituation / worldSyncShadowline 两套独立配置（loadSettings 自动迁移：旧单一配置复制到两套）；新增 shadowlineFloors（默认 20）；数据层新增 getShadowlineFloorContext / getLwbSummaryText / stripBlocks；getSyncedWorldbookText(slot) 参数化；设置面板双区块 + "副导演可见楼层"行。harness 105/105（新增双通道断言组 11 条）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`、`SPEC.md`（V0.2.3）
+
+**决策原因**（用户需求 + AskUserQuestion 确认）：
+1. **两套世界书配置**：副导演（暗线位报告）与态势位（产卡）各自选书勾词条，不再共用；旧配置一次性迁移复制到两套（用户确认）。
+2. **副导演楼层窗口**：默认 20 楼 AI 原文（对齐用户 LWB 的 20 楼一总结），排除玩家输入与 LWB 隐藏楼层，全量不截断，每楼带楼层号（causes 出处）；0=全部历史。早期历史由 LWB 结构化总结覆盖（用户确认：副导演视野与正文一致——N 楼原文 + LWB 总结）。
+3. 实现：getShadowlineFloorContext 优先直读 SillyTavern.chat（同源消息数组，字段 mes/is_user/is_hidden 兼容），回退 getChatMessages('all', {role:'assistant', hide_state:'unhidden'})；getLwbSummaryText 读 chatMetadata.extensions.LittleWhiteBox.storySummary 格式化关键词+事件（带楼层出处）。
+4. 本轮只做配置+数据层（用户确认），S3 暗线位主体下轮落地时直接消费 getShadowlineFloorContext/getLwbSummaryText/getSyncedWorldbookText('shadowline')。
+
+**验证**：harness 105/105（F1-F6 楼层窗口/排除/楼层号/剥码/0=全部；L1 LWB 格式化；W1-W2 两套配置独立；P1 持久化往返；M1 旧配置迁移）。过程中修 harness 两处：世界书 mock 安装时机（双通道段在 S2 段之前，mock 提前）、编辑残留的重复 const s2 声明（SyntaxError 全挂）。
+
+---
