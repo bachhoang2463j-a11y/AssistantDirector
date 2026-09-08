@@ -629,6 +629,22 @@
     return index.map(e => e.keys[0] || stripTier(e.name)).filter(Boolean);
   }
 
+  // 世界书排序：对齐酒馆上下文顺序——先按 position.type 分组（角色定义前→…→深度插入），
+  // 组内按 position.order 升序。getWorldbook 返回的"自定义顺序"与此无关（真机实证乱序）。
+  const WB_POS_ORDER = ['before_character_definition', 'after_character_definition',
+    'before_example_messages', 'after_example_messages', 'before_author_note', 'after_author_note', 'at_depth'];
+  function sortWorldbookEntries(entries) {
+    const rank = e => {
+      const p = (e && e.position) || {};
+      const i = WB_POS_ORDER.indexOf(p.type);
+      return [i < 0 ? 99 : i, Number.isFinite(p.order) ? p.order : 100];
+    };
+    return (entries || []).slice().sort((a, b) => {
+      const [pa, oa] = rank(a), [pb, ob] = rank(b);
+      return pa !== pb ? pa - pb : oa - ob;
+    });
+  }
+
   // —— 世界书同步（按位独立配置：'situation' 态势位产卡 / 'shadowline' 暗线位报告）—————
   // 信息完整性优先：不做长度截断——缺信息导致的瞎编比长输入的稀释更危险
   async function getSyncedWorldbookText(slot) {
@@ -640,10 +656,11 @@
       let entries;
       try { entries = await getWorldbook(src.book); }
       catch (e) { logWarn(`同步世界书读取失败：${src.book}`, e); continue; }
-      for (const want of src.entries) {
-        const e = (entries || []).find(x => x && x.name === want);
-        if (!e) { logWarn(`同步词条不存在：${src.book} / ${want}`); continue; }
-        parts.push(`【${src.book} · ${want}】\n${String(e.content || '').trim()}`);
+      const sorted = sortWorldbookEntries(entries);   // 酒馆上下文顺序（order），非 getWorldbook 原始顺序
+      const wanted = new Set(src.entries);
+      for (const e of sorted) {
+        if (!e || !wanted.has(e.name)) continue;
+        parts.push(`【${src.book} · ${e.name}】\n${String(e.content || '').trim()}`);
       }
     }
     return parts.join('\n\n');
@@ -1032,6 +1049,15 @@
           Trigger.lastReportDate = statDateKey(stat) || Trigger.lastReportDate;
           Trigger.lastStage = statStage(stat) || Trigger.lastStage;
           Trigger.lastCity = statCity(stat) || Trigger.lastCity;
+          // S4 最小版：surface 公开征兆上折叠条 ticker（最新两条，倒序插入）
+          for (const f of report.factions.slice(0, 2).reverse()) {
+            const head = `${String(f.name || '').slice(0, 5)}：${String(f.surface || '').slice(0, 12)}`;
+            if (State.tickerHeads[0] !== head) {
+              State.tickerHeads.unshift(head);
+              State.tickerHeads = State.tickerHeads.slice(0, 3);
+            }
+          }
+          renderTicker();
           toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系 / 卡片 +${merge.added}~${merge.updated}`);
           log(`暗线报告完成（${reason}，第 ${attempt} 次尝试）`, `派系 ${report.factions.length}，garrisons 更新 ${merge.updated}/新增 ${merge.added}`);
           openReportModal(report);   // GM 查看弹窗（手动/自动触发均弹出）
@@ -1636,6 +1662,26 @@
       html += `<div class="ad-empty">情报流为空——在 🗂 中导入卡片，或等待 S2 态势位自动产卡。</div>`;
     }
 
+    // S4 最小版：报告 surface 公开征兆上报纸（有报告时替代卡片池成为玩家可见内容；
+    // 卡片池属态势数据/后台信息，仅无报告时作占位展示）
+    const report = readChatVar(CV.report);
+    if (report && Array.isArray(report.factions) && report.factions.length) {
+      const reportDate = report.generatedAt ? new Date(report.generatedAt).toLocaleDateString() : '';
+      for (const f of report.factions) {
+        const stateCls = f.state === '已兑现' ? 'hot' : (f.state === '已渗透' ? '' : '');
+        html += `<div class="ad-item">
+          <div class="ad-item-header">
+            <span class="ad-item-kicker">《悉尼宪报》 · ${esc(reportDate)}</span>
+            <span class="ad-item-alert ${stateCls}">${esc(f.state || '推断中')}</span>
+          </div>
+          <div class="ad-item-title"><span class="ad-item-place">${esc(f.name)}</span></div>
+          <div class="ad-item-reaction">${esc(f.surface || '')}</div>
+        </div>`;
+      }
+      els.wireBody.innerHTML = html;
+      return;
+    }
+
     for (const c of cards) {
       const entries = parseMenu(c.menu);
       const safe = c.safe || !entries.some(e => e.min || e.max);
@@ -1813,6 +1859,15 @@
         <button id="ad-set-close">关闭</button>
       </div>`);
     els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
+
+    // 全部设置项 change 即时持久化（不依赖"保存"按钮——图鉴/端点/楼层窗口改完即生效）
+    els.modalBox.querySelectorAll('[data-k]').forEach(el => {
+      el.addEventListener('change', () => {
+        collectFormToSettings();
+        saveSettings(SETTINGS);
+        resetBestiaryCache();
+      });
+    });
 
     const bindSyncOps = () => {
       els.modalBox.querySelectorAll('[data-sync-add]').forEach(btn => {

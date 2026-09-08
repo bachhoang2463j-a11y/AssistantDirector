@@ -442,9 +442,11 @@ async function runAll() {
     // 世界书 mock（双通道与 S2 段共用；词条名带等级前缀 + keys，对齐真实 V3.0 结构）
     window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0', '剧情世界书'];
     window.getWorldbook = async (name) => {
-      if (name === '剧情世界书') return [
-        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' + '很长的城市背景资料。'.repeat(300) + '【词条尾部标记】' },
-        { name: '当地邪教：沙蝎教派', content: '潜伏在内陆的邪教组织，与内陆货运有隐秘关联。' },
+      if (name === '剧情世界书') return [   // position/order 乱序（模拟 getWorldbook 原始返回与酒馆上下文顺序无关）
+        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' + '很长的城市背景资料。'.repeat(300) + '【词条尾部标记】',
+          position: { type: 'at_depth', order: 100 } },
+        { name: '当地邪教：沙蝎教派', content: '潜伏在内陆的邪教组织，与内陆货运有隐秘关联。',
+          position: { type: 'before_character_definition', order: 1 } },
       ];
       return [
         { name: '澳大利亚战役敌人图鉴·总览与索引', content: '本图鉴整合了全部敌方势力：街头犯罪/执法/邪教/眷族四类。' },
@@ -493,6 +495,14 @@ async function runAll() {
     assert('P1 两套配置 + 楼层窗口持久化往返', AD.loadSettings().worldSyncSituation.length === 1
       && AD.loadSettings().worldSyncShadowline[0].entries[0] === '当地邪教：沙蝎教派'
       && AD.loadSettings().shadowlineFloors === 20);
+    // W4 世界书按酒馆上下文顺序（position.type 分组 + order 升序）输出
+    const sW3 = AD.loadSettings();
+    sW3.worldSyncSituation = [{ book: '剧情世界书', entries: ['悉尼', '当地邪教：沙蝎教派'] }];
+    AD.saveSettings(sW3);
+    const ordered = await AD.getSyncedWorldbookText('situation');
+    assert('W4 世界书按酒馆 order 排序（角色定义前 order1 先于 at_depth）',
+      ordered.indexOf('邪教组织') >= 0 && ordered.indexOf('邪教组织') < ordered.indexOf('新南威尔士首府'));
+    sW3.worldSyncSituation = sW2.worldSyncSituation; AD.saveSettings(sW3);
 
     // 迁移：旧单一 worldSync → 复制到两套
     localStorage.setItem('ad_settings_v1', JSON.stringify({
@@ -710,6 +720,16 @@ async function runAll() {
         && !p.includes('角色列表') && !p.includes('小地图') && !p.includes('内心')
         && p.includes('日期和时间') && p.includes('━━━━━━ 楼层')
         && !p.includes('玩家输入') && !p.includes('被LWB隐藏');
+    })());
+    AD.renderWire();
+    assert('T12 surface 上报纸（公开征兆 + 派系 + 三态徽标）', (() => {
+      const wire = document.getElementById('ad-wire').innerText;
+      return wire.includes('绿顶酒馆谢绝散客') && wire.includes('凯特·利（萨里山）')
+        && wire.includes('推断中') && wire.includes('已渗透');
+    })());
+    assert('T12b surface 上 ticker（最新情报轮播）', (() => {
+      const lis = [...document.querySelectorAll('#ad-ticker li')].map(n => n.textContent);
+      return lis.some(t => t.includes('麦凯探长') || t.includes('凯特·利'));
     })());
 
     // T7 newday 跨日自动触发
