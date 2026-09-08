@@ -278,3 +278,19 @@
 **验证**：harness 115/115（T0 基线不触发/T1 存档/T2 校验丢弃 2/4 存活/T3 提炼注入内容/T4 收编+规范化+拒新卡/T5 名册注册/T6 预约存档/T7 newday 自动触发/T8 引爆三合一/T9 端点未配置零调用）。修 harness 三处：名册 mock 写入时机（reset 前被清）、按钮数 3→4、T3 断言误查注入中不存在的派系名；修 content 一处：引爆地点匹配借卡片别名对齐（"达令港仓库"≈"达令港·伦道夫船运仓库"）。
 
 ---
+
+## 2026-09-09 ｜ fix：世界书配置丢失 + 📡 反馈 + 调试模式 + 按钮间距（业务提交 `4d47d04`）
+
+**变更行为**：worldSync 操作（选书/勾词条/增删）即时持久化（persistSyncNow，不依赖保存按钮；已选书未勾词条的来源保留）；generateShadowlineReport 端点未配置改 toast 提示、手动触发有启动提示；新增调试模式（SETTINGS.debug + DebugLog 环形 20 条 + openDebugModal 查看弹窗 + 控制台输出，callLLM 带 label）；报头按钮组间距适配 4 按钮（ears padding-right 75→118px）。harness 118/118（新增 W3/A7/T10）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户真机反馈三问题）：
+1. **"选择世界书后不保持，重开设置清空"**——双根因：①必须点"保存"才生效（用户勾完词条以为完成）；②保存时的 filter(x.book && x.entries.length) 把"已选书未勾词条"的来源丢弃。修复：所有 sync 操作即时写回 SETTINGS+localStorage；filter 放宽为只去 book 空的来源。
+2. **"📡 点了没反应"**——端点未配置时静默 console.log（用户看不到）；手动推演无启动反馈（异步几分钟无提示）。修复：未配置→toast 指引设置；manual 触发→启动 toast。
+3. **"加 debug 模式看发了什么回来什么"**——设置面板新增调试开关 + 🐞 日志按钮；DebugLog 记录每次 LLM 调用（label 区分 instant/shadowline、url、model、完整 messages、响应原文、耗时、错误），环形 20 条，弹窗逐条查看，控制台同步输出。
+4. **"右上角按钮挪下来了"**——用户的绝对定位 CSS 未被改动，实为第 4 个按钮（📡）使按钮组变宽盖住耳朵行文字；加宽 ears 预留空间并收紧按钮内距。
+
+**验证**：118/118。过程中 harness 自身两个坑：const sKeep 重复声明（内嵌 script 整块不执行——按钮点击无反应症状与用户反馈神似，已用 node --check 提取校验锁住）、W3 断言数据流还原错误。
+
+---
