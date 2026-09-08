@@ -214,3 +214,19 @@
 **验证**：84/84 全绿。注：A3 首跑失败系断言误用卡片名而非地点原文（匹配靠别名"后巷"），harness 修正后通过。
 
 ---
+
+## 2026-09-08 ｜ feat：世界书同步配置 + 图鉴校验容错升级（业务提交 `964fc15`）
+
+**变更行为**：SETTINGS 新增 worldSync 配置与设置面板区块；getBestiaryNames 升级为 getBestiaryIndex（含 strategy.keys）；新增 resolveBestiaryName/bestiaryMenuList/getSyncedWorldbookText；validateCard 规范化写回；buildInstantMessages 加【世界书同步资料】段。harness 93/93（新增 9 断言）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户反馈：图鉴词条名带等级前缀；应让用户自选读取哪些世界书的哪些词条；图鉴给小模型导入"总览"词条即可；副导演不能只读上下文，还需同步剧情世界书）：
+1. **图鉴校验容错**：真实图鉴词条名为"1级·萨里山剃刀党混混"格式，keys 含干净名。resolveBestiaryName 按 RpgCombat 同款语义四级匹配（词条名全等/keys 全等/剥等级前缀全等/双向包含），命中即把 menu 词条名**规范化写回完整词条名**——保证 RpgCombat 建局精确命中图鉴。
+2. **世界书同步**：设置面板新增"世界书同步"区块（多来源：世界书下拉 + 词条勾选弹窗 + 增删；操作前 collectFormToSettings 保存现场防输入丢失）；getSyncedWorldbookText 按配置读词条 content（单词条 800 字/总计 4000 字上限）组装注入态势位 prompt——图鉴勾"总览与索引"即满足"给小模型导入总览"；剧情世界书（悉尼/沙蝎教派等）词条同理同步。S3 暗线位将复用同一数据源。
+3. **菜单紧凑化**：给小模型的敌人选项从 41 个带前缀词条名改为 keys[0] 干净名列表（约省一半 token），规范名靠校验端写回保证。
+4. mock 世界书对齐真实 WorldbookEntry 结构（name/strategy.keys/content）。
+
+**验证**：harness 93/93（S0-S8：索引载入/四级匹配/规范化写回/图鉴外拒绝/多书多词条组装/持久化往返；A5 升级：请求含同步资料段）。过程中 8123 服务器被并行任务关闭，自起 8124 完成回归。
+
+---
