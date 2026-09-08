@@ -320,3 +320,19 @@
 **决策原因**（用户第二份真机报告截图暴露）：模型输出 "IV级·悉尼常规巡警"——上轮修复只覆盖单字符 Unicode 罗马数字（Ⅳ），ASCII 字母组合 IV 漏网。另确认用户看的"提示词"入口错位：📡 报告弹窗是推演结论，LLM 请求/响应查看入口在 ⚙ 设置 → 🐞 调试日志（本次报告生成于 04:38，factions 为空与 IV 级问题均在上一轮修复之前，需重新导入验证）。
 
 ---
+
+## 2026-09-09 ｜ fix：副导演输入三重修复（真酒馆实证驱动）（业务提交 `79e9581`）
+
+**变更行为**：getShadowlineFloorContext 数据源改 `SillyTavern.getContext().chat`（真机顶层 `SillyTavern.chat` 不存在）+ 隐藏过滤改三字段（is_user/is_system/is_hidden，`/hide` 真实字段为 is_system）；getLwbSummaryText 同改 getContext().chatMetadata；buildShadowlineMessages 状态栏裁剪（仅日期/地点/敌方动向）+ user 输入顺序重排（世界书同步→LWB 总结→非隐藏楼层→辅助信息）+ 楼层 ━━ 分隔严格排版。harness 120/120（ST_MOCK 改真机形态，新增 T11 请求结构断言）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户贴 28 万字符真实请求全文 + 要求开酒馆 debug）：
+1. **隐藏楼泄漏**：真机实证 `getContext().chat` 27 楼中 0-11 楼 `is_system: true`（/hide 的真实标记，`is_hidden` 全 false）；旧代码过滤 is_hidden 无效且 `SillyTavern.chat` 顶层 undefined 走了 getChatMessages 回退（该层 hide_state 过滤不含 is_system 楼）——14 个已总结旧楼全漏进请求。修复后真机实测楼层上下文 = [12,14,16,18,20,22,24,26]（与正文 AI 视野完全一致，23178 字符）。
+2. **状态栏裁剪**（用户原则：暗线只管非玩家阵营，不需要知道玩家阵营任何事）：旧请求全量 stat_data JSON（角色列表 HP/弹药/物品/内心、小地图、据点、行动选项共 10 万字符）——裁剪为 {日期和时间, 地点, 敌方动向}（stat_data.人物.敌人）。
+3. **顺序重排**（用户规定：提示词→世界书 order→小白总结→非隐藏楼层）：user 段固定为 世界书同步资料（按配置顺序）→ LWB 早期历史总结 → 非隐藏楼层原文（`━━━━━━ 楼层 N ━━━━━━` 分隔，不与正文内【】标记混淆）→ 辅助信息（时空与敌方/敌人名单/卡片池/名册/墓碑/三态/待登记）。
+4. LWB 读取同步修（真机 chatMetadata 也在 getContext 里，实测修复后 2779 字真实总结读出）。
+
+**真机验证**（IAB 开酒馆实测，script 标签注入新版逻辑，不动用户插件）：楼层 ID、隐藏/玩家排除、━━ 排版、LWB 内容四项全过；验证后已 reload 清理注入。
+
+---
