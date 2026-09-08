@@ -70,7 +70,8 @@
       enabled: true,            // 总开关：关闭后不注入、不监听（UI 保留）
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
-      bestiaryBook: '',         // 图鉴世界书名（留空自动匹配名称含"图鉴"的世界书）
+      bestiaryBook: '',         // 图鉴世界书名（校验源+敌人名单；留空自动匹配名称含"图鉴"的世界书）
+      worldSync: [],            // 世界书同步：[{ book: '书名', entries: ['词条名', …] }]——词条内容注入态势位/暗线位输入
     };
   }
   function loadSettings() {
@@ -84,6 +85,9 @@
         shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
         situation: Object.assign(def.situation, saved.situation || {}),
         bestiaryBook: typeof saved.bestiaryBook === 'string' ? saved.bestiaryBook : '',
+        worldSync: Array.isArray(saved.worldSync)
+          ? saved.worldSync.filter(s => s && typeof s.book === 'string' && Array.isArray(s.entries))
+          : [],
       };
     } catch (e) { return defaultSettings(); }
   }
@@ -480,13 +484,17 @@
     throw new Error('JSON 未闭合');
   }
 
-  // —— 世界书图鉴白名单（态势位输入 + menu 校验源）—————————————
+  // —— 世界书图鉴索引（校验源 + 敌人名单源）—————————————————
 
-  let bestiaryCache = null;   // { names: string[] | null }，null=不可用（降级为结构校验）
+  // 图鉴词条名带等级前缀（"1级·萨里山剃刀党混混"），keys 里才有干净名
+  const TIER_PREFIX_RE = /^\d+\s*级\s*[·・•]\s*/;
+  function stripTier(name) { return String(name || '').replace(TIER_PREFIX_RE, ''); }
+
+  let bestiaryCache = null;   // { index: {name, keys}[] | null, book: string }
   function resetBestiaryCache() { bestiaryCache = null; }
-  async function getBestiaryNames() {
-    if (bestiaryCache) return bestiaryCache.names;
-    let names = null;
+  async function getBestiaryIndex() {
+    if (bestiaryCache) return bestiaryCache.index;
+    let index = null;
     try {
       if (IS_LIVE && typeof getWorldbook === 'function') {
         const bookName = SETTINGS.bestiaryBook ||
@@ -494,15 +502,68 @@
             ? (getWorldbookNames().find(n => n.includes('图鉴')) || '') : '');
         if (bookName) {
           const entries = await getWorldbook(bookName);
-          names = (entries || []).map(e => e && e.name).filter(Boolean);
-          log(`图鉴白名单载入：${bookName}（${names.length} 词条）`);
+          index = (entries || []).map(e => ({
+            name: e && e.name,
+            keys: (e && e.strategy && Array.isArray(e.strategy.keys) ? e.strategy.keys : [])
+              .map(String),
+          })).filter(x => x.name);
+          log(`图鉴索引载入：${bookName}（${index.length} 词条）`);
         } else {
           logWarn('图鉴世界书未配置，且未找到名称含"图鉴"的世界书——menu 校验降级为结构校验');
         }
       }
     } catch (e) { logWarn('图鉴读取失败，menu 白名单校验降级为结构校验', e); }
-    bestiaryCache = { names };
-    return names;
+    bestiaryCache = { index };
+    return index;
+  }
+
+  // 模型给出的敌人名 → 图鉴规范词条名（对齐 RpgCombat 三级匹配语义）：
+  // ① 与词条名全等 ② 与某 key 全等 ③ 剥等级前缀后全等 ④ 双向包含。
+  // 命中返回规范词条名（写回 menu 保证建局精确命中），未命中返回 null。
+  function resolveBestiaryName(input, index) {
+    if (!index || !index.length) return null;
+    const q = stripTier(String(input || '').trim());
+    if (!q) return null;
+    for (const e of index) {
+      if (e.name === input) return e.name;
+      if (e.keys.includes(input)) return e.name;
+      if (stripTier(e.name) === q) return e.name;
+    }
+    for (const e of index) {
+      if (e.name.includes(input) || e.keys.some(k => k.includes(input) || input.includes(k))) return e.name;
+    }
+    return null;
+  }
+
+  // 敌人名单（提示词用）：keys[0] 干净名列表，比 41 个带前缀词条名更紧凑
+  function bestiaryMenuList(index) {
+    if (!index) return [];
+    return index.map(e => e.keys[0] || stripTier(e.name)).filter(Boolean);
+  }
+
+  // —— 世界书同步（用户自选 世界书→词条；内容注入态势位/暗线位输入）—————
+
+  async function getSyncedWorldbookText(maxTotalChars = 4000) {
+    const sync = SETTINGS.worldSync || [];
+    if (!sync.length) return '';
+    const parts = [];
+    let total = 0;
+    for (const src of sync) {
+      if (!src.book || !src.entries || !src.entries.length) continue;
+      let entries;
+      try { entries = await getWorldbook(src.book); }
+      catch (e) { logWarn(`同步世界书读取失败：${src.book}`, e); continue; }
+      for (const want of src.entries) {
+        const e = (entries || []).find(x => x && x.name === want);
+        if (!e) { logWarn(`同步词条不存在：${src.book} / ${want}`); continue; }
+        const budget = Math.min(800, maxTotalChars - total);
+        if (budget <= 100) { logWarn('世界书同步资料超长，截断'); return parts.join('\n\n'); }
+        const content = String(e.content || '').trim().slice(0, budget);
+        total += content.length;
+        parts.push(`【${src.book} · ${want}】\n${content}`);
+      }
+    }
+    return parts.join('\n\n');
   }
 
   // 最新楼正文尾部（产卡语境输入；剥代码块/状态栏/Combat_block）
@@ -541,18 +602,24 @@
     return [...new Set(out)];
   }
 
-  // 卡片硬校验：结构 + menu 白名单；返回 null=通过，字符串=拒绝原因
-  function validateCard(card, bestiaryNames) {
+  // 卡片硬校验：结构 + menu 白名单（RpgCombat 同款容错，命中即规范化写回）；返回 null=通过，字符串=拒绝原因
+  function validateCard(card, bestiaryIndex) {
     if (!card || typeof card !== 'object') return '非对象';
     if (!card.place || typeof card.place !== 'string') return '缺少 place';
     if (!card.faction || typeof card.faction !== 'string') return '缺少 faction';
     if (card.alert && !ALERT_LEVELS.includes(card.alert)) return `alert 非法（${card.alert}）`;
     if (card.aliases != null && !Array.isArray(card.aliases)) return 'aliases 非数组';
     if (card.menu) {
-      const entries = parseMenu(card.menu);
-      if (bestiaryNames && bestiaryNames.length) {
-        const bad = entries.map(e => e.name).filter(n => !bestiaryNames.includes(n));
-        if (bad.length) return `menu 词条不在图鉴白名单：${bad.join('、')}`;
+      if (bestiaryIndex && bestiaryIndex.length) {
+        const bad = parseMenu(card.menu).map(e => e.name)
+          .filter(n => !resolveBestiaryName(n, bestiaryIndex));
+        if (bad.length) return `menu 词条不在图鉴内：${bad.join('、')}`;
+        // 规范化写回：模型给的干净名 → 图鉴完整词条名（RpgCombat 建局精确命中）
+        card.menu = parseMenu(card.menu).map(e => {
+          const canon = resolveBestiaryName(e.name, bestiaryIndex);
+          return e.max > e.min ? `${canon}*${e.min}~${e.max}`
+            : e.max ? `${canon}*${e.max}` : canon;
+        }).join('/');
       }
     }
     return null;
@@ -562,7 +629,7 @@
     const sys = [
       '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为每个给定地点生成一张驻防态势卡。',
       '规则：',
-      '1. menu 是可选敌方菜单，词条名只能从【图鉴词条名单】中原文选用，格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
+      '1. menu 是可选敌方菜单，词条名只能从【可选敌人名单】中选用（可用原词或其简写），格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
       '2. alert 只能取：松懈/常规/警戒/严密。',
       '3. faction 用派系名（优先从【名册】选用；民用/中立场所可标注"无（中立场所）"类描述）。',
       '4. reaction 一句话：何类行为被容忍、何类触发敌意。verdict 一句话判定标准：何种行为构成对戒备的挑衅/侵入/暴露。',
@@ -572,7 +639,8 @@
     const user = [
       `【待登记地点】\n${places.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
       `【剧情上下文（最近正文节选）】\n${context.floorTail || '（无）'}`,
-      `【图鉴词条名单】\n${(context.bestiary || []).join(' / ') || '（无——menu 一律留空）'}`,
+      `【可选敌人名单】\n${(context.menuList || []).join(' / ') || '（无——menu 一律留空）'}`,
+      `【世界书同步资料】\n${context.worldSync || '（无）'}`,
       `【名册（已知派系）】\n${(context.roster || []).join(' / ') || '（无）'}`,
     ].join('\n\n');
     return [{ role: 'system', content: sys }, { role: 'user', content: user }];
@@ -581,14 +649,17 @@
   async function generateInstantCards(places, stat) {
     const cfg = SETTINGS.situation;
     if (!cfg.baseUrl || !cfg.model) { log('态势位端点未配置，跳过即时产卡'); return; }
-    const bestiary = await getBestiaryNames();
+    const bestiary = await getBestiaryIndex();
+    const [worldSync] = await Promise.all([getSyncedWorldbookText()]);
     const roster = [...new Set(getCards().map(c => c.faction).filter(Boolean))];
     const floorTail = readLatestFloorTail(600);
+    const ctx = { bestiary, roster, floorTail,
+      menuList: bestiaryMenuList(bestiary), worldSync };
     for (const p of places) Instant.tried[norm(p)] = true;
     let lastErr = '';
     for (let attempt = 1; attempt <= 2; attempt++) {          // 失败/全拒 → 重试 ≤1
       try {
-        const raw = await callLLM(cfg, buildInstantMessages(places, { bestiary, roster, floorTail }));
+        const raw = await callLLM(cfg, buildInstantMessages(places, ctx));
         const arr = extractJson(raw);
         const list = Array.isArray(arr) ? arr : [arr];
         const okCards = [];
@@ -1165,7 +1236,50 @@
 
   // —— 设置弹窗 ——————————————————————————————————————————
 
+  // —— 设置弹窗（可重渲染：世界书同步的增删/选书操作不丢其他输入）———
+
+  let editSync = null;   // 编辑中的 worldSync 副本 [{ book, entries }]
+
   function openSettingsModal() {
+    editSync = JSON.parse(JSON.stringify(SETTINGS.worldSync || []));
+    renderSettingsModal();
+  }
+
+  // 把表单输入收进 SETTINGS（不持久化——供 sync 操作重渲前保存现场）
+  function collectFormToSettings() {
+    els.modalBox.querySelectorAll('[data-k]').forEach(input => {
+      const path = input.getAttribute('data-k').split('.');
+      let obj = SETTINGS;
+      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      const key = path[path.length - 1];
+      obj[key] = input.type === 'checkbox' ? input.checked
+        : input.type === 'number' ? Number(input.value) : input.value.trim();
+    });
+  }
+
+  function openSyncPicker(idx) {
+    const src = editSync[idx];
+    if (!src || !src.book) { toast('请先选择世界书'); return; }
+    openModal(`<h3>📖 选择同步词条</h3><div class="dim">加载 ${esc(src.book)} 词条列表…</div>`);
+    Promise.resolve(getWorldbook(src.book)).then(entries => {
+      const items = (entries || []).map(e => e && e.name).filter(Boolean)
+        .map(name => `<div class="ad-form-row" style="margin-bottom:4px">
+          <label style="width:auto;color:var(--ad-ink)"><input type="checkbox" data-entry="${esc(name)}" ${src.entries.includes(name) ? 'checked' : ''}> ${esc(name)}</label>
+        </div>`).join('') || '<div class="dim">该世界书无词条。</div>';
+      openModal(`<h3>📖 选择同步词条 · ${esc(src.book)}</h3>
+        <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">勾选的词条内容将注入态势位（及未来暗线位）的输入。</div>
+        <div style="max-height:52vh;overflow-y:auto">${items}</div>
+        <div class="ad-btnrow"><button class="primary" id="ad-sync-pick-ok">确定</button><button id="ad-sync-pick-back">返回</button></div>`);
+      els.modalBox.querySelector('#ad-sync-pick-ok').addEventListener('click', () => {
+        src.entries = [...els.modalBox.querySelectorAll('[data-entry]:checked')]
+          .map(n => n.getAttribute('data-entry'));
+        renderSettingsModal();
+      });
+      els.modalBox.querySelector('#ad-sync-pick-back').addEventListener('click', renderSettingsModal);
+    }).catch(() => { toast('世界书读取失败'); renderSettingsModal(); });
+  }
+
+  function renderSettingsModal() {
     const s = SETTINGS;
     const ep = (slot, title) => `
       <div class="ad-sec-title">${title}</div>
@@ -1174,6 +1288,18 @@
       <div class="ad-form-row"><label>Model</label><input type="text" data-k="${slot}.model" value="${esc(s[slot].model)}" placeholder="模型名"></div>
       <div class="ad-form-row"><label>温度</label><input type="number" step="0.1" min="0" max="2" data-k="${slot}.temperature" value="${s[slot].temperature}"></div>
       <div class="ad-form-row"><label>maxTokens</label><input type="number" step="100" min="256" data-k="${slot}.maxTokens" value="${s[slot].maxTokens}"></div>`;
+    const bookNames = (IS_LIVE && typeof getWorldbookNames === 'function') ? getWorldbookNames() : [];
+    const syncRows = (editSync || []).map((src, i) => `
+      <div class="ad-form-row">
+        <select data-sync-book="${i}" style="flex:1">
+          <option value="">— 选择世界书 —</option>
+          ${bookNames.map(b => `<option value="${esc(b)}" ${src.book === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+        </select>
+        <button data-sync-pick="${i}" style="flex:none">选词条${src.entries.length ? `（${src.entries.length}）` : ''}</button>
+        <button data-sync-del="${i}" style="flex:none;padding:5px 8px">✕</button>
+      </div>
+      ${src.entries.length ? `<div class="dim" style="font-size:9.5px;margin:-3px 0 6px;color:var(--ad-ink-faint)">${src.entries.map(esc).join(' · ')}</div>` : ''}`)
+      .join('');
     openModal(`
       <h3>⚙ 副导演 · 设置</h3>
       <div class="ad-form-row"><label>皮肤</label><select id="ad-set-theme">
@@ -1183,7 +1309,10 @@
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
       <div class="ad-form-row"><label>图鉴世界书</label><input type="text" data-k="bestiaryBook" value="${esc(s.bestiaryBook || '')}" placeholder="留空自动匹配名称含「图鉴」的世界书"></div>
-      <div class="dim" style="font-size:10px;color:#64748b;margin:4px 0 2px">态势位（S2）随地点即时产卡；暗线位（S3）天级推演。</div>
+      <div class="ad-sec-title">世界书同步（词条内容 → 产卡/推演输入）</div>
+      ${syncRows || '<div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:6px">未配置——例：图鉴世界书勾选「总览与索引」；剧情世界书勾选派系/背景词条。</div>'}
+      <div class="ad-btnrow" style="margin-top:2px"><button id="ad-sync-add">＋ 添加世界书来源</button></div>
+      <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin:8px 0 2px">态势位（S2）随地点即时产卡；暗线位（S3）天级推演。</div>
       ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
       ${ep('situation', '态势位（快速小模型 · 随地点）')}
       <div class="ad-btnrow">
@@ -1191,15 +1320,34 @@
         <button id="ad-set-close">关闭</button>
       </div>`);
     els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
-    els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
-      els.modalBox.querySelectorAll('[data-k]').forEach(input => {
-        const path = input.getAttribute('data-k').split('.');
-        let obj = SETTINGS;
-        for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
-        const key = path[path.length - 1];
-        obj[key] = input.type === 'checkbox' ? input.checked
-          : input.type === 'number' ? Number(input.value) : input.value.trim();
+
+    els.modalBox.querySelector('#ad-sync-add').addEventListener('click', () => {
+      collectFormToSettings();
+      editSync.push({ book: '', entries: [] });
+      renderSettingsModal();
+    });
+    els.modalBox.querySelectorAll('[data-sync-book]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        collectFormToSettings();
+        editSync[+sel.getAttribute('data-sync-book')].book = sel.value;
+        editSync[+sel.getAttribute('data-sync-book')].entries = [];
+        renderSettingsModal();
       });
+    });
+    els.modalBox.querySelectorAll('[data-sync-pick]').forEach(btn => {
+      btn.addEventListener('click', () => { collectFormToSettings(); openSyncPicker(+btn.getAttribute('data-sync-pick')); });
+    });
+    els.modalBox.querySelectorAll('[data-sync-del]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        collectFormToSettings();
+        editSync.splice(+btn.getAttribute('data-sync-del'), 1);
+        renderSettingsModal();
+      });
+    });
+
+    els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
+      collectFormToSettings();
+      SETTINGS.worldSync = editSync.filter(x => x.book && x.entries.length);
       saveSettings(SETTINGS);
       resetBestiaryCache();   // 图鉴世界书配置可能已变
       if (!SETTINGS.enabled) uninjectAll();
@@ -1397,8 +1545,9 @@
     buildSituationText, buildSafeText, buildFallbackText,
     shortLoc, pushTickerHead, renderTicker, renderWire, stripJsonc, applyTheme,
     // S2：LLM 客户端与态势位
-    callLLM, extractJson, getBestiaryNames, resetBestiaryCache, readLatestFloorTail,
-    collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant,
+    callLLM, extractJson, getBestiaryIndex, bestiaryMenuList, resolveBestiaryName,
+    getSyncedWorldbookText, resetBestiaryCache, readLatestFloorTail,
+    collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant, stripTier,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,

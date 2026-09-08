@@ -416,9 +416,43 @@ async function runAll() {
     };
     window.getChatMessages = () => [{ message_id: 0, name: 'AI', role: 'assistant', is_hidden: false,
       message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。', data: {}, extra: {} }];
-    window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0'];
-    window.getWorldbook = async () => [
-      { name: '萨里山剃刀党混混' }, { name: '达令港码头武装打手' }, { name: '悉尼常规巡警' }];
+    window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0', '剧情世界书'];
+    window.getWorldbook = async (name) => {
+      if (name === '剧情世界书') return [
+        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' },
+        { name: '当地邪教：沙蝎教派', content: '潜伏在内陆的邪教组织，与内陆货运有隐秘关联。' },
+      ];
+      return [   // 图鉴（词条名带等级前缀，keys 含干净名——对齐真实 V3.0 结构）
+        { name: '澳大利亚战役敌人图鉴·总览与索引', content: '本图鉴整合了全部敌方势力：街头犯罪/执法/邪教/眷族四类。' },
+        { name: '1级·萨里山剃刀党混混', strategy: { keys: ['萨里山剃刀党混混', '剃刀党混混'] } },
+        { name: '2级·达令港码头武装打手', strategy: { keys: ['达令港码头武装打手', '码头打手'] } },
+        { name: '2级·悉尼常规巡警', strategy: { keys: ['悉尼常规巡警', '悉尼巡警'] } },
+      ];
+    };
+    AD.resetBestiaryCache();
+
+    // ── 图鉴容错与规范化（等级前缀/keys 匹配）──
+    const idx = await AD.getBestiaryIndex();
+    assert('S0 图鉴索引载入（词条名 + keys）', idx && idx.length === 4 && idx[1].keys.includes('萨里山剃刀党混混'));
+    assert('S1 名字匹配：keys 干净名 → 规范词条名', AD.resolveBestiaryName('萨里山剃刀党混混', idx) === '1级·萨里山剃刀党混混');
+    assert('S2 名字匹配：词条名全等（带前缀）', AD.resolveBestiaryName('2级·悉尼常规巡警', idx) === '2级·悉尼常规巡警');
+    assert('S3 名字匹配：key 别名命中', AD.resolveBestiaryName('码头打手', idx) === '2级·达令港码头武装打手');
+    assert('S4 名字匹配：图鉴外词条返回 null', AD.resolveBestiaryName('不存在的敌人', idx) === null);
+    const vc = { place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' };
+    assert('S5 校验通过且 menu 规范化写回（补等级前缀）', AD.validateCard(vc, idx) === null && vc.menu === '1级·萨里山剃刀党混混*3~5');
+    assert('S6 校验拒绝：图鉴外 menu 词条', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }, idx) !== null);
+
+    // ── 世界书同步（用户自选 书→词条，内容注入产卡输入）──
+    const sW = AD.loadSettings();
+    sW.worldSync = [{ book: '剧情世界书', entries: ['悉尼'] },
+      { book: 'COC-澳大利亚篇敌人与召唤物图鉴V3.0', entries: ['澳大利亚战役敌人图鉴·总览与索引'] }];
+    AD.saveSettings(sW);
+    const syncText = await AD.getSyncedWorldbookText();
+    assert('S7 同步资料组装（多书多词条带书名头）', syncText.includes('【剧情世界书 · 悉尼】')
+      && syncText.includes('新南威尔士') && syncText.includes('总览与索引') && syncText.includes('敌方势力'));
+    assert('S8 同步配置持久化往返', AD.loadSettings().worldSync.length === 2
+      && AD.loadSettings().worldSync[0].entries[0] === '悉尼');
+
     const s2 = AD.loadSettings();
     s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
     AD.saveSettings(s2);
@@ -441,7 +475,9 @@ async function runAll() {
     assert('A3 下一拍配发命中新卡（驻防注入含词条与判定）', lastA().content.includes('苦力的棚屋前')
       && lastA().content.includes('达令港码头武装打手') && lastA().content.includes('强行闯入或翻找木箱'));
     assert('A4 成功产卡恰好调用 1 次 LLM', fetchCalls === callsA + 1, `+${fetchCalls - callsA}`);
-    assert('A5 产卡请求含地点/图鉴名单/名册', lastPrompt.includes('苦力') && lastPrompt.includes('达令港码头武装打手') && lastPrompt.includes('凯特·利'));
+    assert('A5 产卡请求含地点/敌人名单/名册/世界书同步资料', lastPrompt.includes('苦力')
+      && lastPrompt.includes('萨里山剃刀党混混') && lastPrompt.includes('凯特·利')
+      && lastPrompt.includes('【世界书同步资料】') && lastPrompt.includes('新南威尔士'));
     AD.dispatchNow('s2a3');
     await waitFor(() => true, 1500);
     assert('A6 已登记地点不重复产卡（tried + 卡池命中）', fetchCalls === callsA + 1);
@@ -482,9 +518,10 @@ async function runAll() {
     AD.dispatchNow('s2d');
     await waitFor(() => true, 1500);
     assert('D1 端点未配置 → 不发起 LLM 调用（纯兜底）', fetchCalls === callsD);
-    // 清理：还原设置（不留 mock 端点污染 localStorage 与下轮回归）
+    // 清理：还原设置（不留 mock 端点/同步配置污染 localStorage 与下轮回归）
     const s2z = AD.loadSettings();
     s2z.situation = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 1000 };
+    s2z.worldSync = [];
     AD.saveSettings(s2z);
   }
 
