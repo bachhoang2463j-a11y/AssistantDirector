@@ -578,8 +578,8 @@
 
   // —— 世界书图鉴索引（校验源 + 敌人名单源）—————————————————
 
-  // 图鉴词条名带等级前缀（"1级·萨里山剃刀党混混"，模型可能写成罗马数字"Ⅴ级·…"），keys 里才有干净名
-  const TIER_PREFIX_RE = /^[0-9０-９ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]+\s*级\s*[·・•]\s*/;
+  // 图鉴词条名带等级前缀（"1级·萨里山剃刀党混混"；模型可能写成单字符罗马数字"Ⅳ级"或 ASCII 组合"IV级"），keys 里才有干净名
+  const TIER_PREFIX_RE = /^(?:[0-9０-９ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅶⅷⅸⅹ]|[IVXivx])+\s*级\s*[·・•]\s*/;
   function stripTier(name) { return String(name || '').replace(TIER_PREFIX_RE, ''); }
 
   let bestiaryCache = null;   // { index: {name, keys}[] | null, book: string }

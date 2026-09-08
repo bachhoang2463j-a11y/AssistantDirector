@@ -535,7 +535,10 @@ async function runAll() {
     assert('S2 名字匹配：词条名全等（带前缀）', AD.resolveBestiaryName('2级·悉尼常规巡警', idx) === '2级·悉尼常规巡警');
     assert('S3 名字匹配：key 别名命中', AD.resolveBestiaryName('码头打手', idx) === '2级·达令港码头武装打手');
     assert('S4 名字匹配：图鉴外词条返回 null', AD.resolveBestiaryName('不存在的敌人', idx) === null);
-    assert('S4b 名字匹配：模型罗马数字等级前缀（Ⅴ级）剥除后命中并规范化', AD.resolveBestiaryName('Ⅴ级·萨里山剃刀党混混', idx) === '1级·萨里山剃刀党混混');
+    assert('S4b 名字匹配：模型罗马数字等级前缀（Ⅴ级/IV级）剥除后命中并规范化',
+      AD.resolveBestiaryName('Ⅴ级·萨里山剃刀党混混', idx) === '1级·萨里山剃刀党混混'
+      && AD.resolveBestiaryName('IV级·悉尼常规巡警', idx) === '2级·悉尼常规巡警'
+      && AD.resolveBestiaryName('iii级·达令港码头武装打手', idx) === '2级·达令港码头武装打手');
     const vc = { place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' };
     assert('S5 校验通过且 menu 规范化写回（补等级前缀）', AD.validateCard(vc, idx) === null && vc.menu === '1级·萨里山剃刀党混混*3~5');
     assert('S6 校验拒绝：图鉴外 menu 词条', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }, idx) !== null);
