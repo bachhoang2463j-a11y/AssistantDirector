@@ -104,32 +104,31 @@ const MOCK = (function () {
 const ST_MOCK = (function () {
   const chat = [];
   for (let i = 0; i < 30; i++) {
-    if (i % 5 === 3) chat.push({ mes: `玩家输入第${i}楼`, is_user: true, is_hidden: false });
-    else if (i % 7 === 6) chat.push({ mes: `被LWB隐藏的旧楼${i}`, is_user: false, is_hidden: true });
-    else chat.push({ mes: `AI叙事第${i}楼：夜色中的悉尼。` + (i === 10 ? '\n```状态栏代码块```\n' : ''), is_user: false, is_hidden: false });
+    if (i % 5 === 3) chat.push({ mes: `玩家输入第${i}楼`, is_user: true, is_system: false });
+    else if (i % 7 === 6) chat.push({ mes: `被LWB隐藏的旧楼${i}`, is_user: false, is_system: true });   // /hide → is_system（真机实证字段）
+    else chat.push({ mes: `AI叙事第${i}楼：夜色中的悉尼。` + (i === 10 ? '\n```状态栏代码块```\n' : ''), is_user: false, is_system: false });
   }
-  const aiIds = chat.map((m, i) => (!m.is_user && !m.is_hidden) ? i : -1).filter(i => i >= 0);
-  window.SillyTavern = {
-    chat,
-    chatMetadata: {
-      extensions: {
-        LittleWhiteBox: {
-          storySummary: {
-            lastSummarizedMesId: 14,
-            json: {
-              keywords: [{ text: '黑法老兄弟会', weight: '核心' }, { text: '剃刀帮战争', weight: '核心' }],
-              events: [
-                { timeLabel: '1925年6月12日 08:45', title: '悉尼港海关大厅·入境刁难化解',
-                  summary: '爱德华出示军情五处信函施压放行。(角色：「台词」) #1-3' },
-                { timeLabel: '1925年6月12日 14:50', title: '伦道夫仓库·潜入搜查禁区',
-                  summary: '玛德琳与索恩发现黑法老长袍与祭祀木棍。 #1-3' },
-              ],
-            },
+  const aiIds = chat.map((m, i) => (!m.is_user && !m.is_system) ? i : -1).filter(i => i >= 0);
+  const meta = {
+    extensions: {
+      LittleWhiteBox: {
+        storySummary: {
+          lastSummarizedMesId: 14,
+          json: {
+            keywords: [{ text: '黑法老兄弟会', weight: '核心' }, { text: '剃刀帮战争', weight: '核心' }],
+            events: [
+              { timeLabel: '1925年6月12日 08:45', title: '悉尼港海关大厅·入境刁难化解',
+                summary: '爱德华出示军情五处信函施压放行。(角色：「台词」) #1-3' },
+              { timeLabel: '1925年6月12日 14:50', title: '伦道夫仓库·潜入搜查禁区',
+                summary: '玛德琳与索恩发现黑法老长袍与祭祀木棍。 #1-3' },
+            ],
           },
         },
       },
     },
   };
+  // 真机形态：chat 不在 SillyTavern 顶层，经 getContext() 暴露（实证 2026-09-09）
+  window.SillyTavern = { getContext: () => ({ chat, chatMetadata: meta }), chatMetadata: meta };
   return { chat, aiIds };
 })();
 
@@ -463,8 +462,8 @@ async function runAll() {
     assert('F1 默认窗口取最近 20 个 AI 楼', last20.every(id => ctx.includes(`AI叙事第${id}楼`))
       && !ctx.includes(`AI叙事第${ST_MOCK.aiIds[0]}楼`), `AI楼共${aiCount}个`);
     assert('F2 排除玩家输入', !ctx.includes('玩家输入'));
-    assert('F3 排除 LWB 隐藏楼', !ctx.includes('被LWB隐藏'));
-    assert('F4 楼层号标注（causes 出处用）', ctx.includes('【楼层 '));
+    assert('F3 排除 /hide 隐藏楼（is_system 字段，真机实证）', !ctx.includes('被LWB隐藏'));
+    assert('F4 楼层分隔线严格排版（━━ + 楼层号，causes 出处用）', ctx.includes('━━━━━━ 楼层'));
     assert('F5 代码块剥除', !ctx.includes('状态栏代码块'));
     const sF = AD.loadSettings(); sF.shadowlineFloors = 0; AD.saveSettings(sF);
     const ctxAll = AD.getShadowlineFloorContext();
@@ -631,10 +630,11 @@ async function runAll() {
   head('S3 暗线位战略层');
   {
     // 独立 fetch mock（S2 段闭包不可复用）
-    let s3FetchCalls = 0, s3Responder = null;
+    let s3FetchCalls = 0, s3Responder = null, s3LastPrompt = '';
     window.fetch = async (url, opts) => {
       s3FetchCalls++;
       const body = JSON.parse(opts.body);
+      s3LastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
       const content = s3Responder ? s3Responder(body) : '{}';
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
     };
@@ -702,6 +702,15 @@ async function runAll() {
     assert('T6 预约存档 $ad_pending', MOCK.chat['$ad_pending'] && MOCK.chat['$ad_pending'].ambush.length === 1);
     assert('T10 调试日志记录推演请求/响应（label=shadowline）', AD.DebugLog.some(e => e.label === 'shadowline'
       && e.ok && e.raw.includes('双线绞合期')));
+    assert('T11 请求结构：世界书→LWB→楼层 顺序 + 状态栏裁剪 + ━━ 排版', (() => {
+      const p = s3LastPrompt;
+      const iw = p.indexOf('【世界书同步资料】'), il = p.indexOf('【早期历史总结');
+      const ifl = p.indexOf('【非隐藏楼层原文'), it = p.indexOf('【当前时空与敌方动向】');
+      return iw >= 0 && il > iw && ifl > il && it > ifl
+        && !p.includes('角色列表') && !p.includes('小地图') && !p.includes('内心')
+        && p.includes('日期和时间') && p.includes('━━━━━━ 楼层')
+        && !p.includes('玩家输入') && !p.includes('被LWB隐藏');
+    })());
 
     // T7 newday 跨日自动触发
     const genBefore = MOCK.chat['$ad_report'].generatedAt;

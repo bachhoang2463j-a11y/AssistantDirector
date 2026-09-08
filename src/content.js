@@ -649,19 +649,27 @@
     return parts.join('\n\n');
   }
 
-  // —— 副导演楼层上下文：最近 N 楼 AI 楼层原文（排除玩家输入与隐藏楼层，全量）—————
-  // N = SETTINGS.shadowlineFloors（默认 20，对齐 LWB 总结窗口；0=全部历史）；每楼带楼层号（causes 出处）
+  // —— 副导演楼层上下文：最近 N 楼 AI 楼层原文（与正文 AI 视野一致，全量）—————————
+  // N = SETTINGS.shadowlineFloors（默认 20，对齐 LWB 总结窗口；0=全部历史）；
+  // 楼层过滤三字段：is_user（玩家楼）/ is_system（/hide 隐藏楼——真机实证 0-11 楼即此标记）/ is_hidden
   function getShadowlineFloorContext() {
     const limit = Number.isFinite(SETTINGS.shadowlineFloors) ? SETTINGS.shadowlineFloors : 20;
     let floors = null;
     try {
-      // 优先直读酒馆原生消息数组（SillyTavern.chat 引用；字段 mes/message、is_user、is_hidden 兼容）
-      const chat = (typeof SillyTavern !== 'undefined' && SillyTavern && SillyTavern.chat) || null;
+      // 优先：SillyTavern.getContext().chat（原生消息数组引用；真机 SillyTavern.chat 顶层不存在）
+      let chat = null;
+      if (typeof SillyTavern !== 'undefined' && SillyTavern) {
+        if (typeof SillyTavern.getContext === 'function') {
+          const c = SillyTavern.getContext();
+          if (c && Array.isArray(c.chat)) chat = c.chat;
+        }
+        if (!chat && Array.isArray(SillyTavern.chat)) chat = SillyTavern.chat;
+      }
       if (Array.isArray(chat)) {
         floors = [];
         for (let i = 0; i < chat.length; i++) {
           const m = chat[i];
-          if (!m || m.is_user || m.is_hidden) continue;
+          if (!m || m.is_user || m.is_system || m.is_hidden) continue;
           const text = String(m.mes != null ? m.mes : (m.message || ''));
           if (!text.trim()) continue;
           floors.push({ id: i, text });
@@ -669,17 +677,17 @@
       }
     } catch (e) { floors = null; }
     if (floors === null) {
-      // 回退：getChatMessages 全取后过滤（message_id 即楼层号）
+      // 回退：getChatMessages（酒馆助手转换层；hide_state 过滤不含 is_system 楼，尽力而为）
       try {
         const msgs = getChatMessages('all', { role: 'assistant', hide_state: 'unhidden' });
         floors = (Array.isArray(msgs) ? msgs : [])
-          .filter(m => m && m.message && String(m.message).trim())
+          .filter(m => m && m.message && String(m.message).trim() && m.is_hidden !== true)
           .map(m => ({ id: m.message_id, text: String(m.message) }));
       } catch (e) { floors = []; }
     }
     if (limit > 0) floors = floors.slice(-limit);
     return floors
-      .map(f => `【楼层 ${f.id}】\n${stripBlocks(f.text)}`)
+      .map(f => `━━━━━━ 楼层 ${f.id} ━━━━━━\n${stripBlocks(f.text)}`)
       .join('\n\n');
   }
 
@@ -695,9 +703,17 @@
 
   function getLwbSummaryText() {
     try {
-      const store = (typeof SillyTavern !== 'undefined' && SillyTavern && SillyTavern.chatMetadata
-        && SillyTavern.chatMetadata.extensions && SillyTavern.chatMetadata.extensions.LittleWhiteBox
-        && SillyTavern.chatMetadata.extensions.LittleWhiteBox.storySummary) || null;
+      // chatMetadata 真机经 getContext() 暴露（顶层不一定有），两级兼容
+      let meta = null;
+      if (typeof SillyTavern !== 'undefined' && SillyTavern) {
+        if (typeof SillyTavern.getContext === 'function') {
+          const c = SillyTavern.getContext();
+          if (c && c.chatMetadata) meta = c.chatMetadata;
+        }
+        if (!meta && SillyTavern.chatMetadata) meta = SillyTavern.chatMetadata;
+      }
+      const store = (meta && meta.extensions && meta.extensions.LittleWhiteBox
+        && meta.extensions.LittleWhiteBox.storySummary) || null;
       if (!store || !store.json) return '';
       const data = store.json;
       const parts = [];
@@ -833,10 +849,18 @@
       '6. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"garrisons":[…],"ambush预约":[…]}',
     ].join('\n');
     const user = [
-      `【当前状态栏（硬事实）】\n${JSON.stringify(ctx.statData, null, 1)}`,
-      `【最近楼层原文（${ctx.floorContext ? '全量' : '无'}）】\n${ctx.floorContext || '（无）'}`,
-      `【早期历史总结（LWB）】\n${ctx.lwb || '（无）'}`,
+      // ① 世界书同步资料（按配置顺序）——暗线的世界知识基础
       `【世界书同步资料】\n${ctx.worldSync || '（无）'}`,
+      // ② LWB 早期历史总结——对应已被隐藏（总结）的早期楼层的浓缩
+      `【早期历史总结（LWB，对应已隐藏的早期楼层）】\n${ctx.lwb || '（无）'}`,
+      // ③ 非隐藏楼层原文——与正文 AI 视野一致（仅 AI 楼层，━━ 分隔严格排版）
+      `【非隐藏楼层原文（与正文 AI 视野一致）】\n${ctx.floorContext || '（无）'}`,
+      // ④ 以下为辅助信息——暗线只管非玩家阵营：仅时空锚点与敌方动向，玩家队伍数值/资产/内心一律不发
+      `【当前时空与敌方动向】\n${JSON.stringify({
+        '日期和时间': ctx.statData['日期和时间'],
+        '地点': ctx.statData['地点'],
+        '敌方动向': (ctx.statData['人物'] && ctx.statData['人物']['敌人']) || [],
+      }, null, 1)}`,
       `【可选敌人名单（garrisons 的 menu 只能从中选用）】\n${(ctx.menuList || []).join(' / ') || '（无——menu 一律留空）'}`,
       `【当前态势卡片池】\n${ctx.cards.length ? JSON.stringify(ctx.cards.map(c => ({ place: c.place, faction: c.faction, menu: c.menu, alert: c.alert })), null, 1) : '（空）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
