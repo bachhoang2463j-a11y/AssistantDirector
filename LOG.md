@@ -259,3 +259,22 @@
 **验证**：harness 105/105（F1-F6 楼层窗口/排除/楼层号/剥码/0=全部；L1 LWB 格式化；W1-W2 两套配置独立；P1 持久化往返；M1 旧配置迁移）。过程中修 harness 两处：世界书 mock 安装时机（双通道段在 S2 段之前，mock 提前）、编辑残留的重复 const s2 声明（SyntaxError 全挂）。
 
 ---
+
+## 2026-09-09 ｜ feat：S3 暗线位战略层落地（业务提交 `a198009`）
+
+**变更行为**：模块 6 从占位实现为完整战略层；GM 报头新增 📡 按钮 + 报告查看弹窗；dispatchNow 接线预约引爆与触发矩阵。harness 115/115（S3 新增 11 断言）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`、`SPEC.md`（V0.2.4）
+
+**实现要点**：
+1. **触发矩阵**（checkTriggers，每楼 dispatch 末尾）：newday（stat_data 日期跨日）/阶段变更/跨城市/$rpg_combat_result 指纹变化三路号外/同日 15 楼兜底；首楼记基线不触发；Trigger.busy 锁防并发；换聊天重置基线；报告成功后基线对齐报告时点。
+2. **报告输入组装**（信息完整性优先，全量五源）：N 楼 AI 原文（getShadowlineFloorContext，带楼层号）+ LWB 总结 + 暗线位世界书同步 + 全量 stat_data + 名册/墓碑/卡片池/上次报告三态/待登记地点 + 敌人名单。
+3. **报告生成与校验**：暗线位 callLLM（180s 超时，重试 ≤1）；validateReport 硬校验——causes 必须含真实楼层号、truth/surface 成对、三态枚举（缺省推断中）、墓碑派系禁止复活、garrisons 逐张过图鉴白名单+规范化；坏条目丢弃不阻塞其余产出。
+4. **三路分发**：garrisons mergeGarrisons 收编卡片池（已有卡按 place 复审更新 source=daily，新卡追加）；buildShadowlineInjection 生成提炼注入（事实提醒[已兑现/已渗透]+幕后动向[推断中]+禁泄清单+调查阻力）以 ad_shadowline 深度0 system 持续在场替换式注入；报告存档 $ad_report。
+5. **名册**（$ad_roster）：报告派系自动注册（轻量登场），墓碑只读不写；S5 才做玩家 CRUD。
+6. **预约-引爆**（$ad_pending.ambush + checkAmbush）：报告的 ambush预约 存档；每楼 dispatch 前检查（时间=预约日期片段与当前日期交集；地点=直接包含或经卡片池别名匹配对齐同一驻防点）；命中→对应卡戒备置顶+注入附主动接触态标注+预约移除。
+7. **GM**：报头 📡 按钮（有报告→查看弹窗[派系三态概览/禁泄/预约/完整JSON/重新推演]；无报告→手动触发）；报告生成后自动弹出查看。
+
+**验证**：harness 115/115（T0 基线不触发/T1 存档/T2 校验丢弃 2/4 存活/T3 提炼注入内容/T4 收编+规范化+拒新卡/T5 名册注册/T6 预约存档/T7 newday 自动触发/T8 引爆三合一/T9 端点未配置零调用）。修 harness 三处：名册 mock 写入时机（reset 前被清）、按钮数 3→4、T3 断言误查注入中不存在的派系名；修 content 一处：引爆地点匹配借卡片别名对齐（"达令港仓库"≈"达令港·伦道夫船运仓库"）。
+
+---
