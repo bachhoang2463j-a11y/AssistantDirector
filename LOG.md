@@ -382,3 +382,18 @@
 **验证**：122/122（T2 全条目保留、B1 menu 任意词条单次调用入池、E5 零校验、T5 名册全注册）。
 
 ---
+
+## 2026-09-09 ｜ fix：中文键名容错 + AiRadio 式控制台调试（业务提交 `577f0c8`）
+
+**变更行为**：暗线提示词 factions 条目补字段结构示例（明确英文键名）；validateReport 键名容错（派系/名称、真相、征兆/表面、出处、状态 → 标准字段，映射失败才补默认）；callLLM 调试改为 AiRadio 式——发起即 console.log 完整 messages，失败/HTTP 错误/响应缺 content 即时 console.warn 原因与响应体（HTTP 错误附 res.text 前 500 字符）。harness 122/122（S3 mock 改中文键全链路验证容错）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户真机报告"全是未命名派系"）：
+1. 根因：提示词只给顶层 schema 未给 factions 条目字段示例，而 ambush预约 示例用中文键"派系"——模型被带偏，factions 条目输出 {"派系":…}，f.name 取空全补"未命名派系N"。修复：示例明确英文键 + 容错映射双保险。
+2. 用户批评调试体验："哪家 debug 非要等 LLM 返回才能看结果，静默失败连失败原因都没有"——旧实现 debugRecord 在 callLLM 返回后才记录打印，请求挂起期间黑盒。修复：发起即打印（[LLM→] label/model/url/完整 messages JSON），三处失败点（fetch 异常/HTTP 非 200/响应缺 content）即时 console.warn 具体原因，HTTP 错误附响应体文本。
+3. 另注：新聊天名册为空属正常（报告派系自动入册），非缺陷。
+
+**验证**：122/122（T2 断言中文键"派系/征兆/真相/出处"映射为 name/surface/truth/causes；T3/T5/T12 全链路走容错后字段）。
+
+---
