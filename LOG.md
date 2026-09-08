@@ -366,3 +366,19 @@
 **验证**：123/123。过程中修 harness 两处：残留 resetBestiaryCache 调用（函数已删致 runAll TypeError）、T4 断言误判测试数据自带的 source='daily'。
 
 ---
+
+## 2026-09-09 ｜ feat：零校验模式（业务提交 `85864de`）
+
+**变更行为**：validateReport 与 validateCard 全部降级为结构整形与字段补默认（零丢弃零重试）；generateShadowlineReport 仅在 JSON 解析/网络失败时重试一次，解析成功必落地；busy 时点击有 toast 提示；失败 toast 带具体原因并延时 5-6 秒。harness 122/122。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户："把限制全都去掉，现在都还没跑通呢，先看效果，我没说限制别加"）：
+1. 上一轮宽容版仍保留 causes 缺失丢弃/成对丢弃/墓碑丢弃/楼层号超界——用户明确要求零校验：模型输出先原样落地看效果，效果不满意调提示词，限制等用户提出再加。
+2. 静默失败根因（用户"等半天连提醒都没有"）：旧版两次校验重试各 180s 超时 + 失败 toast 只闪 2.2s。修复：校验不再触发重试（解析成功=token 必有产出）；busy 状态点击提示"推演进行中"；失败原因写进 toast 且延时。
+3. validateReport 只做：字段补默认（name/truth/surface/causes/state）+ resistance/ambush 结构过滤（空壳剔除，非语义限制）。validateCard 只拦废数据（缺 place/faction 物理不可用）。enemyPool 从校验源退为纯提示词引导。
+4. 诊断记录：真机 Trigger.busy=false 未死锁，DebugLog 空（用户点击发生于旧版插件页面加载后无调用记录）。
+
+**验证**：122/122（T2 全条目保留、B1 menu 任意词条单次调用入池、E5 零校验、T5 名册全注册）。
+
+---
