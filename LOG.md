@@ -336,3 +336,18 @@
 **真机验证**（IAB 开酒馆实测，script 标签注入新版逻辑，不动用户插件）：楼层 ID、隐藏/玩家排除、━━ 排版、LWB 内容四项全过；验证后已 reload 清理注入。
 
 ---
+
+## 2026-09-09 ｜ feat：世界书 order 排序 + 设置即时持久化 + S4 最小版 surface 上报纸（业务提交 `624fd32`）
+
+**变更行为**：新增 sortWorldbookEntries（position.type 七级分组 + order 升序），getSyncedWorldbookText 遍历排序序列（非 getWorldbook 原始顺序/勾选顺序）；设置面板全部 data-k 项 change 即时持久化；renderWire 新增 surface 渲染分支（有报告时公开征兆替代卡片池成玩家可见内容）+ 报告成功后 surface 推入 ticker。harness 123/123（新增 W4/T12/T12b）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test\\harness.html`
+
+**决策原因**（用户第二份真实请求全文暴露三问题）：
+1. **世界书顺序乱**（用户：总览蓝灯 order1 应排第一，实际"总督套房"排最前）：getWorldbook 返回的是 JS-Slash-Runner 的"自定义顺序"，与酒馆上下文的 position/order 无关（文档 1953 有注明但易误读）。修复：按 position.type 分组（角色定义前→…→深度插入）+ 组内 order 升序排列，输出遍历排序后序列（首版实现排序了但遍历仍按勾选顺序，W4 断言抓出后修正）。
+2. **报告 garrisons menu 全空**：请求中【可选敌人名单】为"（无）"=图鉴索引未加载（真机设置下拉改了但只有 worldSync/debug 即时保存，bestiaryBook 仍依赖保存按钮）。修复：全部设置项 change 即时 collectFormToSettings+saveSettings+resetBestiaryCache。
+3. **报纸表层不更新**：S4 最小版——报告生成后 factions.surface（公开征兆）渲染进面板情报流（派系名+一句话征兆+三态徽标+报告日期），有报告时替代卡片池（卡片池属态势后台数据，SPEC §3 可见性矩阵：玩家只见 surface）；最新两条 surface 短句推入折叠条 ticker。完整 S4（灰卡阶段揭示/墓碑/单向 MMS）后续落地。
+
+**验证**：123/123（W4 排序：角色定义前 order1 先于 at_depth；T12 surface 上报纸含三态徽标；T12b surface 上 ticker）。
+
+---
