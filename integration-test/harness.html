@@ -415,11 +415,11 @@ async function runAll() {
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
     };
     window.getChatMessages = () => [{ message_id: 0, name: 'AI', role: 'assistant', is_hidden: false,
-      message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。', data: {}, extra: {} }];
+      message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。' + '长篇叙事正文。'.repeat(300) + '【正文尾部标记】', data: {}, extra: {} }];
     window.getWorldbookNames = () => ['COC-澳大利亚篇敌人与召唤物图鉴V3.0', '剧情世界书'];
     window.getWorldbook = async (name) => {
       if (name === '剧情世界书') return [
-        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' },
+        { name: '悉尼', content: '悉尼是新南威尔士首府，1925 年黑帮与警方在东区对峙。' + '很长的城市背景资料。'.repeat(300) + '【词条尾部标记】' },
         { name: '当地邪教：沙蝎教派', content: '潜伏在内陆的邪教组织，与内陆货运有隐秘关联。' },
       ];
       return [   // 图鉴（词条名带等级前缀，keys 含干净名——对齐真实 V3.0 结构）
@@ -450,6 +450,7 @@ async function runAll() {
     const syncText = await AD.getSyncedWorldbookText();
     assert('S7 同步资料组装（多书多词条带书名头）', syncText.includes('【剧情世界书 · 悉尼】')
       && syncText.includes('新南威尔士') && syncText.includes('总览与索引') && syncText.includes('敌方势力'));
+    assert('S7b 信息完整性：长词条全量注入（无截断）', syncText.includes('【词条尾部标记】'));
     assert('S8 同步配置持久化往返', AD.loadSettings().worldSync.length === 2
       && AD.loadSettings().worldSync[0].entries[0] === '悉尼');
 
@@ -475,9 +476,10 @@ async function runAll() {
     assert('A3 下一拍配发命中新卡（驻防注入含词条与判定）', lastA().content.includes('苦力的棚屋前')
       && lastA().content.includes('达令港码头武装打手') && lastA().content.includes('强行闯入或翻找木箱'));
     assert('A4 成功产卡恰好调用 1 次 LLM', fetchCalls === callsA + 1, `+${fetchCalls - callsA}`);
-    assert('A5 产卡请求含地点/敌人名单/名册/世界书同步资料', lastPrompt.includes('苦力')
+    assert('A5 产卡请求含地点/敌人名单/名册/世界书同步资料/全量正文', lastPrompt.includes('苦力')
       && lastPrompt.includes('萨里山剃刀党混混') && lastPrompt.includes('凯特·利')
-      && lastPrompt.includes('【世界书同步资料】') && lastPrompt.includes('新南威尔士'));
+      && lastPrompt.includes('【世界书同步资料】') && lastPrompt.includes('新南威尔士')
+      && lastPrompt.includes('【正文尾部标记】') && lastPrompt.includes('【词条尾部标记】'));
     AD.dispatchNow('s2a3');
     await waitFor(() => true, 1500);
     assert('A6 已登记地点不重复产卡（tried + 卡池命中）', fetchCalls === callsA + 1);

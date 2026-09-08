@@ -541,13 +541,12 @@
     return index.map(e => e.keys[0] || stripTier(e.name)).filter(Boolean);
   }
 
-  // —— 世界书同步（用户自选 世界书→词条；内容注入态势位/暗线位输入）—————
-
-  async function getSyncedWorldbookText(maxTotalChars = 4000) {
+  // —— 世界书同步（用户自选 世界书→词条；内容全量注入态势位/暗线位输入）—————
+  // 信息完整性优先：不做长度截断——缺信息导致的瞎编比长输入的稀释更危险
+  async function getSyncedWorldbookText() {
     const sync = SETTINGS.worldSync || [];
     if (!sync.length) return '';
     const parts = [];
-    let total = 0;
     for (const src of sync) {
       if (!src.book || !src.entries || !src.entries.length) continue;
       let entries;
@@ -556,27 +555,22 @@
       for (const want of src.entries) {
         const e = (entries || []).find(x => x && x.name === want);
         if (!e) { logWarn(`同步词条不存在：${src.book} / ${want}`); continue; }
-        const budget = Math.min(800, maxTotalChars - total);
-        if (budget <= 100) { logWarn('世界书同步资料超长，截断'); return parts.join('\n\n'); }
-        const content = String(e.content || '').trim().slice(0, budget);
-        total += content.length;
-        parts.push(`【${src.book} · ${want}】\n${content}`);
+        parts.push(`【${src.book} · ${want}】\n${String(e.content || '').trim()}`);
       }
     }
     return parts.join('\n\n');
   }
 
-  // 最新楼正文尾部（产卡语境输入；剥代码块/状态栏/Combat_block）
-  function readLatestFloorTail(maxChars = 600) {
+  // 最新楼正文（产卡语境输入；剥代码块/状态栏/Combat_block，全量不截断）
+  function readLatestFloorTail() {
     try {
       const msgs = getChatMessages(-1);
       const m = Array.isArray(msgs) ? msgs[0] : null;
       if (!m || !m.message) return '';
-      const t = String(m.message)
+      return String(m.message)
         .replace(/```[\s\S]*?```/g, '')
         .replace(/<Status_block>[\s\S]*?<\/Status_block>/gi, '')
         .replace(/<Combat_block>[\s\S]*?<\/Combat_block>/gi, '');
-      return t.slice(-maxChars);
     } catch (e) { return ''; }
   }
 
@@ -652,7 +646,7 @@
     const bestiary = await getBestiaryIndex();
     const [worldSync] = await Promise.all([getSyncedWorldbookText()]);
     const roster = [...new Set(getCards().map(c => c.faction).filter(Boolean))];
-    const floorTail = readLatestFloorTail(600);
+    const floorTail = readLatestFloorTail();
     const ctx = { bestiary, roster, floorTail,
       menuList: bestiaryMenuList(bestiary), worldSync };
     for (const p of places) Instant.tried[norm(p)] = true;
