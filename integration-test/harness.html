@@ -455,7 +455,6 @@ async function runAll() {
         { name: '2级·悉尼常规巡警', strategy: { keys: ['悉尼常规巡警', '悉尼巡警'] } },
       ];
     };
-    AD.resetBestiaryCache();
 
     // 楼层窗口：mock 30 楼（AI 25 / 玩家 4 / hidden… 动态计数）
     const aiCount = ST_MOCK.aiIds.length;
@@ -532,25 +531,22 @@ async function runAll() {
     // 配置先行（图鉴校验源显式配置 + 端点 + 调试），再跑图鉴断言
     const s2 = AD.loadSettings();
     s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
-    s2.bestiaryBook = 'COC-澳大利亚篇敌人与召唤物图鉴V3.0';   // 图鉴校验源显式配置（已去自动匹配）
+    s2.enemyPool = '达令港码头武装打手，悉尼常规巡警\n萨里山剃刀党混混';
     s2.debug = true;
     AD.saveSettings(s2);
-    AD.resetBestiaryCache();
 
-    // ── 图鉴容错与规范化（等级前缀/keys 匹配）──
-    const idx = await AD.getBestiaryIndex();
-    assert('S0 图鉴索引载入（词条名 + keys）', idx && idx.length === 4 && idx[1].keys.includes('萨里山剃刀党混混'));
-    assert('S1 名字匹配：keys 干净名 → 规范词条名', AD.resolveBestiaryName('萨里山剃刀党混混', idx) === '1级·萨里山剃刀党混混');
-    assert('S2 名字匹配：词条名全等（带前缀）', AD.resolveBestiaryName('2级·悉尼常规巡警', idx) === '2级·悉尼常规巡警');
-    assert('S3 名字匹配：key 别名命中', AD.resolveBestiaryName('码头打手', idx) === '2级·达令港码头武装打手');
-    assert('S4 名字匹配：图鉴外词条返回 null', AD.resolveBestiaryName('不存在的敌人', idx) === null);
-    assert('S4b 名字匹配：模型罗马数字等级前缀（Ⅴ级/IV级）剥除后命中并规范化',
-      AD.resolveBestiaryName('Ⅴ级·萨里山剃刀党混混', idx) === '1级·萨里山剃刀党混混'
-      && AD.resolveBestiaryName('IV级·悉尼常规巡警', idx) === '2级·悉尼常规巡警'
-      && AD.resolveBestiaryName('iii级·达令港码头武装打手', idx) === '2级·达令港码头武装打手');
-    const vc = { place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' };
-    assert('S5 校验通过且 menu 规范化写回（补等级前缀）', AD.validateCard(vc, idx) === null && vc.menu === '1级·萨里山剃刀党混混*3~5');
-    assert('S6 校验拒绝：图鉴外 menu 词条', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }, idx) !== null);
+    // ── 敌人名单（手输权威）与地标键 ──
+    const pool = AD.getEnemyPool();
+    assert('E1 敌人名单解析（逗号/换行分隔）', pool.length === 3 && pool[0] === '达令港码头武装打手' && pool[2] === '萨里山剃刀党混混');
+    assert('E2 名单内 menu 词条通过', AD.validateCard({ place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' }) === null);
+    assert('E3 名单外 menu 词条拒绝', AD.validateCard({ place: 'X', faction: 'Y', menu: '不存在的敌人*3', alert: '常规' }) !== null);
+    const vcPool = { place: 'X', faction: 'Y', menu: '未知敌人*2', alert: '常规' };
+    const savedPool = s2.enemyPool; s2.enemyPool = ''; AD.saveSettings(s2);
+    assert('E4 未配名单则不校验 menu（人类权威）', AD.validateCard(vcPool) === null);
+    s2.enemyPool = savedPool; AD.saveSettings(s2);
+    assert('L1 地标键：大区后首字段（含子标题）', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前') === '澳大利亚酒店 - 总督套房');
+    assert('L2 地标键：房间级变化不改变键', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 玄关') === '澳大利亚酒店 - 总督套房');
+    assert('L3 地标键：单段地点', AD.landmarkKey('📍 某独立地标') === '某独立地标');
 
     // ── 世界书同步（态势位侧；内容注入产卡输入）──
     const sW = AD.loadSettings();
@@ -590,6 +586,15 @@ async function runAll() {
     assert('A6 已登记地点不重复产卡（tried + 卡池命中）', fetchCalls === callsA + 1);
     assert('A7 调试日志记录产卡请求/响应（label+raw）', AD.DebugLog.some(e => e.label === 'instant'
       && e.ok && e.raw.includes('苦力棚屋') && Array.isArray(e.messages) && e.messages.length === 2));
+    // A8 地标键：未命中 + 地标没变（房间级变化）→ 不产卡
+    MOCK.setFloorStat(STAT('📍 悉尼 · 全新地标X · 大堂', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
+    AD.dispatchNow('s2-a8a');
+    await waitFor(() => fetchCalls >= callsA + 2, 8000);   // 新地标首访产卡
+    const a8Calls = fetchCalls;
+    MOCK.setFloorStat(STAT('📍 悉尼 · 全新地标X · 203号房', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
+    AD.dispatchNow('s2-a8b');
+    await waitFor(() => true, 1500);
+    assert('A8 地标没变不产卡（房间级小变化，地标键触发）', fetchCalls === a8Calls);
 
     // B. 非法 menu：拒绝 → 重试一次 → 仍拒 → 回落保持兜底
     responder = () => JSON.stringify([{ place: '黑仓库', faction: '神秘组织',
@@ -650,7 +655,6 @@ async function runAll() {
     };
     const s3 = AD.loadSettings();
     s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
-    s3.bestiaryBook = 'COC-澳大利亚篇敌人与召唤物图鉴V3.0';
     s3.debug = true;
     AD.saveSettings(s3);
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
@@ -700,11 +704,12 @@ async function runAll() {
         && inj.content.includes('禁泄清单') && inj.content.includes('炸药原属伦道夫')
         && inj.content.startsWith(AD.ALERT_LINE);
     })());
-    assert('T4 garrisons 收编（复审更新 + menu 规范化 + 白名单拒新卡）', (() => {
-      const cards = AD.getCards();
-      const green = cards.find(c => c.place === '绿顶酒馆');
-      return green && green.alert === '严密' && green.menu === '1级·萨里山剃刀党混混*4~6'
-        && green.source === 'daily' && !cards.some(c => c.place === '黑仓库新区');
+    assert('T4 报告不再收编 garrisons（态势归态势位，绿顶卡保持原值）', (() => {
+      const rep2 = MOCK.chat['$ad_report'];
+      const green = AD.getCards().find(c => c.place === '绿顶酒馆');
+      return !rep2.garrisons && green && green.alert === '警戒'
+        && green.menu === '萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2'
+        && !AD.getCards().some(c => c.place === '黑仓库新区');
     })());
     assert('T5 名册自动注册（新派系入册，墓碑不动）', MOCK.chat['$ad_roster'].factions.includes('凯特·利（萨里山）')
       && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）')
@@ -718,6 +723,7 @@ async function runAll() {
       const ifl = p.indexOf('【非隐藏楼层原文'), it = p.indexOf('【当前时空与敌方动向】');
       return iw >= 0 && il > iw && ifl > il && it > ifl
         && !p.includes('角色列表') && !p.includes('小地图') && !p.includes('内心')
+        && !p.includes('当前态势卡片池') && !p.includes('可选敌人名单')
         && p.includes('日期和时间') && p.includes('━━━━━━ 楼层')
         && !p.includes('玩家输入') && !p.includes('被LWB隐藏');
     })());

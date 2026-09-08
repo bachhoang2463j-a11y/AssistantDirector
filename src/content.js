@@ -70,7 +70,7 @@
       enabled: true,            // 总开关：关闭后不注入、不监听（UI 保留）
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
-      bestiaryBook: '',         // 图鉴世界书名（校验源+敌人名单；留空自动匹配名称含"图鉴"的世界书）
+      enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 的唯一权威选项来源
       worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
       worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
       shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
@@ -97,7 +97,7 @@
         enabled: saved.enabled !== false,
         shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
         situation: Object.assign(def.situation, saved.situation || {}),
-        bestiaryBook: typeof saved.bestiaryBook === 'string' ? saved.bestiaryBook : '',
+        enemyPool: typeof saved.enemyPool === 'string' ? saved.enemyPool : '',
         worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
         worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
         shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
@@ -204,7 +204,8 @@
   const State = {
     lastInjectedText: '',     // 幂等：相同内容不重注
     lastLocationText: '',     // 当前地点原文
-    lastMode: '',             // 最近一次配发形态（card/safe/fallback）
+    lastLandmarkKey: '',      // 当前地标键（大区后首字段）——没变不触发产卡
+    lastMode: '',             // 最近一次配发形态（card/safe/fallback/ambush）
     ammoBaseline: 0,          // 弹药基准（历史最高，规模降档参照）
     lastCardsRef: '',         // 卡片池指纹（检测外部改动）
     tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
@@ -215,6 +216,7 @@
     const s = readChatVar(CV.state) || {};
     State.lastInjectedText = s.lastInjectedText || '';
     State.lastLocationText = s.lastLocationText || '';
+    State.lastLandmarkKey = s.lastLandmarkKey || '';
     State.lastMode = s.lastMode || '';
     State.ammoBaseline = s.ammoBaseline || 0;
     State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
@@ -223,6 +225,7 @@
     writeChatVar(CV.state, {
       lastInjectedText: State.lastInjectedText,
       lastLocationText: State.lastLocationText,
+      lastLandmarkKey: State.lastLandmarkKey,
       lastMode: State.lastMode || '',
       ammoBaseline: State.ammoBaseline,
       tickerHeads: State.tickerHeads,
@@ -248,6 +251,7 @@
     // 换聊天：运行时状态重置（情报流也清空），注入重建
     State.lastInjectedText = '';
     State.lastLocationText = '';
+    State.lastLandmarkKey = '';
     State.ammoBaseline = 0;
     State.tickerHeads = [];
     Instant.tried = Object.create(null);   // 换聊天：分兵/未命中产卡记录清零
@@ -432,6 +436,10 @@
 
     State.lastLocationText = locationText;
     State.lastMode = mode;
+    // 地标键：大区后首字段（如"澳大利亚酒店 - 总统套房"）——地标没变（房间级小变化）不触发产卡
+    const lKey = landmarkKey(locationText);
+    const keyChanged = lKey !== State.lastLandmarkKey;
+    State.lastLandmarkKey = lKey;
     let textFinal = text;
     if (ambushHit) {
       textFinal += `\n【⚠ 主动接触态】${ambushHit['派系']}正在主动接触（预约引爆：${ambushHit['规模'] || ''}）——本楼遇敌概率极高，戒备已置顶。`;
@@ -451,7 +459,8 @@
     updatePanelStatus(null, { mode, locationText, card: hit ? hit.card : null, text });
     updatePanelMeta(stat);
     if (IS_LIVE) {
-      triggerInstant(mode === 'fallback', locationText, stat);   // S2：未命中/分兵 → 异步产卡
+      // S2：主地点未命中 && 地标键变化 → 产卡（地标没变不重复产）；分兵点位独立检查
+      triggerInstant(mode === 'fallback' && keyChanged, lKey, stat);
       checkTriggers(stat);                                       // S3：触发矩阵（newday/号外/兜底）
     }
   }
@@ -576,57 +585,24 @@
     throw new Error('JSON 未闭合');
   }
 
-  // —— 世界书图鉴索引（校验源 + 敌人名单源）—————————————————
+  // —— 敌人名单（用户手输，本轮战役权威选项来源）+ 地标键（产卡触发粒度）—————————
 
-  // 图鉴词条名带等级前缀（"1级·萨里山剃刀党混混"；模型可能写成单字符罗马数字"Ⅳ级"或 ASCII 组合"IV级"），keys 里才有干净名
-  const TIER_PREFIX_RE = /^(?:[0-9０-９ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅶⅷⅸⅹ]|[IVXivx])+\s*级\s*[·・•]\s*/;
-  function stripTier(name) { return String(name || '').replace(TIER_PREFIX_RE, ''); }
-
-  let bestiaryCache = null;   // { index: {name, keys}[] | null, book: string }
-  function resetBestiaryCache() { bestiaryCache = null; }
-  async function getBestiaryIndex() {
-    if (bestiaryCache) return bestiaryCache.index;
-    let index = null;
-    try {
-      // 图鉴校验源必须显式配置（设置下拉选择），不做自动匹配——未配置即降级为结构校验并警告
-      if (IS_LIVE && typeof getWorldbook === 'function' && SETTINGS.bestiaryBook) {
-        const entries = await getWorldbook(SETTINGS.bestiaryBook);
-        index = (entries || []).map(e => ({
-          name: e && e.name,
-          keys: (e && e.strategy && Array.isArray(e.strategy.keys) ? e.strategy.keys : [])
-            .map(String),
-        })).filter(x => x.name);
-        log(`图鉴索引载入：${SETTINGS.bestiaryBook}（${index.length} 词条）`);
-      } else if (!SETTINGS.bestiaryBook) {
-        logWarn('图鉴世界书未配置——menu 白名单校验降级为结构校验（⚙ 设置 → 图鉴世界书）');
-      }
-    } catch (e) { logWarn('图鉴读取失败，menu 白名单校验降级为结构校验', e); }
-    bestiaryCache = { index };
-    return index;
+  // 敌人名单：手输文本（逗号/顿号/换行分隔）→ 数组；为空表示未配置（menu 校验降级为结构校验）
+  function getEnemyPool() {
+    return String(SETTINGS.enemyPool || '')
+      .split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
+  }
+  // menu 词条是否在用户手输名单内（相等或双向包含——用户可能写简写）
+  function inEnemyPool(name, pool) {
+    if (!pool || !pool.length) return true;   // 未配置名单：不校验（人类权威，卡片可在管理里人工审删）
+    return pool.some(p => p === name || p.includes(name) || name.includes(p));
   }
 
-  // 模型给出的敌人名 → 图鉴规范词条名（对齐 RpgCombat 三级匹配语义）：
-  // ① 与词条名全等 ② 与某 key 全等 ③ 剥等级前缀后全等 ④ 双向包含。
-  // 命中返回规范词条名（写回 menu 保证建局精确命中），未命中返回 null。
-  function resolveBestiaryName(input, index) {
-    if (!index || !index.length) return null;
-    const q = stripTier(String(input || '').trim());
-    if (!q) return null;
-    for (const e of index) {
-      if (e.name === input) return e.name;
-      if (e.keys.includes(input)) return e.name;
-      if (stripTier(e.name) === q) return e.name;
-    }
-    for (const e of index) {
-      if (e.name.includes(input) || e.keys.some(k => k.includes(input) || input.includes(k))) return e.name;
-    }
-    return null;
-  }
-
-  // 敌人名单（提示词用）：keys[0] 干净名列表，比 41 个带前缀词条名更紧凑
-  function bestiaryMenuList(index) {
-    if (!index) return [];
-    return index.map(e => e.keys[0] || stripTier(e.name)).filter(Boolean);
+  // 地标键：状态栏地点"大区 · 地标 …"中大区后的第一个字段（如"澳大利亚酒店 - 总统套房"）。
+  // 产卡触发粒度锚：地标键没变（客厅→玄关级小变化）不更新；变了（换酒店）才触发产卡。
+  function landmarkKey(locationText) {
+    const parts = norm(locationText).split(/[·]/).map(s => s.trim()).filter(Boolean);
+    return parts.length >= 2 ? parts[1] : (parts[0] || '');
   }
 
   // 世界书排序：对齐酒馆上下文顺序——先按 position.type 分组（角色定义前→…→深度插入），
@@ -832,23 +808,16 @@
 
   async function buildShadowlineContext(stat) {
     const [worldSync] = await Promise.all([getSyncedWorldbookText('shadowline')]);
-    const cards = getCards();
     const roster = getRoster();
-    const knownFactions = [...new Set([...roster.factions, ...cards.map(c => c.faction).filter(Boolean)])];
     const lastReport = readChatVar(CV.report) || null;
-    // 待登记地点：曾尝试产卡但至今不在卡片池的地点（报告兜底收编）
-    const cardSet = cards.map(c => norm(c.place));
-    const pending = Object.keys(Instant.tried).filter(k => !cardSet.some(p => p.includes(k) || k.includes(p)));
     return {
       floorContext: getShadowlineFloorContext(),
       lwb: getLwbSummaryText(),
       worldSync,
       statData: stat,
-      knownFactions, roster,
+      knownFactions: roster.factions, roster,
       lastReportFactions: lastReport && Array.isArray(lastReport.factions)
         ? lastReport.factions.map(f => ({ name: f.name, state: f.state, truth: f.truth })) : [],
-      pendingPlaces: pending,
-      cards,
     };
   }
 
@@ -861,9 +830,8 @@
       '1. factions：每派系一条。surface=街头可见的公开征兆（一句话，将展示给玩家，不得含真相）；truth=幕后真相（仅注入正文AI）；两者必须成对、指向同一动向的两个层次。causes=楼层出处数组（引用输入中真实存在的楼层号或事件描述，如"楼23"）。state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
       '2. 墓碑名单中的派系禁止以任何形式复活或提及。',
       '3. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
-      '4. garrisons：态势卡片复审——已知地点更新戒备/菜单/反应，新地点补卡。结构 {place, aliases, faction, menu, alert, reaction, verdict}；menu 敌方词条必须从【可选敌人名单】中原文照抄（禁止自创或改写等级前缀，如"Ⅴ级"），仅在原词后加 *min~max 数量后缀；alert 只能取 松懈/常规/警戒/严密。',
-      '5. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
-      '6. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"garrisons":[…],"ambush预约":[…]}',
+      '4. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
+      '5. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
     ].join('\n');
     const user = [
       // ① 世界书同步资料（按配置顺序）——暗线的世界知识基础
@@ -878,12 +846,9 @@
         '地点': ctx.statData['地点'],
         '敌方动向': (ctx.statData['人物'] && ctx.statData['人物']['敌人']) || [],
       }, null, 1)}`,
-      `【可选敌人名单（garrisons 的 menu 只能从中选用）】\n${(ctx.menuList || []).join(' / ') || '（无——menu 一律留空）'}`,
-      `【当前态势卡片池】\n${ctx.cards.length ? JSON.stringify(ctx.cards.map(c => ({ place: c.place, faction: c.faction, menu: c.menu, alert: c.alert })), null, 1) : '（空）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
       `【上次报告的派系三态（延续用）】\n${ctx.lastReportFactions.length ? JSON.stringify(ctx.lastReportFactions, null, 1) : '（首次报告）'}`,
-      `【待登记地点（曾产卡失败/未覆盖）】\n${ctx.pendingPlaces.join(' / ') || '（无）'}`,
     ].join('\n\n');
     return [{ role: 'system', content: sys }, { role: 'user', content: user }];
   }
@@ -925,49 +890,17 @@
     resistance.forbidden = (resistance.forbidden || []).filter(x => x && x.truth && x.path);
     resistance.partial = (resistance.partial || []).map(String).filter(Boolean);
     resistance.friction = (resistance.friction || []).map(String).filter(Boolean);
-    // garrisons（逐张过卡片校验+规范化，坏卡丢弃）
-    const garrisons = [];
-    for (const c of (report.garrisons || [])) {
-      const err = validateCard(c, bestiaryIndex);
-      if (err) { errs.push(`garrison ${(c && c.place) || '?'}：${err}，丢弃`); continue; }
-      garrisons.push(c);
-    }
-    // ambush 预约（结构宽松：需有条件对象）
+    // ambush 预约（结构宽松：需有条件对象）——garrisons 已移除（态势由态势位全权负责）
     const ambush = (report['ambush预约'] || []).filter(a => a && a['派系'] && a['条件'] && typeof a['条件'] === 'object');
     return {
       report: {
         stage: String(report.stage || ''),
         factions, resistance,
         roster_ops: (report.roster_ops || []).map(String).filter(Boolean),
-        garrisons, 'ambush预约': ambush,
+        'ambush预约': ambush,
         generatedAt: Date.now(), reason: Trigger.busyReason || '',
       }, errs,
     };
-  }
-
-  // —— garrisons 收编卡片池（复审：已有卡更新，新卡追加）—————————————————
-
-  function mergeGarrisons(garrisons) {
-    const cards = getCards();
-    let updated = 0, added = 0;
-    for (const g of garrisons) {
-      const exist = cards.find(c => norm(c.place) === norm(g.place));
-      if (exist) {
-        exist.faction = g.faction || exist.faction;
-        exist.aliases = (g.aliases && g.aliases.length ? g.aliases : exist.aliases) || [];
-        exist.menu = g.menu != null ? g.menu : exist.menu;
-        exist.alert = g.alert || exist.alert;
-        exist.reaction = g.reaction || exist.reaction;
-        exist.verdict = g.verdict || exist.verdict;
-        exist.source = 'daily';
-        updated++;
-      } else {
-        cards.push(Object.assign({ aliases: [], source: 'daily' }, g));
-        added++;
-      }
-    }
-    if (updated || added) setCards(cards);
-    return { updated, added };
   }
 
   // —— 提炼注入（ad_shadowline：深度0 system 持续在场，报告后刷新）—————
@@ -1013,22 +946,19 @@
       const stat = readLatestStatData();
       if (!stat) { log('报告触发但无 stat_data，跳过'); return; }
       const ctx = await buildShadowlineContext(stat);
-      const bestiary = await getBestiaryIndex();
-      const menuList = bestiaryMenuList(bestiary);
-      const messages = buildShadowlineMessages(Object.assign({ menuList }, ctx));
+      const messages = buildShadowlineMessages(ctx);
       let lastErr = '';
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const raw = await callLLM(cfg, messages, { timeoutMs: 180000, label: 'shadowline' });
           const parsed = extractJson(raw);
-          const { report, errs } = validateReport(parsed, ctx, bestiary);
+          const { report, errs } = validateReport(parsed, ctx);
           if (errs.length) logWarn('报告校验丢弃项：', errs.join('；'));
-          if (!report || (!report.factions.length && !report.garrisons.length)) {
-            throw new Error(`报告有效产出为空（${errs.join('；') || '无 factions/garrisons'}）`);
+          if (!report || !report.factions.length) {
+            throw new Error(`报告有效产出为空（${errs.join('；') || '无 factions'}）`);
           }
-          // 存档 + 三路分发
+          // 存档 + 分发（garrisons 已移除——态势由态势位全权负责，暗线不分散注意力）
           writeChatVar(CV.report, report);
-          const merge = mergeGarrisons(report.garrisons);
           // 名册自动注册（新派系轻量登场）
           const roster = getRoster();
           for (const f of report.factions) if (!roster.factions.includes(f.name)) roster.factions.push(f.name);
@@ -1058,8 +988,8 @@
             }
           }
           renderTicker();
-          toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系 / 卡片 +${merge.added}~${merge.updated}`);
-          log(`暗线报告完成（${reason}，第 ${attempt} 次尝试）`, `派系 ${report.factions.length}，garrisons 更新 ${merge.updated}/新增 ${merge.added}`);
+          toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系动向`);
+          log(`暗线报告完成（${reason}，第 ${attempt} 次尝试）`, `派系 ${report.factions.length}，预约 ${report['ambush预约'].length}`);
           openReportModal(report);   // GM 查看弹窗（手动/自动触发均弹出）
           return;
         } catch (e) { lastErr = e.message || String(e); logWarn(`暗线报告第 ${attempt} 次失败：${lastErr}`); }
@@ -1088,44 +1018,37 @@
     return [...new Set(out)];
   }
 
-  // 卡片硬校验：结构 + menu 白名单（RpgCombat 同款容错，命中即规范化写回）；返回 null=通过，字符串=拒绝原因
-  function validateCard(card, bestiaryIndex) {
+  // 卡片硬校验：结构 + menu 敌人名单（用户手输的战役名单为唯一权威，双向包含容错）；返回 null=通过
+  function validateCard(card) {
     if (!card || typeof card !== 'object') return '非对象';
     if (!card.place || typeof card.place !== 'string') return '缺少 place';
     if (!card.faction || typeof card.faction !== 'string') return '缺少 faction';
     if (card.alert && !ALERT_LEVELS.includes(card.alert)) return `alert 非法（${card.alert}）`;
     if (card.aliases != null && !Array.isArray(card.aliases)) return 'aliases 非数组';
     if (card.menu) {
-      if (bestiaryIndex && bestiaryIndex.length) {
-        const bad = parseMenu(card.menu).map(e => e.name)
-          .filter(n => !resolveBestiaryName(n, bestiaryIndex));
-        if (bad.length) return `menu 词条不在图鉴内：${bad.join('、')}`;
-        // 规范化写回：模型给的干净名 → 图鉴完整词条名（RpgCombat 建局精确命中）
-        card.menu = parseMenu(card.menu).map(e => {
-          const canon = resolveBestiaryName(e.name, bestiaryIndex);
-          return e.max > e.min ? `${canon}*${e.min}~${e.max}`
-            : e.max ? `${canon}*${e.max}` : canon;
-        }).join('/');
-      }
+      const pool = getEnemyPool();
+      const bad = parseMenu(card.menu).map(e => e.name).filter(n => !inEnemyPool(n, pool));
+      if (bad.length) return `menu 词条不在敌人名单内：${bad.join('、')}`;
     }
     return null;
   }
 
   function buildInstantMessages(places, context) {
     const sys = [
-      '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为每个给定地点生成一张驻防态势卡。',
+      '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为给定地点各生成一张驻防态势卡。',
       '规则：',
-      '1. menu 是可选敌方菜单，词条名必须从【可选敌人名单】中原文照抄（禁止自创或改写等级前缀），仅在原词后加 *min~max 数量后缀，格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
-      '2. alert 只能取：松懈/常规/警戒/严密。',
-      '3. faction 用派系名（优先从【名册】选用；民用/中立场所可标注"无（中立场所）"类描述）。',
-      '4. reaction 一句话：何类行为被容忍、何类触发敌意。verdict 一句话判定标准：何种行为构成对戒备的挑衅/侵入/暴露。',
-      '5. 只输出 JSON 数组，禁止任何解释文字。每项结构：',
-      '{"place":"地点名","aliases":["别名"],"faction":"派系","menu":"词条*min~max/…","alert":"常规","reaction":"…","verdict":"…"}',
+      '1. place 用**地标级**名称（一所大学、一个山洞、一间旅馆、一座仓库）——禁止大区（"悉尼"），禁止房间级小地点（"某酒店303房"）。同一地标内的房间/楼层变化不产生新卡。',
+      '2. menu 是可选敌方菜单，词条名只能从【可选敌人名单】中选用，仅在原词后加 *min~max 数量后缀，格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
+      '3. alert 只能取：松懈/常规/警戒/严密。',
+      '4. faction 用派系名（优先从【名册】选用；民用/中立场所可标注"无（中立场所）"类描述）。',
+      '5. reaction 一句话：何类行为被容忍、何类触发敌意。verdict 一句话判定标准：何种行为构成对戒备的挑衅/侵入/暴露。',
+      '6. 只输出 JSON 数组，禁止任何解释文字。每项结构：',
+      '{"place":"地标名","aliases":["别名"],"faction":"派系","menu":"词条*min~max/…","alert":"常规","reaction":"…","verdict":"…"}',
     ].join('\n');
     const user = [
-      `【待登记地点】\n${places.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
+      `【待登记地标】\n${places.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
       `【剧情上下文（最近正文节选）】\n${context.floorTail || '（无）'}`,
-      `【可选敌人名单】\n${(context.menuList || []).join(' / ') || '（无——menu 一律留空）'}`,
+      `【可选敌人名单（menu 只能从中选用）】\n${(context.enemyPool || []).join(' / ') || '（无——menu 一律留空）'}`,
       `【世界书同步资料】\n${context.worldSync || '（无）'}`,
       `【名册（已知派系）】\n${(context.roster || []).join(' / ') || '（无）'}`,
     ].join('\n\n');
@@ -1135,12 +1058,10 @@
   async function generateInstantCards(places, stat) {
     const cfg = SETTINGS.situation;
     if (!cfg.baseUrl || !cfg.model) { log('态势位端点未配置，跳过即时产卡'); return; }
-    const bestiary = await getBestiaryIndex();
     const [worldSync] = await Promise.all([getSyncedWorldbookText('situation')]);
     const roster = [...new Set(getCards().map(c => c.faction).filter(Boolean))];
     const floorTail = readLatestFloorTail();
-    const ctx = { bestiary, roster, floorTail,
-      menuList: bestiaryMenuList(bestiary), worldSync };
+    const ctx = { roster, floorTail, worldSync, enemyPool: getEnemyPool() };
     for (const p of places) Instant.tried[norm(p)] = true;
     let lastErr = '';
     for (let attempt = 1; attempt <= 2; attempt++) {          // 失败/全拒 → 重试 ≤1
@@ -1150,7 +1071,7 @@
         const list = Array.isArray(arr) ? arr : [arr];
         const okCards = [];
         for (const c of list) {
-          const err = validateCard(c, bestiary);
+          const err = validateCard(c);
           if (err) { lastErr = `${(c && c.place) || '?'}：${err}`; logWarn('卡片校验拒绝', lastErr); continue; }
           okCards.push({
             place: String(c.place).trim(),
@@ -1840,11 +1761,9 @@
       </select></div>
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
-      <div class="ad-form-row"><label>图鉴世界书</label><select data-k="bestiaryBook">
-        <option value="">— 未配置（menu 不校验）—</option>
-        ${(IS_LIVE && typeof getWorldbookNames === 'function' ? getWorldbookNames() : [])
-          .map(b => `<option value="${esc(b)}" ${s.bestiaryBook === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
-      </select></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">本轮敌人名单</label>
+        <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 只能从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
+        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不校验 menu</span></div>
       <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
@@ -1860,12 +1779,11 @@
       </div>`);
     els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
 
-    // 全部设置项 change 即时持久化（不依赖"保存"按钮——图鉴/端点/楼层窗口改完即生效）
+    // 全部设置项 change 即时持久化（不依赖"保存"按钮——敌人名单/端点/楼层窗口改完即生效）
     els.modalBox.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener('change', () => {
         collectFormToSettings();
         saveSettings(SETTINGS);
-        resetBestiaryCache();
       });
     });
 
@@ -1914,7 +1832,6 @@
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       collectFormToSettings();
       persistSyncNow();
-      resetBestiaryCache();   // 图鉴世界书配置可能已变
       if (!SETTINGS.enabled) uninjectAll();
       else scheduleDispatch('settings-saved');
       const theme = els.modalBox.querySelector('#ad-set-theme').value;
@@ -2177,13 +2094,13 @@
     buildSituationText, buildSafeText, buildFallbackText,
     shortLoc, pushTickerHead, renderTicker, renderWire, stripJsonc, applyTheme,
     // S2：LLM 客户端与态势位
-    callLLM, extractJson, getBestiaryIndex, bestiaryMenuList, resolveBestiaryName,
-    getSyncedWorldbookText, getShadowlineFloorContext, getLwbSummaryText,
-    resetBestiaryCache, readLatestFloorTail,
-    collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant, stripTier,
+    callLLM, extractJson,
+    getEnemyPool, inEnemyPool, landmarkKey, getSyncedWorldbookText, getShadowlineFloorContext,
+    getLwbSummaryText, readLatestFloorTail,
+    collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant,
     // S3：战略层
     checkTriggers, generateShadowlineReport, buildShadowlineContext, buildShadowlineMessages,
-    validateReport, buildShadowlineInjection, mergeGarrisons, checkAmbush,
+    validateReport, buildShadowlineInjection, checkAmbush,
     getRoster, saveRoster, Trigger, statDateKey, statStage, statCity, openReportModal,
     DebugLog, openDebugModal, persistSyncNow,
     // 状态与数据
