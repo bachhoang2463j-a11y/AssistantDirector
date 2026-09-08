@@ -351,3 +351,18 @@
 **验证**：123/123（W4 排序：角色定义前 order1 先于 at_depth；T12 surface 上报纸含三态徽标；T12b surface 上 ticker）。
 
 ---
+
+## 2026-09-09 ｜ feat：职责重划——敌人手输权威 + 态势全归态势位 + 地标键触发（业务提交 `e3682a6`）
+
+**变更行为**：删除图鉴自动校验全链（bestiaryBook 设置/图鉴索引/四级匹配/规范化写回，-174 行）；SETTINGS 新增 enemyPool 手输框（逗号/换行分隔，menu 唯一权威选项来源）；暗线报告 schema 去 garrisons（prompt/校验/收编全删）、输入去态势数据（卡片池/敌人名单/待登记段）；产卡改地标键触发（landmarkKey=地点大区后首字段，没变不产卡）+ prompt 地标级粒度规则。harness 123/123（删 S0-S6/S4b 图鉴断言，新增 E1-E4 敌人名单/L1-L3 地标键/A8 地标不变不产卡/T4 不收编）。
+
+**涉及文件**：`src/content.js`、`酒馆助手脚本-副导演.json`、`integration-test/harness.html`
+
+**决策原因**（用户原则："不要把用户当傻子，程序没人类靠谱"）：
+1. **删图鉴自动校验链**：敌人由用户全权控制——设置新增"本轮敌人名单"手输框（唯一权威）；世界书同步里的图鉴词条（用户手勾）提供内容语境。validateCard 的 menu 校验改为 ∈ 手输名单（双向包含容错），未配名单则不校验（人类权威，卡片可在管理里人工审删）。
+2. **暗线去 garrisons**（用户："态势完全由小模型负责，暗线不要分散注意力"）：报告 schema 只剩 factions/resistance/roster_ops/ambush预约；输入删态势数据段（卡片池/敌人名单/待登记地点）；卡片池完全由态势位维护。
+3. **地标键触发**（用户："更新范围是地标（大学/山洞/旅馆），不是大区也不是小房间；匹配状态栏大区后的字段，没变则不更新"）：landmarkKey = 地点串第二段（大区后首字段）；dispatchNow 中 keyChanged 才触发产卡（房间级变化客厅→玄关不产）；产卡 prompt 明确地标级 place 规则。
+
+**验证**：123/123。过程中修 harness 两处：残留 resetBestiaryCache 调用（函数已删致 runAll TypeError）、T4 断言误判测试数据自带的 source='daily'。
+
+---
