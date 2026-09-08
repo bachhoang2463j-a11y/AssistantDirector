@@ -671,11 +671,11 @@ async function runAll() {
     // T1 手动报告：校验 + 三路分发
     s3Responder = () => JSON.stringify({
       stage: '双线绞合期',
-      factions: [
-        { name: '凯特·利（萨里山）', surface: '绿顶酒馆谢绝散客', truth: '凯特要的不是爆破手而是运输队共谋', causes: ['楼23 心理推演'], state: '推断中' },
+      factions: [   // 中文键（模拟真机模型被示例带偏的输出——validateReport 键名容错）
+        { '派系': '凯特·利（萨里山）', '征兆': '绿顶酒馆谢绝散客', '真相': '凯特要的不是爆破手而是运输队共谋', '出处': ['楼23 心理推演'], '状态': '推断中' },
         { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', causes: ['楼15 电报分析'], state: '已渗透' },
-        { name: '无出处派系', surface: 'x', truth: 'y', causes: [], state: '推断中' },
-        { name: '墓碑派系', surface: 'x', truth: 'y', causes: ['楼1'], state: '推断中' },
+        { '派系': '无出处派系', '征兆': 'x', '真相': 'y', '出处': [] },
+        { name: '墓碑派系', surface: 'x', truth: 'y', causes: ['楼1'] },
       ],
       resistance: {
         forbidden: [{ truth: '炸药原属伦道夫/黑法老兄弟会', path: '由玩家在谈判桌上自行打出', leak_cost: '谈判筹码崩塌' }],
@@ -694,7 +694,8 @@ async function runAll() {
     await AD.generateShadowlineReport('harness');
     const rep = MOCK.chat['$ad_report'];
     assert('T1 报告存档 $ad_report（含触发原因）', rep && rep.factions && rep.reason === 'harness');
-    assert('T2 零校验：全部条目保留（含无 causes/墓碑派系，仅字段补默认）', rep.factions.length === 4
+    assert('T2 零校验：全部条目保留 + 中文键名容错映射（真机实证"派系"键）', rep.factions.length === 4
+      && rep.factions.some(f => f.name === '凯特·利（萨里山）' && f.surface === '绿顶酒馆谢绝散客')
       && rep.factions.some(f => f.name === '无出处派系' && f.causes[0] === '（出处未标注）'));
     assert('T3 提炼注入 ad_shadowline（三态标注+渗透+禁泄）', (() => {
       const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');

@@ -521,13 +521,16 @@
   function debugRecord(entry) {
     DebugLog.push(entry);
     if (DebugLog.length > 20) DebugLog.shift();
-    if (SETTINGS.debug) log('[LLM]', entry.label, entry.url, entry.ok ? `ok ${entry.ms}ms` : 'FAIL', entry.ms + 'ms');
   }
 
   async function callLLM(cfg, messages, { timeoutMs = 90000, label = 'llm' } = {}) {
     if (!cfg || !cfg.baseUrl || !cfg.model) throw new Error('端点未配置（Base URL / Model 必填）');
     const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
     const t0 = Date.now();
+    // AiRadio 式调试：发起即在控制台打印完整请求（不等返回），失败/成功即时打印原因
+    if (SETTINGS.debug) console.log(`[${SCRIPT_NAME}][LLM→]`, label, cfg.model, url, `
+—— 完整 messages ——
+` + JSON.stringify(messages, null, 1));
     let res;
     try {
       res = await fetch(url, {
@@ -545,18 +548,28 @@
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      if (SETTINGS.debug) debugRecord({ label, url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: e.message || String(e) });
+      if (SETTINGS.debug) console.warn(`[${SCRIPT_NAME}][LLM✗]`, label, `请求失败（${Date.now() - t0}ms）：`, e.message || e);
+      debugRecord({ label, url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: e.message || String(e) });
       throw new Error(`请求失败：${e.message || e}`);
     }
     if (!res.ok) {
-      if (SETTINGS.debug) debugRecord({ label, url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: `HTTP ${res.status}` });
-      throw new Error(`HTTP ${res.status}`);
+      const errText = await res.text().catch(() => '');
+      if (SETTINGS.debug) console.warn(`[${SCRIPT_NAME}][LLM✗]`, label, `HTTP ${res.status}（${Date.now() - t0}ms）：`, errText.slice(0, 500));
+      debugRecord({ label, url, model: cfg.model, messages, raw: errText.slice(0, 2000), ok: false, ms: Date.now() - t0, error: `HTTP ${res.status}` });
+      throw new Error(`HTTP ${res.status}${errText ? '：' + errText.slice(0, 200) : ''}`);
     }
     const data = await res.json();
     const content = data && data.choices && data.choices[0] && data.choices[0].message
       && data.choices[0].message.content;
-    if (SETTINGS.debug) debugRecord({ label, url, model: cfg.model, messages, raw: content || '', ok: !!content, ms: Date.now() - t0, error: content ? '' : '响应缺少 content' });
-    if (!content) throw new Error('响应缺少 choices[0].message.content');
+    if (!content) {
+      if (SETTINGS.debug) console.warn(`[${SCRIPT_NAME}][LLM✗]`, label, `响应缺少 content（${Date.now() - t0}ms）：`, JSON.stringify(data).slice(0, 500));
+      debugRecord({ label, url, model: cfg.model, messages, raw: JSON.stringify(data).slice(0, 2000), ok: false, ms: Date.now() - t0, error: '响应缺少 choices[0].message.content' });
+      throw new Error('响应缺少 choices[0].message.content');
+    }
+    if (SETTINGS.debug) console.log(`[${SCRIPT_NAME}][LLM←]`, label, `成功 ${content.length} 字符（${Date.now() - t0}ms）
+—— 响应原文 ——
+` + content);
+    debugRecord({ label, url, model: cfg.model, messages, raw: content, ok: true, ms: Date.now() - t0, error: '' });
     return content;
   }
 
@@ -827,7 +840,7 @@
       '任务：根据全部输入资料，输出一份 JSON 战略报告，推演各派系在玩家视线之外的动向。',
       '规则：',
       '0. factions 是报告的核心，不可为空：至少给出 1 条派系动向（无新动向时延续上次报告的三态与判断）。',
-      '1. factions：每派系一条。surface=街头可见的公开征兆（一句话，将展示给玩家，不得含真相）；truth=幕后真相（仅注入正文AI）；两者必须成对、指向同一动向的两个层次。causes=楼层出处数组（引用输入中真实存在的楼层号或事件描述，如"楼23"）。state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
+      '1. factions：每派系一条，字段结构必须照此（键名用英文）：{"name":"派系名","surface":"街头可见的公开征兆一句话（将展示给玩家，不得含真相）","truth":"幕后真相（仅注入正文AI）","causes":["楼23"],"state":"推断中|已渗透|已兑现"}。surface 与 truth 必须成对、指向同一动向的两个层次；causes=楼层出处数组（引用输入中真实存在的楼层号）；state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
       '2. 墓碑名单中的派系禁止以任何形式复活或提及。',
       '3. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
       '4. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
@@ -862,13 +875,15 @@
     // 不丢弃任何条目、不触发重试，杜绝"生成了却静默丢弃"的 token 浪费
     const factions = (report.factions || []).map((f, i) => {
       f = (f && typeof f === 'object') ? f : {};
-      if (!f.name) logWarn(`faction#${i} 缺少 name，已补默认`);
-      f.name = f.name || `未命名派系${i + 1}`;
-      if (!f.truth || !f.surface) logWarn(`${f.name}：truth/surface 不全，已补占位`);
-      f.truth = f.truth || '（真相未明）';
-      f.surface = f.surface || '（街头暂无可察异动）';
-      f.causes = (Array.isArray(f.causes) && f.causes.length) ? f.causes : ['（出处未标注）'];
-      if (!TRI_STATES.includes(f.state)) f.state = '推断中';
+      // 键名容错：模型可能被示例带偏用中文键（真机实证"派系/真相/征兆/出处/状态"）——先映射再补默认
+      const pick = (...keys) => { for (const k of keys) if (f[k] != null && f[k] !== '') return f[k]; return undefined; };
+      f.name = pick('name', '派系', '名称') || `未命名派系${i + 1}`;
+      f.truth = pick('truth', '真相') || '（真相未明）';
+      f.surface = pick('surface', '征兆', '表面') || '（街头暂无可察异动）';
+      const rawCauses = pick('causes', '出处');
+      f.causes = (Array.isArray(rawCauses) && rawCauses.length) ? rawCauses : ['（出处未标注）'];
+      const rawState = pick('state', '状态');
+      f.state = TRI_STATES.includes(rawState) ? rawState : '推断中';
       return f;
     });
     const resistance = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
