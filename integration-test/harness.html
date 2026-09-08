@@ -226,7 +226,7 @@ async function runAll() {
   assert('__AD__ 测试钩子暴露', !!AD);
   assert('LIVE 环境检测通过（mock API 全套）', AD.IS_LIVE === true);
   assert('悬浮窗挂载（#ad-rail）', !!document.getElementById('ad-rail'));
-  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×3（报头内联）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 3);
+  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×4（报头内联：📡↻🗂⚙）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 4);
   await waitFor(() => MOCK.injections.calls.length === 0 && true, 2000); // init 去抖静默期
   assert('无楼层时 init 不注入', MOCK.injections.calls.length === 0);
 
@@ -401,7 +401,7 @@ async function runAll() {
     return hitEl && hitEl.textContent.includes('绿顶酒馆');
   })());
   assert('工具按钮内联报头（无底部工具条）', (() => {
-    return document.querySelectorAll('.ad-head-btns button').length === 3
+    return document.querySelectorAll('.ad-head-btns button').length === 4
       && !document.querySelector('#ad-panel .ad-toolbar');
   })());
   assert('折叠态极简结构（无静态品牌文案）', (() => {
@@ -609,6 +609,112 @@ async function runAll() {
     s2z.worldSyncSituation = [];
     s2z.worldSyncShadowline = [];
     AD.saveSettings(s2z);
+  }
+
+  /* ——— S3 暗线位战略层（触发矩阵 / 报告校验 / 三路分发 / 预约引爆）——— */
+  head('S3 暗线位战略层');
+  {
+    // 独立 fetch mock（S2 段闭包不可复用）
+    let s3FetchCalls = 0, s3Responder = null;
+    window.fetch = async (url, opts) => {
+      s3FetchCalls++;
+      const body = JSON.parse(opts.body);
+      const content = s3Responder ? s3Responder(body) : '{}';
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+    };
+    const s3 = AD.loadSettings();
+    s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    AD.saveSettings(s3);
+    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+    window.insertOrAssignVariables({ $ad_roster: { factions: ['伦道夫船运（黑法老触点）'], tombstones: ['墓碑派系'] } }, { type: 'chat' });
+    AD.Instant.tried = Object.create(null);
+    AD.Trigger.lastReportDate = ''; AD.Trigger.lastStage = ''; AD.Trigger.lastCity = '';
+    AD.Trigger.lastCombatResult = ''; AD.Trigger.lastFloorId = -1; AD.Trigger.floorsSinceReport = 0;
+
+    // 基线：首楼记录不触发
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+    const baseCalls = s3FetchCalls;
+    AD.dispatchNow('s3-baseline');
+    assert('T0 首楼只记基线不触发报告', s3FetchCalls === baseCalls);
+
+    // T1 手动报告：校验 + 三路分发
+    s3Responder = () => JSON.stringify({
+      stage: '双线绞合期',
+      factions: [
+        { name: '凯特·利（萨里山）', surface: '绿顶酒馆谢绝散客', truth: '凯特要的不是爆破手而是运输队共谋', causes: ['楼23 心理推演'], state: '推断中' },
+        { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', causes: ['楼15 电报分析'], state: '已渗透' },
+        { name: '无出处派系', surface: 'x', truth: 'y', causes: [], state: '推断中' },
+        { name: '墓碑派系', surface: 'x', truth: 'y', causes: ['楼1'], state: '推断中' },
+      ],
+      resistance: {
+        forbidden: [{ truth: '炸药原属伦道夫/黑法老兄弟会', path: '由玩家在谈判桌上自行打出', leak_cost: '谈判筹码崩塌' }],
+        partial: ['只得到"有人整箱扫货"的粗话原话'],
+        friction: ['收网前夜便衣密度高'],
+      },
+      roster_ops: [],
+      garrisons: [
+        { place: '绿顶酒馆', faction: '凯特·利（萨里山）', menu: '萨里山剃刀党混混*4~6', alert: '严密', reaction: '谈判日增岗。', verdict: '拔枪才构成冲突。' },
+        { place: '黑仓库新区', faction: '黑法老', menu: '不存在的敌人*2', alert: '常规' },
+      ],
+      'ambush预约': [{ '派系': '伦道夫船运（黑法老触点）',
+        '条件': { '时间': '6月13日夜-6月14日凌晨', '地点∈': ['达令港仓库'] },
+        '规模': '码头武装打手*4', '引爆态': '严密' }],
+    });
+    await AD.generateShadowlineReport('harness');
+    const rep = MOCK.chat['$ad_report'];
+    assert('T1 报告存档 $ad_report（含触发原因）', rep && rep.factions && rep.reason === 'harness');
+    assert('T2 校验丢弃：无 causes / 墓碑派系（2/4 存活）', rep.factions.length === 2
+      && rep.factions.every(f => ['凯特·利（萨里山）', '麦凯探长（飞行小队）'].includes(f.name)));
+    assert('T3 提炼注入 ad_shadowline（三态标注+渗透+禁泄）', (() => {
+      const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
+      return inj && inj.content.includes('事实提醒') && inj.content.includes('空白搜查令已备')
+        && inj.content.includes('推断') && inj.content.includes('运输队共谋')
+        && inj.content.includes('禁泄清单') && inj.content.includes('炸药原属伦道夫')
+        && inj.content.startsWith(AD.ALERT_LINE);
+    })());
+    assert('T4 garrisons 收编（复审更新 + menu 规范化 + 白名单拒新卡）', (() => {
+      const cards = AD.getCards();
+      const green = cards.find(c => c.place === '绿顶酒馆');
+      return green && green.alert === '严密' && green.menu === '1级·萨里山剃刀党混混*4~6'
+        && green.source === 'daily' && !cards.some(c => c.place === '黑仓库新区');
+    })());
+    assert('T5 名册自动注册（新派系入册，墓碑不动）', MOCK.chat['$ad_roster'].factions.includes('凯特·利（萨里山）')
+      && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）')
+      && !MOCK.chat['$ad_roster'].factions.includes('墓碑派系'));
+    assert('T6 预约存档 $ad_pending', MOCK.chat['$ad_pending'] && MOCK.chat['$ad_pending'].ambush.length === 1);
+
+    // T7 newday 跨日自动触发
+    const genBefore = MOCK.chat['$ad_report'].generatedAt;
+    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月14日 · 08:00 · 潜伏期' }));
+    AD.dispatchNow('s3-newday');
+    const newdayOk = await waitFor(() => MOCK.chat['$ad_report'] && MOCK.chat['$ad_report'].generatedAt !== genBefore, 12000);
+    assert('T7 newday 跨日自动触发报告（reason=newday）', newdayOk && MOCK.chat['$ad_report'].reason === 'newday');
+
+    // T8 预约引爆（时间+地点命中 → 戒备置顶 + 主动接触态 + 预约移除）
+    MOCK.setFloorStat(Object.assign({}, STAT_GREEN,
+      { '日期和时间': '⏰ 1925年 · 6月14日 · 22:00 · 潜伏期', '地点': '📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区' }));
+    AD.dispatchNow('s3-ambush');
+    assert('T8 预约引爆（注入主动接触态 + 戒备置顶 + 预约移除）', (() => {
+      const last = MOCK.injections.calls[MOCK.injections.calls.length - 1];
+      const rnd = AD.getCards().find(c => c.place === '伦道夫船运仓库');
+      const pending = MOCK.chat['$ad_pending'];
+      return last.content.includes('主动接触态') && last.content.includes('严密')
+        && rnd && rnd.alert === '严密' && pending && pending.ambush.length === 0;
+    })());
+
+    // T9 暗线端点未配置 → 触发条件满足也不调 LLM
+    const s3z = AD.loadSettings();
+    s3z.shadowline.baseUrl = ''; AD.saveSettings(s3z);
+    const offCalls = s3FetchCalls;
+    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月15日 · 08:00 · 潜伏期' }));
+    AD.dispatchNow('s3-off');
+    await waitFor(() => true, 1500);
+    assert('T9 暗线端点未配置 → 不调 LLM', s3FetchCalls === offCalls);
+    // 清理
+    s3z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
+    s3z.worldSyncSituation = []; s3z.worldSyncShadowline = [];
+    AD.saveSettings(s3z);
+    window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
   }
 
   /* ——— jsonc 导入容错 ——— */
