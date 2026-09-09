@@ -644,16 +644,18 @@ async function runAll() {
   head('S3 暗线位战略层');
   {
     // 独立 fetch mock（S2 段闭包不可复用）
-    let s3FetchCalls = 0, s3Responder = null, s3LastPrompt = '';
+    let s3FetchCalls = 0, s3Responder = null, s3LastPrompt = '', s3LastSys = '';
     window.fetch = async (url, opts) => {
       s3FetchCalls++;
       const body = JSON.parse(opts.body);
       s3LastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
+      s3LastSys = (body.messages && body.messages[0] && body.messages[0].content) || '';
       const content = s3Responder ? s3Responder(body) : '{}';
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
     };
     const s3 = AD.loadSettings();
     s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s3.coreTeam = '弗兰克，林有声';   // 主角核心白名单（手输）——验证注入暗线输入
     s3.debug = true;
     AD.saveSettings(s3);
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
@@ -671,9 +673,9 @@ async function runAll() {
     // T1 手动报告：校验 + 三路分发
     s3Responder = () => JSON.stringify({
       stage: '双线绞合期',
-      factions: [   // 中文键（模拟真机模型被示例带偏的输出——validateReport 键名容错）
-        { '派系': '凯特·利（萨里山）', '征兆': '绿顶酒馆谢绝散客', '真相': '凯特要的不是爆破手而是运输队共谋', '出处': ['楼23 心理推演'], '状态': '推断中' },
-        { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', causes: ['楼15 电报分析'], state: '已渗透' },
+      factions: [   // 中文键（模拟真机模型被示例带偏的输出——validateReport 键名容错）；圈套/内线为 S4 扩展字段中文键
+        { '派系': '凯特·利（萨里山）', '征兆': '绿顶酒馆谢绝散客', '真相': '凯特要的不是爆破手而是运输队共谋', '圈套': '以酒馆谈判为饵，实则调虎离山劫仓库', '内线': '酒店门童比利（实为凯特眼线）', '出处': ['楼23 心理推演'], '状态': '推断中' },
+        { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', contact: '便衣警员雷诺兹（伪装成记者）', causes: ['楼15 电报分析'], state: '已渗透' },
         { '派系': '无出处派系', '征兆': 'x', '真相': 'y', '出处': [] },
         { name: '墓碑派系', surface: 'x', truth: 'y', causes: ['楼1'] },
       ],
@@ -697,12 +699,25 @@ async function runAll() {
     assert('T2 零校验：全部条目保留 + 中文键名容错映射（真机实证"派系"键）', rep.factions.length === 4
       && rep.factions.some(f => f.name === '凯特·利（萨里山）' && f.surface === '绿顶酒馆谢绝散客')
       && rep.factions.some(f => f.name === '无出处派系' && f.causes[0] === '（出处未标注）'));
+    assert('T2b S4 扩展字段：圈套/内线中文键容错 + contact 英文键透传 + 缺省空串', (() => {
+      const kate = rep.factions.find(f => f.name === '凯特·利（萨里山）');
+      const mccay = rep.factions.find(f => f.name === '麦凯探长（飞行小队）');
+      const none = rep.factions.find(f => f.name === '无出处派系');
+      return kate && kate.scheme === '以酒馆谈判为饵，实则调虎离山劫仓库' && kate.mole === '酒店门童比利（实为凯特眼线）'
+        && mccay && mccay.contact === '便衣警员雷诺兹（伪装成记者）'
+        && none && none.scheme === '' && none.mole === '' && none.contact === '';
+    })());
     assert('T3 提炼注入 ad_shadowline（三态标注+渗透+禁泄）', (() => {
       const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
       return inj && inj.content.includes('事实提醒') && inj.content.includes('空白搜查令已备')
         && inj.content.includes('推断') && inj.content.includes('运输队共谋')
         && inj.content.includes('禁泄清单') && inj.content.includes('炸药原属伦道夫')
         && inj.content.startsWith(AD.ALERT_LINE);
+    })());
+    assert('T3b 注入含圈套/间谍/接触缀行（非空才带，事实与推断两段均缀）', (() => {
+      const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
+      return inj && inj.content.includes('｜圈套：以酒馆谈判为饵') && inj.content.includes('｜间谍：酒店门童比利')
+        && inj.content.includes('｜接触：便衣警员雷诺兹');
     })());
     assert('T4 报告不再收编 garrisons（态势归态势位，绿顶卡保持原值）', (() => {
       const rep2 = MOCK.chat['$ad_report'];
@@ -726,6 +741,38 @@ async function runAll() {
         && p.includes('日期和时间') && p.includes('━━━━━━ 楼层')
         && !p.includes('玩家输入') && !p.includes('被LWB隐藏');
     })());
+    assert('T11b 主角核心白名单注入暗线输入（手输设置）', s3LastPrompt.includes('【主角核心白名单（绝不背叛、绝不可能是间谍）】')
+      && s3LastPrompt.includes('弗兰克 / 林有声'));
+    assert('T11c 暗线人格重写：架构师 + 反废话铁律 + 圈套覆盖率', s3LastSys.includes('开放世界的架构师')
+      && s3LastSys.includes('你不是记录的庸才') && s3LastSys.includes('永远不顺水推舟写看似合理的废话')
+      && s3LastSys.includes('floor(N/2)') && s3LastSys.includes('contact') && s3LastSys.includes('scheme') && s3LastSys.includes('mole'));
+
+    // T13 提示词预设（默认锁定 / 新建=快照 / 自定义生效 / 删除回落 / 更新不写默认）
+    {
+      const st = AD.ShadowlinePrompt;
+      const data0 = st.load();
+      assert('T13a 预设默认项锁定 + currentSys 实时取默认构造', data0.presets[0].id === 'default' && data0.presets[0].locked === true
+        && st.currentSys() === AD.DEFAULT_SHADOWLINE_SYS());
+      st.add('自定义A');
+      const data1 = st.load();
+      const custom = data1.presets.find(p => p.name === '自定义A');
+      assert('T13b 新建预设=默认快照并激活', data1.active === custom.id && custom.locked === false
+        && custom.content === AD.DEFAULT_SHADOWLINE_SYS());
+      st.updateContent('自定义提示词内容X');
+      assert('T13c 自定义预设可更新内容（currentSys 切换到快照）', st.load().presets.find(p => p.name === '自定义A').content === '自定义提示词内容X'
+        && st.currentSys() === '自定义提示词内容X');
+      st.remove();
+      const data2 = st.load();
+      assert('T13d 删除自定义回落默认（currentSys 回默认构造）', data2.active === 'default' && !data2.presets.some(p => p.name === '自定义A')
+        && st.currentSys() === AD.DEFAULT_SHADOWLINE_SYS());
+      st.remove();
+      assert('T13e 默认项不可删（remove 兜底静默拒绝）', st.load().presets.some(p => p.id === 'default'));
+      // 态势位预设独立（不同 localStorage 键，互不污染）
+      AD.SituationPrompt.add('态势B');
+      assert('T13f 两链路预设独立存储（暗线删空不影响态势新建）',
+        AD.SituationPrompt.load().presets.some(p => p.name === '态势B') && !AD.ShadowlinePrompt.load().presets.some(p => p.name === '态势B'));
+      AD.SituationPrompt.remove();   // 清理，回落默认
+    }
     AD.renderWire();
     assert('T12 surface 上报纸（公开征兆 + 派系 + 三态徽标）', (() => {
       const wire = document.getElementById('ad-wire').innerText;

@@ -46,6 +46,8 @@
   const LS = {
     settings: 'ad_settings_v1',
     ui: 'ad_ui_v1',
+    promptShadowline: 'ad_prompt_shadowline_v1', // 暗线位提示词预设（默认项锁定，自定义存快照）
+    promptSituation: 'ad_prompt_situation_v1',   // 态势位提示词预设
   };
   // 聊天变量键（$ 前缀对 LLM 隐形，随聊天文件走）
   const CV = {
@@ -71,6 +73,7 @@
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
       enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 的唯一权威选项来源
+      coreTeam: '',             // 主角核心白名单（手输，逗号/换行分隔）——这些人绝不背叛、绝不被指定为间谍
       worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
       worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
       shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
@@ -98,6 +101,7 @@
         shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
         situation: Object.assign(def.situation, saved.situation || {}),
         enemyPool: typeof saved.enemyPool === 'string' ? saved.enemyPool : '',
+        coreTeam: typeof saved.coreTeam === 'string' ? saved.coreTeam : '',
         worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
         worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
         shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
@@ -121,6 +125,64 @@
   }
 
   let SETTINGS = loadSettings();
+
+  // —— 提示词预设（仿 MMS：默认项锁定不可删，新建=默认快照后可自由修改）—————
+  // 一份工厂两实例（暗线/态势），localStorage 持久化；默认项 content 为空壳——消费端实时调 buildDefault()
+
+  function makePresetStore(storageKey, buildDefault) {
+    const load = () => {
+      let data = null;
+      try { data = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch (e) { /* 损坏回落默认 */ }
+      if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+        data = { active: 'default', presets: [{ id: 'default', name: '默认提示词', content: '', locked: true }] };
+      }
+      if (!data.presets.some(p => p && p.id === 'default')) {
+        data.presets.unshift({ id: 'default', name: '默认提示词', content: '', locked: true });  // 数据自愈：默认项永远在
+      }
+      if (!data.presets.some(p => p && p.id === data.active)) data.active = 'default';
+      return data;
+    };
+    const save = data => { try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch (e) { /* 忽略 */ } };
+    return {
+      load, save,
+      // 当前生效 system 文本：默认项实时生成（后续提示词升级即跟随），自定义用快照
+      currentSys() {
+        const data = load();
+        const p = data.presets.find(x => x.id === data.active) || data.presets[0];
+        return (p && !p.locked && p.content) ? p.content : buildDefault();
+      },
+      add(name) {
+        const data = load();
+        const id = 'prompt_' + Date.now();
+        data.presets.push({ id, name, content: buildDefault(), locked: false });  // 新建=默认快照
+        data.active = id;
+        save(data);
+      },
+      rename(name) {
+        const data = load();
+        const p = data.presets.find(x => x.id === data.active);
+        if (p && !p.locked) { p.name = name; save(data); }
+      },
+      remove() {
+        const data = load();
+        const p = data.presets.find(x => x.id === data.active);
+        if (!p || p.locked) return;   // 默认不可删（UI 按钮已禁用，此处兜底）
+        data.presets = data.presets.filter(x => x.id !== data.active);
+        data.active = 'default';
+        save(data);
+      },
+      select(id) {
+        const data = load();
+        if (data.presets.some(x => x.id === id)) { data.active = id; save(data); }
+      },
+      // 更新自定义预设内容（blur 即存；默认项锁定只读，不写入）
+      updateContent(content) {
+        const data = load();
+        const p = data.presets.find(x => x.id === data.active);
+        if (p && !p.locked) { p.content = content; save(data); }
+      },
+    };
+  }
 
   // ═════════════════════════════════════════════════════════════════════
   // 2. 酒馆环境适配
@@ -605,6 +667,11 @@
     return String(SETTINGS.enemyPool || '')
       .split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
   }
+  // 主角核心白名单：手输文本 → 数组；注入暗线输入，这些人不可能是间谍
+  function getCoreTeam() {
+    return String(SETTINGS.coreTeam || '')
+      .split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
+  }
   // menu 词条是否在用户手输名单内（相等或双向包含——用户可能写简写）
   function inEnemyPool(name, pool) {
     if (!pool || !pool.length) return true;   // 未配置名单：不校验（人类权威，卡片可在管理里人工审删）
@@ -828,24 +895,35 @@
       lwb: getLwbSummaryText(),
       worldSync,
       statData: stat,
+      coreTeam: getCoreTeam(),
       knownFactions: roster.factions, roster,
       lastReportFactions: lastReport && Array.isArray(lastReport.factions)
         ? lastReport.factions.map(f => ({ name: f.name, state: f.state, truth: f.truth })) : [],
     };
   }
 
-  function buildShadowlineMessages(ctx) {
-    const sys = [
-      '你是跑团世界模拟器的"暗线人格"（战略层导演）：克制、只依据已发生事实推演，禁止发明无出处的事件。',
-      '任务：根据全部输入资料，输出一份 JSON 战略报告，推演各派系在玩家视线之外的动向。',
-      '规则：',
-      '0. factions 是报告的核心，不可为空：至少给出 1 条派系动向（无新动向时延续上次报告的三态与判断）。',
-      '1. factions：每派系一条，字段结构必须照此（键名用英文）：{"name":"派系名","surface":"街头可见的公开征兆一句话（将展示给玩家，不得含真相）","truth":"幕后真相（仅注入正文AI）","causes":["楼23"],"state":"推断中|已渗透|已兑现"}。surface 与 truth 必须成对、指向同一动向的两个层次；causes=楼层出处数组（引用输入中真实存在的楼层号）；state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
-      '2. 墓碑名单中的派系禁止以任何形式复活或提及。',
-      '3. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
-      '4. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
-      '5. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
+  // —— 默认提示词（预设系统的默认项指向此函数；自定义预设存其文本快照）—————
+
+  function DEFAULT_SHADOWLINE_SYS() {
+    return [
+      '你是开放世界的架构师、顶级权谋小说作家——为正文AI制造巫师3级别的叙事波折，而不是记录世界。',
+      '任务：根据全部输入资料，输出一份 JSON 战略报告，设计各派系在玩家视线之外的动向与阴谋。',
+      '铁律：',
+      '0. 严禁复述前文表层信息、玩家已知常识或主角团已推导出的内容——你不是记录的庸才。除"从前文合理构思的报纸报道和街头传闻"可作事实引用外，其余全部写推断与设计；永远不顺水推舟写看似合理的废话。',
+      '1. factions：每派系一条，字段结构必须照此（键名用英文）：{"name":"派系名","surface":"街头可见的公开征兆一句话（展示给玩家，不得含真相；须体现与其他派系的互动迹象，禁止静态环境描述）","truth":"幕后真相：该派系前文很可能未出现过的深层动机+由动机生长的具体行动（仅注入正文AI）","contact":"主角团已引起其注意时：派出接触的具体人物（姓名/代号+伪装身份+真实目的），否则空串","scheme":"遵从动机为主角团设下的圈套（诱饵+真实杀招），无则空串","mole":"安插在主角团身边或社会面的间谍（具体身份与掩护；优先选最无害、揭示时戏剧反转最大的人选；【主角核心白名单】人物严禁入选），无则空串","causes":["楼23"],"state":"推断中|已渗透|已兑现"}。surface 与 truth 必须成对、指向同一动向的两个层次；causes=楼层出处数组（引用输入中真实存在的楼层号）；state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
+      '2. 圈套覆盖率：至少 floor(N/2)（N=报告派系总数，向下取整）个派系的 scheme 非空。像最苛刻的编辑一样，从前文主角团浅薄的推理中找出漏洞，把圈套建在漏洞上。',
+      '3. 深层动机必须从派系既得利益与前文行为中合理生长——推断可以大胆，动机必须有根。',
+      '4. 墓碑名单中的派系禁止以任何形式复活或提及。',
+      '5. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
+      '6. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
+      '7. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
     ].join('\n');
+  }
+
+  const ShadowlinePrompt = makePresetStore(LS.promptShadowline, DEFAULT_SHADOWLINE_SYS);
+
+  function buildShadowlineMessages(ctx) {
+    const sys = ShadowlinePrompt.currentSys();
     const user = [
       // ① 世界书同步资料（按配置顺序）——暗线的世界知识基础
       `【世界书同步资料】\n${ctx.worldSync || '（无）'}`,
@@ -859,6 +937,7 @@
         '地点': ctx.statData['地点'],
         '敌方动向': (ctx.statData['人物'] && ctx.statData['人物']['敌人']) || [],
       }, null, 1)}`,
+      `【主角核心白名单（绝不背叛、绝不可能是间谍）】\n${(ctx.coreTeam || []).join(' / ') || '（未设置——正文长期塑造的核心同伴也可能被指定为间谍，建议在设置中填写）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
       `【上次报告的派系三态（延续用）】\n${ctx.lastReportFactions.length ? JSON.stringify(ctx.lastReportFactions, null, 1) : '（首次报告）'}`,
@@ -884,6 +963,10 @@
       f.causes = (Array.isArray(rawCauses) && rawCauses.length) ? rawCauses : ['（出处未标注）'];
       const rawState = pick('state', '状态');
       f.state = TRI_STATES.includes(rawState) ? rawState : '推断中';
+      // S4 扩展字段：接触人/圈套/间谍（中文键容错，缺省空串——无则不注入）
+      f.contact = String(pick('contact', '接触', '接触人') || '');
+      f.scheme = String(pick('scheme', '圈套') || '');
+      f.mole = String(pick('mole', '间谍', '内线') || '');
       return f;
     });
     const resistance = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
@@ -906,15 +989,21 @@
 
   function buildShadowlineInjection(report) {
     const lines = [ALERT_LINE];
+    // 派系行尾缀：接触人/圈套/间谍（非空才带——正文 AI 可借环境渗透演出，间谍揭示节奏由三态+禁泄控制）
+    const extra = f => [
+      f.contact && `｜接触：${f.contact}`,
+      f.scheme && `｜圈套：${f.scheme}`,
+      f.mole && `｜间谍：${f.mole}`,
+    ].filter(Boolean).join('');
     const facts = report.factions.filter(f => f.state !== '推断中');
     if (facts.length) {
       lines.push('——事实提醒（已发生，正文须与之自洽）——');
-      for (const f of facts) lines.push(`· ${f.truth}【${f.state}·${(f.causes || [])[0] || ''}】`);
+      for (const f of facts) lines.push(`· ${f.truth}【${f.state}·${(f.causes || [])[0] || ''}】${extra(f)}`);
     }
     const infers = report.factions.filter(f => f.state === '推断中');
     if (infers.length) {
       lines.push('——幕后动向（推断中·仅可环境渗透，禁止直接揭示）——');
-      for (const f of infers) lines.push(`· ${f.truth}【推断·${(f.causes || [])[0] || ''}】`);
+      for (const f of infers) lines.push(`· ${f.truth}【推断·${(f.causes || [])[0] || ''}】${extra(f)}`);
     }
     const forbidden = (report.resistance && report.resistance.forbidden) || [];
     if (forbidden.length) {
@@ -1033,8 +1122,8 @@
     return null;
   }
 
-  function buildInstantMessages(places, context) {
-    const sys = [
+  function DEFAULT_SITUATION_SYS() {
+    return [
       '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为给定地点各生成一张驻防态势卡。',
       '规则：',
       '1. place 用**地标级**名称（一所大学、一个山洞、一间旅馆、一座仓库）——禁止大区（"悉尼"），禁止房间级小地点（"某酒店303房"）。同一地标内的房间/楼层变化不产生新卡。',
@@ -1045,6 +1134,12 @@
       '6. 只输出 JSON 数组，禁止任何解释文字。每项结构：',
       '{"place":"地标名","aliases":["别名"],"faction":"派系","menu":"词条*min~max/…","alert":"常规","reaction":"…","verdict":"…"}',
     ].join('\n');
+  }
+
+  const SituationPrompt = makePresetStore(LS.promptSituation, DEFAULT_SITUATION_SYS);
+
+  function buildInstantMessages(places, context) {
+    const sys = SituationPrompt.currentSys();
     const user = [
       `【待登记地标】\n${places.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
       `【剧情上下文（最近正文节选）】\n${context.floorTail || '（无）'}`,
@@ -1726,8 +1821,69 @@
     }).catch(() => { toast('世界书读取失败'); renderSettingsModal(); });
   }
 
-  function syncSectionHtml(slot, title) {
-    const rows = (editSync[slot] || []).map((src, i) => `
+  // —— 提示词预设编辑区（设置弹窗内，暗线/态势各一组）——————————————
+
+  function promptSectionHtml(storeKey, title, store) {
+    const data = store.load();
+    const active = data.presets.find(p => p.id === data.active) || data.presets[0];
+    const content = active && active.locked ? store.currentSys() : (active && active.content) || store.currentSys();
+    const options = data.presets.map(p =>
+      `<option value="${esc(p.id)}" ${p.id === data.active ? 'selected' : ''}>${esc(p.name)}${p.locked ? ' 🔒' : ''}</option>`).join('');
+    return `
+      <div class="ad-sec-title">${title}</div>
+      <div class="ad-form-row">
+        <select data-prompt-sel="${storeKey}" style="flex:1">${options}</select>
+        <button data-prompt-rename="${storeKey}" style="flex:none" ${active && active.locked ? 'disabled' : ''}>重命名</button>
+        <button data-prompt-del="${storeKey}" style="flex:none" ${active && active.locked ? 'disabled' : ''}>删除</button>
+      </div>
+      <div class="ad-btnrow" style="margin-top:2px"><button data-prompt-add="${storeKey}">＋ 新建（复制当前默认）</button></div>
+      <textarea data-prompt-ta="${storeKey}" rows="8" ${active && active.locked ? 'readonly' : ''}
+        style="width:100%;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;${active && active.locked ? 'opacity:0.6' : ''}"
+        placeholder="提示词内容">${esc(content)}</textarea>
+      ${active && active.locked
+        ? '<div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-top:3px">默认提示词只读（随插件升级更新）——新建副本后可自由修改。</div>'
+        : '<div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-top:3px">失焦自动保存；此预设内容固定存储，不再随默认更新。</div>'}`;
+  }
+
+  function bindPromptOps(storeMap) {
+    const find = k => storeMap[k];
+    els.modalBox.querySelectorAll('[data-prompt-add]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = prompt('新提示词预设名称：', '');
+        if (!name) return;
+        find(btn.getAttribute('data-prompt-add')).add(name);
+        renderSettingsModal();
+      });
+    });
+    els.modalBox.querySelectorAll('[data-prompt-rename]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = prompt('重命名提示词预设：', '');
+        if (!name) return;
+        find(btn.getAttribute('data-prompt-rename')).rename(name);
+        renderSettingsModal();
+      });
+    });
+    els.modalBox.querySelectorAll('[data-prompt-del]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!confirm('确定删除当前提示词预设？（回落到默认）')) return;
+        find(btn.getAttribute('data-prompt-del')).remove();
+        renderSettingsModal();
+      });
+    });
+    els.modalBox.querySelectorAll('[data-prompt-sel]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        find(sel.getAttribute('data-prompt-sel')).select(sel.value);
+        renderSettingsModal();
+      });
+    });
+    els.modalBox.querySelectorAll('[data-prompt-ta]').forEach(ta => {
+      ta.addEventListener('blur', () => {
+        find(ta.getAttribute('data-prompt-ta')).updateContent(ta.value);
+      });
+    });
+  }
+
+  function syncSectionHtml(slot, title) {    const rows = (editSync[slot] || []).map((src, i) => `
       <div class="ad-form-row">
         <select data-sync-book="${slot}:${i}" style="flex:1">
           <option value="">— 选择世界书 —</option>
@@ -1765,6 +1921,9 @@
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">本轮敌人名单</label>
         <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 只能从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不校验 menu</span></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">主角核心白名单</label>
+        <textarea data-k="coreTeam" rows="2" placeholder="手输绝不背叛的核心队友，逗号/换行分隔&#10;例：弗兰克，林有声">${esc(s.coreTeam || '')}</textarea>
+        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则任何人都可能是间谍</span></div>
       <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
@@ -1772,7 +1931,9 @@
       <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button></div>
       ${syncSectionHtml('shadowline', '副导演 · 世界书同步（→ 报告输入）')}
       ${syncSectionHtml('situation', '态势位 · 世界书同步（→ 产卡输入）')}
+      ${promptSectionHtml('shadowline', '暗线导演 · 提示词', ShadowlinePrompt)}
       ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
+      ${promptSectionHtml('situation', '态势产卡 · 提示词', SituationPrompt)}
       ${ep('situation', '态势位（快速小模型 · 随地点）')}
       <div class="ad-btnrow">
         <button class="primary" id="ad-set-save">保存</button>
@@ -1824,6 +1985,7 @@
       });
     };
     bindSyncOps();
+    bindPromptOps({ shadowline: ShadowlinePrompt, situation: SituationPrompt });
 
     els.modalBox.querySelector('#ad-debug-open').addEventListener('click', () => {
       collectFormToSettings();   // 先收表单（含调试开关），再打开日志
@@ -2104,6 +2266,8 @@
     validateReport, buildShadowlineInjection, checkAmbush,
     getRoster, saveRoster, Trigger, statDateKey, statStage, statCity, openReportModal,
     DebugLog, openDebugModal, persistSyncNow,
+    // 提示词预设（默认构造 + 两个 store 实例）
+    DEFAULT_SHADOWLINE_SYS, DEFAULT_SITUATION_SYS, ShadowlinePrompt, SituationPrompt, getCoreTeam,
     // 状态与数据
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,
