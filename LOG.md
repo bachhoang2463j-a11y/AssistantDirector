@@ -472,3 +472,13 @@
 **决策原因**（用户拍板）：不给状态栏 LLM 增加额外负担——玩家可以不选择行动选项，自由根据已知线索行动。surface 的消费端只有玩家（报纸），副导演对 MMS 保持纯读（`stat_data`）。
 
 **验收依据**：纯文档变更，无代码影响。
+
+## 2026-09-10 ｜ 暗线输入补可选敌人名单（预约"规模"与战斗链路对齐）（业务提交 `4260c35`）
+
+**变更行为**：`buildShadowlineContext` 增加 `enemyPool`，`buildShadowlineMessages` 辅助信息块新增【可选敌人名单（ambush 预约的"规模"只能从中选用）】；`DEFAULT_SHADOWLINE_SYS` 铁律 10 补"规模词条只能从名单选用"；设置面板 `enemyPool` 注释与占位符同步（产卡 menu 与预约"规模"共用）；SPEC §4.3 输入组装与 V0.2.6 摘要第 ⑤ 条记录；harness S3 加 T11d/T11e 断言、T11 去掉"不含可选敌人名单"负向断言、清理段重置 enemyPool，151/151。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策原因**（用户发现）：暗线 LLM 的 ambush 预约实质是另一种态势卡——预约"规模"经引爆检查流入态势注入（"预约引爆：{规模}"），成为正文 AI 写 Combat_block 的敌方名来源；但暗线输入五源里没有 `enemyPool`（产卡链路有），预约规模全凭 LLM 即兴命名，与图鉴/卡片菜单脱节，战斗链路对不上。补名单 + 铁律指向 = 输入侧引导（沿用 e3682a6"名单仅作 prompt 引导"哲学，不做硬校验）。
+
+**验收依据**：IAB harness 151/151（T11d 断言名单注入暗线输入且位于辅助块内、T11e 断言铁律指向名单）。
