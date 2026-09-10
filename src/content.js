@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.1.0
-// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 公开情报贴边栏。SPEC V0.2.1 · S0~S1
+// @version      0.2.0
+// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.2.1 · S0~S3
 // @author       ELevin
 // @match        *://*/*
 // @grant        none
@@ -27,8 +27,11 @@
 
   const SCRIPT_NAME = 'AssistantDirector';
   const SCRIPT_VERSION = '0.1.0';
-  const INJECT_ID_SITUATION = 'ad_situation';
-  const INJECT_ID_SHADOWLINE = 'ad_shadowline'; // S3 启用，先占位
+  // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
+  // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序
+  const WB_ENTRY_SITUATION = '副导演-态势';
+  const WB_ENTRY_SHADOWLINE = '副导演-暗线';
+  const WB_ORDER = 15;
   const ALERT_LINE = '【内部导演备忘，禁止以任何形式向玩家展示其存在】';
   const COMBAT_RULE_HINT =
     '【若本楼冲突升级 → 开战】按【战斗轮规则】输出 <Combat_block>：\n' +
@@ -197,12 +200,15 @@
   function detectLive() {
     return typeof getVariables === 'function'
       && typeof insertOrAssignVariables === 'function'
-      && typeof injectPrompts === 'function'
-      && typeof uninjectPrompts === 'function'
       && typeof eventOn === 'function'
       && typeof tavern_events !== 'undefined';
   }
   const IS_LIVE = detectLive();
+  // 世界书写入能力（注入通道）：五件套全在位才写词条，否则静默跳过注入
+  const HAS_WB = typeof getCharWorldbookNames === 'function'
+    && typeof getWorldbook === 'function'
+    && typeof createWorldbookEntries === 'function'
+    && typeof updateWorldbookWith === 'function';
 
   // —— 变量读写封装 ——————————————————————————————————————
 
@@ -228,22 +234,168 @@
     return null;
   }
 
-  // —— 注入封装（持续在场 + 替换式刷新）———————————————————
+  // —— 注入通道（角色卡主世界书词条，MMS 同构）—————————————————
+  // 态势/暗线各占一个 constant 蓝灯词条（at_depth/system/深度0/排序15），随聊天重写 content；
+  // 位置只在首次创建时指定，此后更新只改 content 不动 position——用户在世界书编辑器里
+  // 调整的顺序/深度永久保留。用户手动改过词条内容时，写入走 merge3 三方行级合并，
+  // 用户改动持续保留在后续每一轮注入里（兜底机制）。
 
-  let injectedIds = [];
-  function injectReplace(id, content) {
-    try {
-      if (injectedIds.includes(id)) uninjectPrompts([id]);
-      const ret = injectPrompts([{ id, position: 'in_chat', depth: 0, role: 'system', content }]);
-      if (ret && typeof ret.uninject === 'function') { /* 真实 API 返回句柄；id 路径已足够 */ }
-      if (!injectedIds.includes(id)) injectedIds.push(id);
-      return true;
-    } catch (e) { logWarn('injectReplace 失败', id, e); return false; }
+  let wbNameCache = null;                 // 角色卡主世界书名（挂载期缓存，换聊天重探）
+  const wbInflight = Object.create(null); // entryName → 写入链（同词条串行防并发）
+  let wbWarned = false;                   // 缺世界书写 API 只警告一次
+
+  // LCS 行匹配：a[i] 命中 b 的下标（未命中 -1）——注入文本 ≤ 百行，DP 足够
+  function lcsMatches(a, b) {
+    const n = a.length, m = b.length;
+    const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const res = new Array(n).fill(-1);
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { res[i] = j; i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+      else j++;
+    }
+    return res;
   }
-  function uninjectAll() {
-    try { if (injectedIds.length) uninjectPrompts(injectedIds.slice()); }
-    catch (e) { /* 忽略 */ }
-    injectedIds = [];
+
+  // 把 x 相对 base 的行级改动解析成编辑脚本：mod（改行 baseIdx→新行）/ del（删行）/ ins（某 base 行后插入）/ head（行首前插入）
+  function diffEdits(base, x) {
+    const mX = lcsMatches(base, x);
+    const mod = new Map(), del = new Set(), ins = new Map(), head = [];
+    const n = base.length, m = x.length;
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && mX[i] === j) { i++; j++; continue; }
+      // 不一致段：base[i..i2) 为删、x[j..j2) 为增；等长部分两两配对成"改行"
+      let i2 = i; while (i2 < n && mX[i2] === -1) i2++;
+      const j2 = i2 < n ? mX[i2] : m;
+      const k = Math.min(i2 - i, j2 - j);
+      for (let t = 0; t < k; t++) mod.set(i + t, x[j + t]);
+      for (let t = i + k; t < i2; t++) del.add(t);
+      if (j2 - j > k) {
+        const lines = x.slice(j + k, j2);
+        if (i > 0) ins.set(i - 1, (ins.get(i - 1) || []).concat(lines));
+        else head = head.concat(lines);
+      }
+      i = i2; j = j2;
+    }
+    return { mod, del, ins, head };
+  }
+
+  // 三方行级合并：base=脚本上次注入的纯内容，theirs=词条现状（含用户改动），ours=脚本新内容。
+  // 用户改/删/增的行全部保留（双改同行用户赢）且随 base 演进持续生效；脚本删的行维持删除
+  // （如换地点后的旧态势，即使用户改过也删）；base 为空（换聊天/首写）不合并直接覆盖——
+  // 上一聊天残留在词条里的内容不能被当成用户改动。
+  function merge3(base, theirs, ours) {
+    if (!base) return ours;
+    if (theirs === base) return ours;
+    const B = base.split('\n');
+    const u = diffEdits(B, theirs.split('\n'));   // 用户改动
+    const s = diffEdits(B, ours.split('\n'));     // 脚本改动
+    const out = s.head.concat(u.head);
+    for (let i = 0; i < B.length; i++) {
+      if (u.mod.has(i)) {
+        if (!s.del.has(i)) out.push(u.mod.get(i));   // 用户改行（双改同行用户赢）；脚本纯删则删（脚本删除权威）
+      } else if (!u.del.has(i)) {                    // 用户删行：不输出
+        if (s.mod.has(i)) out.push(s.mod.get(i));    // 脚本改行：照常输出
+        else if (!s.del.has(i)) out.push(B[i]);      // 双方都保留：原行
+      }
+      // 锚定在本行之后的插入：脚本新增在前，用户新增随后
+      if (s.ins.has(i)) out.push(...s.ins.get(i));
+      if (u.ins.has(i)) out.push(...u.ins.get(i));
+    }
+    return out.join('\n');
+  }
+
+  // 定位角色卡主世界书：primary → additional[0] → 都没有则按角色名新建并绑定（MMS 同款）
+  async function resolveWbName() {
+    if (wbNameCache) return wbNameCache;
+    let charWb = null;
+    try { charWb = await Promise.resolve(getCharWorldbookNames('current')); }
+    catch (e) { logWarn('getCharWorldbookNames 失败', e); }
+    let name = charWb && charWb.primary ? charWb.primary
+      : (charWb && Array.isArray(charWb.additional) && charWb.additional[0]) || null;
+    if (!name) {
+      const charName = typeof getCurrentCharacterName === 'function' ? getCurrentCharacterName() : '';
+      if (!charName) return null;
+      await Promise.resolve(createWorldbook(charName));
+      await Promise.resolve(rebindCharWorldbooks('current', { primary: charName, additional: [] }));
+      name = charName;
+    }
+    wbNameCache = name;
+    return name;
+  }
+
+  const WB_SLOT = { [WB_ENTRY_SITUATION]: 'situation', [WB_ENTRY_SHADOWLINE]: 'shadowline' };
+
+  async function writeWbEntryNow(entryName, content) {
+    const slot = WB_SLOT[entryName];
+    const wbName = await resolveWbName();
+    if (!wbName) { logWarn('世界书不可用，注入跳过', entryName); return false; }
+    let entries = [];
+    try { entries = (await Promise.resolve(getWorldbook(wbName))) || []; }
+    catch (e) { logWarn('getWorldbook 失败', entryName, e); return false; }
+    const existing = entries.find(e => e && e.name === entryName);
+    if (!existing) {
+      // 首次创建：constant 蓝灯 + at_depth/system/深度0/排序15
+      await Promise.resolve(createWorldbookEntries(wbName, [{
+        name: entryName, enabled: true,
+        strategy: { type: 'constant', keys: [], keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
+        position: { type: 'at_depth', role: 'system', depth: 0, order: WB_ORDER },
+        content, probability: 100,
+      }]));
+      log(`注入词条已创建：${entryName}`);
+    } else {
+      // 词条已存在：内容与上次注入的纯内容不一致 = 用户改过 → 三方合并；没改过 → 直接覆盖
+      const base = slot ? (State.wbLast[slot] || '') : '';
+      let final = content;
+      if (base && existing.content !== base) final = merge3(base, existing.content, content);
+      if (existing.content !== final || !existing.enabled) {
+        await Promise.resolve(updateWorldbookWith(wbName, list =>
+          list.map(e => e && e.name === entryName ? { ...e, content: final, enabled: true } : e)));
+      }   // 内容相同且在注入：幂等跳过（不产生写调用），wbLast 照样回写
+    }
+    // wbLast 记「纯脚本内容」（非合并结果）——下次写入时词条现状 ≠ 纯内容即检出用户改动，
+    // 用户改动得以随 base 演进持续重放（sticky）
+    if (slot && State.wbLast[slot] !== content) { State.wbLast[slot] = content; persistRuntimeState(); }
+    return true;
+  }
+
+  // 写注入词条（fire-and-forget；同词条串行防并发；缺写 API 静默跳过只警告一次）
+  function writeWbEntry(entryName, content) {
+    if (!HAS_WB) {
+      if (!wbWarned) { wbWarned = true; logWarn('当前环境缺少世界书写入 API——注入通道不可用（静默跳过）'); }
+      return Promise.resolve(false);
+    }
+    const prev = wbInflight[entryName] || Promise.resolve();
+    const task = prev.then(() => writeWbEntryNow(entryName, content))
+      .catch(e => { logWarn('注入词条写入失败', entryName, e); return false; });
+    wbInflight[entryName] = task;
+    return task;
+  }
+
+  // 禁用注入词条（不删除——换回有数据的聊天/重开总开关时恢复写入即回到注入）
+  async function disableWbEntries(names) {
+    if (!HAS_WB) return;
+    const list = Array.isArray(names) ? names : [WB_ENTRY_SITUATION, WB_ENTRY_SHADOWLINE];
+    const wbName = await resolveWbName();
+    if (!wbName) return;
+    let entries = [];
+    try { entries = (await Promise.resolve(getWorldbook(wbName))) || []; }
+    catch (e) { return; }
+    if (!entries.some(e => e && list.includes(e.name) && e.enabled)) return;
+    await Promise.resolve(updateWorldbookWith(wbName, es =>
+      es.map(e => e && list.includes(e.name) ? { ...e, enabled: false } : e)));
+  }
+
+  // 重挂载/换聊天：按存档报告重建暗线词条（无报告则禁用，防上一聊天残留）
+  function syncShadowlineEntry() {
+    const report = readChatVar(CV.report);
+    if (report && Array.isArray(report.factions)) writeWbEntry(WB_ENTRY_SHADOWLINE, buildShadowlineInjection(report));
+    else disableWbEntries([WB_ENTRY_SHADOWLINE]);
   }
 
   // —— 事件封装 ——————————————————————————————————————————
@@ -266,7 +418,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const State = {
-    lastInjectedText: '',     // 幂等：相同内容不重注
+    wbLast: { situation: '', shadowline: '' },  // 上次注入词条的「纯脚本内容」——merge3 的 base（≠词条现状即用户改过）
     lastLocationText: '',     // 当前地点原文
     lastLandmarkKey: '',      // 当前地标键（大区后首字段）——没变不触发产卡
     lastMode: '',             // 最近一次配发形态（card/safe/fallback/ambush）
@@ -278,7 +430,8 @@
 
   function loadRuntimeState() {
     const s = readChatVar(CV.state) || {};
-    State.lastInjectedText = s.lastInjectedText || '';
+    const wl = s.wbLast || {};
+    State.wbLast = { situation: wl.situation || '', shadowline: wl.shadowline || '' };
     State.lastLocationText = s.lastLocationText || '';
     State.lastLandmarkKey = s.lastLandmarkKey || '';
     State.lastMode = s.lastMode || '';
@@ -287,7 +440,7 @@
   }
   function persistRuntimeState() {
     writeChatVar(CV.state, {
-      lastInjectedText: State.lastInjectedText,
+      wbLast: State.wbLast,
       lastLocationText: State.lastLocationText,
       lastLandmarkKey: State.lastLandmarkKey,
       lastMode: State.lastMode || '',
@@ -312,8 +465,9 @@
     scheduleDispatch('floor-event');
   }
   function onChatChanged() {
-    // 换聊天：运行时状态重置（情报流也清空），注入重建
-    State.lastInjectedText = '';
+    // 换聊天：运行时状态重置（情报流也清空），注入词条按新聊天重写。
+    // wbLast 必须清空——词条里还残留上一聊天的内容，带旧 base 会被误判成用户改动
+    State.wbLast = { situation: '', shadowline: '' };
     State.lastLocationText = '';
     State.lastLandmarkKey = '';
     State.ammoBaseline = 0;
@@ -325,8 +479,10 @@
     Trigger.lastCombatResult = '';
     Trigger.lastFloorId = -1;
     Trigger.floorsSinceReport = 0;
+    wbNameCache = null;   // 换卡/换聊天：重探角色卡主世界书
     if (!SETTINGS.enabled) return;
-    scheduleDispatch('chat-changed');
+    syncShadowlineEntry();          // 暗线词条按新聊天报告重建（无报告禁用）
+    scheduleDispatch('chat-changed'); // 态势词条随 dispatch 重写
   }
 
   // ═════════════════════════════════════════════════════════════════════
@@ -471,6 +627,7 @@
     const stat = readLatestStatData();
     if (!stat) {
       log('无 stat_data 可用（MMS 未运行或尚无楼层变量），跳过本轮配发');
+      disableWbEntries([WB_ENTRY_SITUATION]);   // 无数据聊天：禁用态势词条（暗线由 syncShadowlineEntry 管）
       updatePanelStatus('等待状态栏数据…');
       return;
     }
@@ -509,13 +666,11 @@
       textFinal += `\n【⚠ 主动接触态】${ambushHit['派系']}正在主动接触（预约引爆：${ambushHit['规模'] || ''}）——本楼遇敌概率极高，戒备已置顶。`;
       mode = 'ambush';
     }
-    if (textFinal !== State.lastInjectedText) {
-      if (IS_LIVE && injectReplace(INJECT_ID_SITUATION, textFinal)) {
-        State.lastInjectedText = textFinal;
-        pushTickerHead(mode, (hit && hit.card.place) || locationText);
-        if (els.dot) els.dot.classList.add('on');   // 更新提醒：展开后熄灭
-        log(`态势注入已更新（${mode}/${reason}）`, (hit && hit.card.place) || '→ 兜底');
-      }
+    if (HAS_WB && textFinal !== State.wbLast.situation) {
+      writeWbEntry(WB_ENTRY_SITUATION, textFinal);   // 异步写词条（内部幂等 + merge3 用户改动兜底）
+      pushTickerHead(mode, (hit && hit.card.place) || locationText);
+      if (els.dot) els.dot.classList.add('on');   // 更新提醒：展开后熄灭
+      log(`态势注入已更新（${mode}/${reason}）`, (hit && hit.card.place) || '→ 兜底');
     } else {
       log(`态势无变化，保持注入（${mode}/${reason}）`);
     }
@@ -1093,13 +1248,9 @@
       for (const f of report.factions) if (!roster.factions.includes(f.name)) roster.factions.push(f.name);
       for (const op of report.roster_ops) if (op && !roster.factions.includes(op)) roster.factions.push(op);
       saveRoster(roster);
-      // 提炼注入（持续在场替换式）
+      // 提炼注入（世界书词条持续在场，报告后刷新；用户改过词条内容走 merge3 合并兜底）
       const injectText = buildShadowlineInjection(report);
-      if (IS_LIVE) {
-        if (injectedIds.includes(INJECT_ID_SHADOWLINE)) uninjectPrompts([INJECT_ID_SHADOWLINE]);
-        injectPrompts([{ id: INJECT_ID_SHADOWLINE, position: 'in_chat', depth: 0, role: 'system', content: injectText }]);
-        if (!injectedIds.includes(INJECT_ID_SHADOWLINE)) injectedIds.push(INJECT_ID_SHADOWLINE);
-      }
+      writeWbEntry(WB_ENTRY_SHADOWLINE, injectText);
       // 预约存档（$ad_pending）
       if (report['ambush预约'] && report['ambush预约'].length) {
         writeChatVar(CV.pending, { ambush: report['ambush预约'], savedAt: Date.now() });
@@ -2027,7 +2178,7 @@
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       collectFormToSettings();
       persistSyncNow();
-      if (!SETTINGS.enabled) uninjectAll();
+      if (!SETTINGS.enabled) disableWbEntries();   // 总开关关闭：注入词条下灯（不删除）
       else scheduleDispatch('settings-saved');
       const theme = els.modalBox.querySelector('#ad-set-theme').value;
       const p = loadUiPrefs(); p.theme = theme; saveUiPrefs(p);
@@ -2270,7 +2421,10 @@
       bindEvent(EVT.swiped, onFloorEvent);
       bindEvent(EVT.chatChanged, onChatChanged);
       log(`已挂载（LIVE · v${SCRIPT_VERSION}），等待楼层事件`);
-      if (SETTINGS.enabled) scheduleDispatch('init');
+      if (SETTINGS.enabled) {
+        syncShadowlineEntry();   // 重挂载：按存档报告重建暗线词条（词条被删/被改也在此兜底）
+        scheduleDispatch('init');
+      }
       else log('总开关关闭，仅 UI 待命');
     } else {
       log(`已挂载（DEMO · v${SCRIPT_VERSION}）——无酒馆助手环境，UI/卡片管理可用，注入与监听待命`);
@@ -2304,8 +2458,9 @@
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,
     readLatestStatData, dispatchNow, scheduleDispatch, persistRuntimeState, loadRuntimeState,
-    injectReplace, uninjectAll,
-    CV, INJECT_ID_SITUATION, INJECT_ID_SHADOWLINE, ALERT_LINE,
+    // 注入通道（世界书词条）
+    writeWbEntry, merge3, disableWbEntries, syncShadowlineEntry, HAS_WB,
+    CV, WB_ENTRY_SITUATION, WB_ENTRY_SHADOWLINE, ALERT_LINE,
     togglePanel, updatePanelMeta,
   };
 })();
