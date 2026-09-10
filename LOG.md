@@ -447,3 +447,18 @@
 **验证**：135/135（T3d 三子条件：无 [object Object]、对象键拼接文本、字符串条目原样保留；环境阻力段渲染）。
 
 ---
+
+## 2026-09-10 ｜ V0.2.6 注入通道迁移世界书词条（MMS 同构）+ merge3 用户改动兜底（业务提交 `098ca2c`）
+
+**变更行为**：`ad_situation`/`ad_shadowline` 两条注入从 `injectPrompts` 深度0 通道整体迁移到角色卡主世界书 constant 蓝灯词条（完全替代，旧通道代码删除）；`src/content.js` @version 0.1.0→0.2.0 重新打包；SPEC §3/§4.5、README 数据闭环/版本/变更记录同步；harness 新增世界书写入 mock 与「注入通道」断言组，149/149。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`README.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策原因**（用户需求：像 MMS 一样注入世界书，顺序交给用户，用户改词条后注入跟着改——兜底机制）：
+
+1. **通道迁移（MMS 同构）**：两条注入各占一个词条 `副导演-态势`/`副导演-暗线`，首次创建 `constant` 蓝灯 + `at_depth/system/深度0/排序15`；之后更新只改 content 与 enabled，`...e` 展开保留 position——用户在世界书编辑器里调整的顺序/深度永久生效（用户自由决定顺序）。定位书本走 `getCharWorldbookNames('current')` primary → additional[0] → `createWorldbook(角色名)+rebindCharWorldbooks`（MMS `ensureInjection` 同款）。
+2. **merge3 三方行级合并兜底**：`$ad_state.wbLast` 记每条词条上次注入的**纯脚本内容**（非合并结果）；写入前读词条现状，≠ 纯内容即检出用户手动修改，`merge3(base=纯内容, theirs=词条现状, ours=新内容)` 行级合并——用户改/删/增的行持续保留（sticky：wbLast 始终存纯内容，用户改动作为词条现状与纯内容的差值在每次写入时重放）、双改同行用户赢、脚本删行（换地点旧态势）照删、base 为空（换聊天/首写）直接覆盖防旧聊天残留误判。实现 = LCS 行匹配（`lcsMatches`）+ 编辑脚本解析（`diffEdits`：mod/del/ins/head）+ 基线行循环合成。
+3. **生命周期兜底**：重挂载按存档重建两条词条（态势随 init dispatch、暗线 `syncShadowlineEntry` 按 `$ad_report`，无报告禁用）——顺带修复旧通道重载页面丢注入的缺陷；换聊天 wbLast 清空 + `wbNameCache` 重探 + 词条按新聊天重写；总开关关闭/无 stat_data 聊天只下灯（`enabled:false`）不删除。同词条写入串行（`wbInflight` 链）防并发；幂等闸从 `lastInjectedText` 改为 `wbLast.situation`（持久化字段同步替换）。
+4. **harness**：WB_MOCK（books 可写存储 + fixtures 固定资料书，getWorldbook 统一分发）；删除 injectPrompts mock 与全部 injections 断言，改断言词条创建参数/幂等/内容；新增断言组：U1-U7 merge3 纯函数六场景+sticky、B1-B6 端到端（用户改词条合并保留/position 保留/无 stat 下灯/换聊天重建与禁用）。已知既有限制：S2/S3 段替换 window.fetch 后同页二次运行必失败，重跑需刷新页面（与本次改动无关）。
+
+**验收依据**：IAB harness 149/149 ×2（首跑 + 刷新重跑）；`node --check` 双文件通过；真机验证留给用户（词条生成/顺序调整/手动改词条→下一轮合并生效）。
