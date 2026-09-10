@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.2.1
-// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 公开情报贴边栏。注入走世界书词条 · XML 模板 · 双独立开关 · SPEC V0.2.7
+// @version      0.2.2
+// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 名册/墓碑（S5）+ 公开情报贴边栏。注入走世界书词条 · XML 模板 · 双独立开关 · SPEC V0.2.8
 // @author       ELevin
 // @match        *://*/*
 // @grant        none
@@ -26,7 +26,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.2.1';
+  const SCRIPT_VERSION = '0.2.2';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序
   const WB_ENTRY_SITUATION = '副导演-态势';
@@ -1034,6 +1034,77 @@
   }
   function saveRoster(r) { writeChatVar(CV.roster, r); }
 
+  // —— S5 名册 CRUD（GM 生杀权：添加=轻量登场/预输入，删除=墓碑，恢复=出墓碑）———
+
+  // 添加派系（预输入/轻量登场：仅一个名字，真相由暗线位后续推演）
+  function addRosterFaction(name) {
+    name = String(name || '').trim();
+    if (!name) { toast('派系名为空'); return false; }
+    const roster = getRoster();
+    if (roster.factions.includes(name)) { toast('名册中已存在'); return false; }
+    if (roster.tombstones.includes(name)) { toast('该派系在墓碑中——先恢复再操作'); return false; }
+    roster.factions.push(name);
+    saveRoster(roster);
+    log('名册登记（轻量登场）：', name);
+    return true;
+  }
+
+  // 除名 = 墓碑：级联删该派系全部暗线（报告条目 + 提及它的阻力/预约整条删——交叉暗线，
+  // 其他派系自身条目不动），废弃名单写入战略层输入（【墓碑（禁止复活）】），暗线词条即时重写
+  function tombstoneFaction(name) {
+    name = String(name || '').trim();
+    if (!name) return false;
+    const roster = getRoster();
+    roster.factions = roster.factions.filter(f => f !== name);
+    if (!roster.tombstones.includes(name)) roster.tombstones.push(name);
+    saveRoster(roster);
+
+    // 短名容错：条目常以核心名提及派系（"蒂莉的信使"而非"蒂莉（达令赫斯特）"）——全名或去括号核心名任一命中即算提及
+    const core = name.replace(/[（(][^）)]*[）)]/g, '').trim();
+    const mentions = v => {
+      const s = String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v)));
+      return s.includes(name) || (core.length >= 2 && core !== name && s.includes(core));
+    };
+    // 级联①：最新报告——该派系条目 + 提及它的阻力整条删
+    const report = readChatVar(CV.report);
+    if (report && Array.isArray(report.factions)) {
+      const before = report.factions.length;
+      report.factions = report.factions.filter(f => !(f && f.name === name));
+      const res = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
+      if (Array.isArray(res.forbidden)) res.forbidden = res.forbidden.filter(x => x && !mentions(x.truth) && !mentions(x.path));
+      if (Array.isArray(res.partial)) res.partial = res.partial.filter(x => !mentions(x));
+      if (Array.isArray(res.friction)) res.friction = res.friction.filter(x => !mentions(x));
+      report.resistance = res;
+      if (Array.isArray(report['ambush预约'])) report['ambush预约'] = report['ambush预约'].filter(a => !(a && a['派系'] === name));
+      writeChatVar(CV.report, report);
+      writeWbEntry(WB_ENTRY_SHADOWLINE, buildShadowlineInjection(report));   // 暗线词条即时重写（无该派系版本）
+      renderWire();   // surface 报纸同步去该派系
+      log(`墓碑：${name} 已除名（报告 ${before}→${report.factions.length} 条，交叉暗线级联删除）`);
+    }
+    // 级联②：未引爆的预约（该派系的埋雷一并作废）
+    const pending = readChatVar(CV.pending);
+    if (pending && Array.isArray(pending.ambush) && pending.ambush.length) {
+      const kept = pending.ambush.filter(a => !(a && a['派系'] === name));
+      if (kept.length !== pending.ambush.length) {
+        writeChatVar(CV.pending, { ambush: kept, savedAt: Date.now() });
+      }
+    }
+    return true;
+  }
+
+  // 恢复：出墓碑回名册（报告内容已被级联删除——由下一轮推演重新覆盖）
+  function restoreFaction(name) {
+    name = String(name || '').trim();
+    if (!name) return false;
+    const roster = getRoster();
+    if (!roster.tombstones.includes(name)) return false;
+    roster.tombstones = roster.tombstones.filter(f => f !== name);
+    if (!roster.factions.includes(name)) roster.factions.push(name);
+    saveRoster(roster);
+    log('墓碑恢复（回名册）：', name);
+    return true;
+  }
+
   // —— 触发矩阵（每楼 dispatchNow 末尾检查；去抖=新楼才检查 + busy 锁）—————
 
   function statDateKey(stat) {
@@ -1158,7 +1229,7 @@
     if (!report || typeof report !== 'object') return { report: null, errs: ['报告非对象'] };
     // 零校验模式（用户指示：先跑通看效果，未要求前不加限制）——只做结构整形与字段补默认，
     // 不丢弃任何条目、不触发重试，杜绝"生成了却静默丢弃"的 token 浪费
-    const factions = (report.factions || []).map((f, i) => {
+    let factions = (report.factions || []).map((f, i) => {
       f = (f && typeof f === 'object') ? f : {};
       // 键名容错：模型可能被示例带偏用中文键（真机实证"派系/真相/征兆/出处/状态"）——先映射再补默认
       const pick = (...keys) => { for (const k of keys) if (f[k] != null && f[k] !== '') return f[k]; return undefined; };
@@ -1175,6 +1246,16 @@
       f.mole = String(pick('mole', '间谍', '内线') || '');
       return f;
     });
+    // 墓碑过滤（程序兜底，SPEC §4.4 删除=墓碑）：模型违反铁律 7 输出墓碑派系时整条丢弃——
+    // 验收"墓碑派系在报告输出中断言为零"由此保证（提示词约束为主，程序兜底为辅）
+    const dead = (ctx && ctx.roster && Array.isArray(ctx.roster.tombstones)) ? ctx.roster.tombstones : [];
+    if (dead.length) {
+      const dropped = factions.filter(f => dead.includes(f.name)).map(f => f.name);
+      if (dropped.length) {
+        factions = factions.filter(f => !dead.includes(f.name));
+        logWarn('墓碑派系条目已丢弃（禁止复活）：', dropped.join('、'));
+      }
+    }
     const resistance = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
     resistance.forbidden = (resistance.forbidden || []).filter(x => x && x.truth && x.path);
     // 对象条目容错（真机实证 3.1P 输出 {target,result}/{source,effect} 对象）——按键取值拼接，防 [object Object]
@@ -1295,10 +1376,10 @@
       if (!report.factions.length) logWarn('报告 factions 为空——已存档落地（不重试不丢弃）');
       // 存档 + 分发（garrisons 已移除——态势由态势位全权负责，暗线不分散注意力）
       writeChatVar(CV.report, report);
-      // 名册自动注册（新派系轻量登场）
+      // 名册自动注册（新派系轻量登场；墓碑派系绝不回册——即使模型违反铁律输出）
       const roster = getRoster();
-      for (const f of report.factions) if (!roster.factions.includes(f.name)) roster.factions.push(f.name);
-      for (const op of report.roster_ops) if (op && !roster.factions.includes(op)) roster.factions.push(op);
+      for (const f of report.factions) if (!roster.factions.includes(f.name) && !roster.tombstones.includes(f.name)) roster.factions.push(f.name);
+      for (const op of report.roster_ops) if (op && !roster.factions.includes(op) && !roster.tombstones.includes(op)) roster.factions.push(op);
       saveRoster(roster);
       // 提炼注入（世界书词条持续在场，报告后刷新；用户改过词条内容走 merge3 合并兜底）
       const injectText = buildShadowlineInjection(report);
@@ -1727,6 +1808,11 @@
     padding: 6px 14px; cursor: pointer; }
   .ad-btnrow button:hover { border-color: var(--ad-accent); color: var(--ad-accent); }
   .ad-btnrow button.primary { border-color: var(--ad-accent-dim); color: var(--ad-accent); }
+  /* 名册/卡片行内操作按钮 */
+  .ad-row-btn { flex: none; font-size: 10px; letter-spacing: 1px; padding: 3px 10px; cursor: pointer;
+    background: var(--ad-input-bg); color: var(--ad-ink-dim); border: 1px solid var(--ad-line-strong);
+    border-radius: var(--ad-radius-sm); font-family: inherit; }
+  .ad-row-btn:hover { border-color: var(--ad-accent-dim); color: var(--ad-accent); }
   /* 调试日志：角色分块 + 换行渲染（pre-wrap——\n 真实呈现，不再是转义字面量） */
   .ad-dbg-role { display: inline-block; font-size: 9.5px; letter-spacing: 1px; padding: 1px 9px;
     border: 1px solid var(--ad-line-strong); border-radius: 99px; color: var(--ad-ink-strong);
@@ -1795,6 +1881,7 @@
             <button id="ad-btn-report" title="暗线推演：查看最新报告 / 手动触发（S3）">📡</button>
             <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
             <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
+            <button id="ad-btn-roster" title="派系名册：名册/墓碑管理（S5）">📜</button>
             <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
           </span>
         </div>
@@ -1834,6 +1921,7 @@
       dispatchNow('manual'); toast('已按最新楼层重算态势');
     });
     panel.querySelector('#ad-btn-cards').addEventListener('click', openCardsModal);
+    panel.querySelector('#ad-btn-roster').addEventListener('click', openRosterModal);
     panel.querySelector('#ad-btn-settings').addEventListener('click', openSettingsModal);
 
     if (loadUiPrefs().panelOpen) togglePanel(true, true);
@@ -2348,6 +2436,48 @@
       <div class="ad-form-row"><label>判定标准</label><textarea id="ad-c-verdict" placeholder="何种行为构成挑衅/侵入/暴露；何种属于可容忍（留空=默认）">${esc(c.verdict || '')}</textarea></div>`;
   }
 
+  // —— S5 派系名册弹窗（名册 CRUD + 墓碑）———————————————————————
+
+  function openRosterModal() {
+    const roster = getRoster();
+    const rows = roster.factions.map(name => `
+      <div class="ad-card-item" style="cursor:default">
+        <span class="place">${esc(name)}</span>
+        <button class="ad-row-btn" data-tomb="${esc(name)}" title="除名=墓碑：级联删该派系全部暗线并禁止模型复活">🪦 除名</button>
+      </div>`).join('') || '<div class="dim" style="padding:8px 2px">名册为空——报告生成时自动登记，或在上方手动添加。</div>';
+    const tombs = roster.tombstones.map(name => `
+      <div class="ad-card-item" style="cursor:default;opacity:0.62">
+        <span class="place">🪦 ${esc(name)}</span>
+        <button class="ad-row-btn" data-restore="${esc(name)}" title="出墓碑回名册（暗线由下一轮推演重新覆盖）">↩ 恢复</button>
+      </div>`).join('');
+    openModal(`
+      <h3>📜 派系名册（在册 ${roster.factions.length} · 墓碑 ${roster.tombstones.length}）</h3>
+      <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">
+        名册进暗线报告输入（已知派系，新派系由报告自动登记）；除名=墓碑——级联删该派系全部暗线（交叉暗线整条删、预约作废）并禁止模型复活。存 $ad_roster。</div>
+      <div class="ad-form-row"><label>添加派系</label><input type="text" id="ad-roster-new" placeholder="派系名（轻量登场：先入册，真相由推演补）">
+        <button class="ad-row-btn" id="ad-roster-add">＋ 入册</button></div>
+      ${rows}
+      ${roster.tombstones.length ? `<div class="ad-sec-title" style="margin-top:12px">墓碑（禁止复活）</div>${tombs}` : ''}
+      <div class="ad-btnrow"><button id="ad-roster-close">关闭</button></div>`);
+    els.modalBox.querySelector('#ad-roster-add').addEventListener('click', () => {
+      const input = els.modalBox.querySelector('#ad-roster-new');
+      if (addRosterFaction(input.value)) { toast(`已入册：${input.value.trim()}`); openRosterModal(); }
+    });
+    els.modalBox.querySelectorAll('[data-tomb]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-tomb');
+        if (tombstoneFaction(name)) { toast(`已除名入墓碑：${name}（暗线级联清除）`); openRosterModal(); }
+      });
+    });
+    els.modalBox.querySelectorAll('[data-restore]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-restore');
+        if (restoreFaction(name)) { toast(`已恢复入册：${name}`); openRosterModal(); }
+      });
+    });
+    els.modalBox.querySelector('#ad-roster-close').addEventListener('click', closeModal);
+  }
+
   function openCardsModal() { editingCard = null; renderCardsModal(); }
 
   function renderCardsModal() {
@@ -2525,7 +2655,8 @@
     // S3：战略层
     checkTriggers, generateShadowlineReport, buildShadowlineContext, buildShadowlineMessages,
     validateReport, buildShadowlineInjection, checkAmbush,
-    getRoster, saveRoster, Trigger, statDateKey, statStage, statCity, openReportModal,
+    getRoster, saveRoster, addRosterFaction, tombstoneFaction, restoreFaction, openRosterModal,
+    Trigger, statDateKey, statStage, statCity, openReportModal,
     DebugLog, openDebugModal, persistSyncNow,
     // 提示词预设（默认构造 + 两个 store 实例）
     DEFAULT_SHADOWLINE_SYS, DEFAULT_SITUATION_SYS, ShadowlinePrompt, SituationPrompt, getCoreTeam,

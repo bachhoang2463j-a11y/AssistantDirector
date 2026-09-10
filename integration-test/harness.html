@@ -268,7 +268,7 @@ async function runAll() {
   assert('LIVE 环境检测通过（mock API 全套）', AD.IS_LIVE === true);
   assert('世界书写入能力探测通过（注入通道）', AD.HAS_WB === true);
   assert('悬浮窗挂载（#ad-rail）', !!document.getElementById('ad-rail'));
-  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×4（报头内联：📡↻🗂⚙）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 4);
+  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×5（报头内联：📡↻🗂📜⚙）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 5);
   await sleep(1200); // init 去抖静默期（无 stat → 只走禁用探测，不建词条）
   assert('无楼层时 init 不写入词条', WB_MOCK.writes('副导演-态势') === 0 && WB_MOCK.writes('副导演-暗线') === 0);
 
@@ -458,7 +458,7 @@ async function runAll() {
     return hitEl && hitEl.textContent.includes('绿顶酒馆');
   })());
   assert('工具按钮内联报头（无底部工具条）', (() => {
-    return document.querySelectorAll('.ad-head-btns button').length === 4
+    return document.querySelectorAll('.ad-head-btns button').length === 5
       && !document.querySelector('#ad-panel .ad-toolbar');
   })());
   assert('折叠态极简结构（无静态品牌文案）', (() => {
@@ -764,7 +764,8 @@ async function runAll() {
     await AD.generateShadowlineReport('harness');
     const rep = MOCK.chat['$ad_report'];
     assert('T1 报告存档 $ad_report（含触发原因）', rep && rep.factions && rep.reason === 'harness');
-    assert('T2 零校验：全部条目保留 + 中文键名容错映射（真机实证"派系"键）', rep.factions.length === 4
+    assert('T2 零校验：非墓碑条目全保留 + 中文键名容错映射（墓碑派系被程序过滤）', rep.factions.length === 3
+      && !rep.factions.some(f => f.name === '墓碑派系')
       && rep.factions.some(f => f.name === '凯特·利（萨里山）' && f.surface === '绿顶酒馆谢绝散客')
       && rep.factions.some(f => f.name === '无出处派系' && f.causes[0] === '（出处未标注）'));
     assert('T2b S4 扩展字段：圈套/内线中文键容错 + contact 英文键透传 + 缺省空串', (() => {
@@ -948,6 +949,101 @@ async function runAll() {
     s3z.worldSyncSituation = []; s3z.worldSyncShadowline = [];
     s3z.enemyPool = '';
     AD.saveSettings(s3z);
+    window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
+  }
+
+  /* ——— S5 名册 CRUD（双轨来源 / 删除=墓碑 / 轻量登场）——— */
+  head('S5 名册 CRUD 与墓碑');
+  {
+    // 独立 fetch mock（S5 段闭环）
+    let s5Responder = null;
+    window.fetch = async () => {
+      const content = s5Responder ? s5Responder() : '{}';
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+    };
+    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+    window.insertOrAssignVariables({ $ad_roster: { factions: ['凯特·利（萨里山）'], tombstones: ['墓碑派系'] } }, { type: 'chat' });
+    const s5 = AD.loadSettings();
+    s5.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    AD.saveSettings(s5);
+
+    // R1 添加（预输入/轻量登场）：trim 入册 + 重复/墓碑名/空名拒绝
+    assert('R1 手动入册（trim 轻量登场）+ 重复/墓碑名/空名拒绝', AD.addRosterFaction('  禧市洪门堂口  ') === true
+      && AD.getRoster().factions.includes('禧市洪门堂口')
+      && AD.addRosterFaction('禧市洪门堂口') === false
+      && AD.addRosterFaction('墓碑派系') === false
+      && AD.addRosterFaction('') === false);
+
+    // R2 除名=墓碑：级联删报告条目 + 提及暗线 + 预约；不提及该派的条目保留
+    window.insertOrAssignVariables({ $ad_report: { stage: 'X', factions: [
+        { name: '蒂莉（达令赫斯特）', surface: 's', truth: '蒂莉借刀杀人', causes: ['楼1'], state: '推断中' },
+        { name: '凯特·利（萨里山）', surface: 's', truth: '凯特脱手军火', causes: ['楼2'], state: '已渗透' },
+      ], resistance: { forbidden: [{ truth: '蒂莉与麦凯有旧怨', path: '审讯其信使' }],
+        partial: ['蒂莉的信使只会撒谎'], friction: ['警方全城戒备'] },
+      'ambush预约': [{ '派系': '蒂莉（达令赫斯特）', '条件': { '时间': '6月13日夜', '地点∈': ['中央车站'] }, '规模': '打手*2', '引爆态': '严密' }] } }, { type: 'chat' });
+    window.insertOrAssignVariables({ $ad_pending: { ambush: [{ '派系': '蒂莉（达令赫斯特）', '条件': { '时间': '6月13日夜', '地点∈': ['中央车站'] }, '规模': '打手*2', '引爆态': '严密' }] } }, { type: 'chat' });
+    const r2 = AD.tombstoneFaction('蒂莉（达令赫斯特）');
+    const rep2 = MOCK.chat['$ad_report'];
+    assert('R2 除名=墓碑：报告条目/提及暗线/预约级联删除，其他派系不动', r2 === true
+      && rep2.factions.length === 1 && rep2.factions[0].name === '凯特·利（萨里山）'
+      && rep2.resistance.forbidden.length === 0 && rep2.resistance.partial.length === 0
+      && rep2.resistance.friction.length === 1
+      && rep2['ambush预约'].length === 0
+      && MOCK.chat['$ad_pending'].ambush.length === 0
+      && AD.getRoster().tombstones.includes('蒂莉（达令赫斯特）')
+      && !AD.getRoster().factions.includes('蒂莉（达令赫斯特）'));
+    assert('R2b 暗线词条级联重写（无该派系真相，其他派系保留）', await waitFor(() => {
+      const c = WB_MOCK.entry('副导演-暗线') || '';
+      return !c.includes('蒂莉借刀杀人') && !c.includes('蒂莉的信使只会撒谎') && c.includes('凯特脱手军火');
+    }, 4000));
+
+    // R3 恢复：出墓碑回名册（非墓碑名拒绝）
+    assert('R3 墓碑恢复回名册（非墓碑名拒绝）', AD.restoreFaction('蒂莉（达令赫斯特）') === true
+      && AD.getRoster().factions.includes('蒂莉（达令赫斯特）')
+      && !AD.getRoster().tombstones.includes('蒂莉（达令赫斯特）')
+      && AD.restoreFaction('凯特·利（萨里山）') === false);
+
+    // R4 墓碑过滤：validateReport 丢弃墓碑派系（报告输出为零），其余保留
+    AD.tombstoneFaction('蒂莉（达令赫斯特）');
+    const vr = AD.validateReport({ factions: [
+      { name: '蒂莉（达令赫斯特）', surface: 's', truth: 't', causes: ['楼1'], state: '推断中' },
+      { name: '麦凯探长（飞行小队）', surface: 's', truth: 't', causes: ['楼2'], state: '推断中' },
+    ] }, { roster: AD.getRoster() });
+    assert('R4 墓碑过滤：validateReport 报告输出为零（其余保留）', vr.report.factions.length === 1
+      && vr.report.factions[0].name === '麦凯探长（飞行小队）');
+
+    // R5 端到端：模型违反铁律输出墓碑派系 → 报告落地无它 + 不回册 + 新派系照常登记
+    s5Responder = () => JSON.stringify({ stage: 's5', factions: [
+      { name: '蒂莉（达令赫斯特）', surface: 'x', truth: 'y', causes: ['楼1'], state: '推断中' },
+      { name: '全新派系', surface: 'x', truth: 'y', causes: ['楼1'], state: '推断中' },
+    ], resistance: {}, roster_ops: [], 'ambush预约': [] });
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+    await AD.generateShadowlineReport('s5');
+    assert('R5 墓碑派系不落报告不回册，新派系轻量登场照常', await waitFor(() => {
+      const rep = MOCK.chat['$ad_report'];
+      return rep && rep.reason === 's5' && rep.factions.length === 1 && rep.factions[0].name === '全新派系'
+        && !AD.getRoster().factions.includes('蒂莉（达令赫斯特）')
+        && AD.getRoster().factions.includes('全新派系');
+    }, 8000));
+
+    // R6 UI：名册弹窗渲染 + 行内按钮操作
+    AD.openRosterModal();
+    assert('R6 名册弹窗渲染（在册/墓碑行数 + 添加输入框）', (() => {
+      const box = document.getElementById('ad-modal-box');
+      return !!box.querySelector('#ad-roster-new')
+        && box.querySelectorAll('[data-tomb]').length === AD.getRoster().factions.length
+        && box.querySelectorAll('[data-restore]').length === AD.getRoster().tombstones.length
+        && box.textContent.includes('禁止复活');
+    })());
+    const r6Before = AD.getRoster().factions.length;
+    document.querySelector('#ad-modal-box [data-tomb="全新派系"]').click();
+    assert('R6b 弹窗除名按钮生效（点击→墓碑 + 弹窗重渲染）', AD.getRoster().factions.length === r6Before - 1
+      && AD.getRoster().tombstones.includes('全新派系')
+      && document.querySelectorAll('#ad-modal-box [data-restore="全新派系"]').length === 1);
+    // 清理
+    const s5z = AD.loadSettings();
+    s5z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
+    AD.saveSettings(s5z);
     window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
   }
 
