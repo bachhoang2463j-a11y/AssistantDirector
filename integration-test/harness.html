@@ -875,10 +875,11 @@ async function runAll() {
       AD.SituationPrompt.remove();   // 清理，回落默认
     }
     AD.renderWire();
-    assert('T12 surface 上报纸（公开征兆 + 派系 + 三态徽标）', (() => {
-      const wire = document.getElementById('ad-wire').innerText;
-      return wire.includes('绿顶酒馆谢绝散客') && wire.includes('凯特·利（萨里山）')
-        && wire.includes('推断中') && wire.includes('已渗透');
+    assert('T12 surface 上报纸（未接触灰卡：？？？遮名 + 征兆可见 + 新面孔标记）', (() => {
+      // 只查情报卡区域——顶部当前态势简报合法显示驻防派系名（玩家在场看得见驻军）
+      const items = [...document.querySelectorAll('#ad-wire .ad-item')].map(n => n.innerText).join('\n');
+      return items.includes('绿顶酒馆谢绝散客') && items.includes('？？？') && items.includes('新面孔')
+        && !items.includes('凯特·利（萨里山）');
     })());
     assert('T12b surface 上 ticker（最新情报轮播）', (() => {
       const lis = [...document.querySelectorAll('#ad-ticker li')].map(n => n.textContent);
@@ -1045,6 +1046,55 @@ async function runAll() {
     s5z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
     AD.saveSettings(s5z);
     window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
+  }
+
+  /* ——— S4 公开层·阶段揭示（灰卡 / 接触即揭 / 新面孔 / 平静占位 / 墓碑联动）——— */
+  head('S4 公开层·阶段揭示');
+  {
+    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+    window.insertOrAssignVariables({ $ad_report: { stage: 'X', generatedAt: Date.now(), factions: [
+      { name: '凯特·利（萨里山）', surface: '绿顶酒馆谢绝散客', truth: 't', causes: ['楼1'], state: '推断中' },
+      { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: 't', causes: ['楼2'], state: '已渗透' },
+    ], resistance: {} } }, { type: 'chat' });
+    window.insertOrAssignVariables({ $ad_roster: { factions: ['凯特·利（萨里山）', '麦凯探长（飞行小队）', '禧市洪门堂口'], tombstones: [], revealed: [], manual: [] } }, { type: 'chat' });
+    AD.renderWire();
+    assert('V1 未接触派系灰卡（？？？遮名 + 征兆可见；未接触不出占位卡不剧透）', (() => {
+      const wire = document.getElementById('ad-wire').innerText;
+      return wire.includes('？？？') && wire.includes('绿顶酒馆谢绝散客') && wire.includes('克利夫兰街连日设卡')
+        && !wire.includes('凯特·利') && !wire.includes('麦凯探长') && !wire.includes('禧市洪门堂口');
+    })());
+    // 玩家视野（正文楼层）出现派系名 → 接触即揭
+    ST_MOCK.chat.push({ mes: '凯特·利亲自端着酒杯出现在绿顶酒馆大堂，向众人举杯致意。', is_user: false, is_system: false });
+    AD.renderWire();
+    assert('V2 接触即揭：正文提及派系 → 署名 + 三态徽标回归 + 金色揭幕闪动 + revealed 入册', (() => {
+      const item = [...document.querySelectorAll('#ad-wire .ad-item')].find(n => n.textContent.includes('凯特·利'));
+      return item && item.classList.contains('unveil') && !item.classList.contains('grey')
+        && item.textContent.includes('推断中')
+        && AD.getRoster().revealed.includes('凯特·利（萨里山）');
+    })());
+    AD.renderWire();
+    assert('V3 单调锁：揭幕仅首拍、署名不回退（视野内无提及的派系仍灰卡）', (() => {
+      const kate = [...document.querySelectorAll('#ad-wire .ad-item')].find(n => n.textContent.includes('凯特·利'));
+      return kate && !kate.classList.contains('unveil') && !kate.classList.contains('grey')
+        && AD.getRoster().revealed.includes('凯特·利（萨里山）')
+        && !AD.getRoster().revealed.includes('麦凯探长（飞行小队）');
+    })());
+    AD.addRosterFaction('工会联络处');
+    AD.renderWire();
+    assert('V4 预输入派系：立即署名 + 平静占位卡 + 无新面孔标记（插件自建有标记）', (() => {
+      const items = [...document.querySelectorAll('#ad-wire .ad-item')];
+      const quiet = items.find(n => n.textContent.includes('工会联络处'));
+      const kate = items.find(n => n.textContent.includes('凯特·利'));
+      return quiet && quiet.textContent.includes('暂无可察异动') && !quiet.textContent.includes('新面孔')
+        && kate && kate.textContent.includes('新面孔');
+    })());
+    AD.tombstoneFaction('凯特·利（萨里山）');
+    AD.renderWire();
+    assert('V5 墓碑联动：除名后报纸即刻无该派系（条目/征兆全清，不再复活）', (() => {
+      const wire = document.getElementById('ad-wire').innerText;
+      return !wire.includes('凯特') && !wire.includes('绿顶酒馆谢绝散客');
+    })());
+    ST_MOCK.chat.pop();   // 还原视野 mock
   }
 
   /* ——— 注入通道：世界书词条（MMS 同构）——— */

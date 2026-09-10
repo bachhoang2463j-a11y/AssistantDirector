@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.2.2
-// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 名册/墓碑（S5）+ 公开情报贴边栏。注入走世界书词条 · XML 模板 · 双独立开关 · SPEC V0.2.8
+// @version      0.2.3
+// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.2.9
 // @author       ELevin
 // @match        *://*/*
 // @grant        none
@@ -26,7 +26,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.2.2';
+  const SCRIPT_VERSION = '0.2.3';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序
   const WB_ENTRY_SITUATION = '副导演-态势';
@@ -1028,15 +1028,20 @@
   function getRoster() {
     const r = readChatVar(CV.roster);
     if (r && Array.isArray(r.factions)) {
-      return { factions: r.factions.map(String), tombstones: Array.isArray(r.tombstones) ? r.tombstones.map(String) : [] };
+      return {
+        factions: r.factions.map(String),
+        tombstones: Array.isArray(r.tombstones) ? r.tombstones.map(String) : [],
+        revealed: Array.isArray(r.revealed) ? r.revealed.map(String) : [],   // S4：玩家侧已知派系（接触即揭，单调）
+        manual: Array.isArray(r.manual) ? r.manual.map(String) : [],          // S4：预输入来源（无"新面孔"标记）
+      };
     }
-    return { factions: [], tombstones: [] };
+    return { factions: [], tombstones: [], revealed: [], manual: [] };
   }
   function saveRoster(r) { writeChatVar(CV.roster, r); }
 
   // —— S5 名册 CRUD（GM 生杀权：添加=轻量登场/预输入，删除=墓碑，恢复=出墓碑）———
 
-  // 添加派系（预输入/轻量登场：仅一个名字，真相由暗线位后续推演）
+  // 添加派系（预输入：MMS 固定名册同构——玩家已知，立即署名 + 永远有平静占位卡）
   function addRosterFaction(name) {
     name = String(name || '').trim();
     if (!name) { toast('派系名为空'); return false; }
@@ -1044,8 +1049,10 @@
     if (roster.factions.includes(name)) { toast('名册中已存在'); return false; }
     if (roster.tombstones.includes(name)) { toast('该派系在墓碑中——先恢复再操作'); return false; }
     roster.factions.push(name);
+    roster.manual.push(name);      // 预输入来源（区别于插件自动登记——不打"新面孔"标记）
+    roster.revealed.push(name);    // 预输入派系 = 玩家已知，立即署名
     saveRoster(roster);
-    log('名册登记（轻量登场）：', name);
+    log('名册登记（预输入）：', name);
     return true;
   }
 
@@ -1103,6 +1110,32 @@
     saveRoster(roster);
     log('墓碑恢复（回名册）：', name);
     return true;
+  }
+
+  // —— S4 接触判定（接触即揭 + 单调锁）———————————————————————
+  // 玩家可见视野 = 非隐藏楼层原文 + LWB 早期总结 + 当前敌人名单；派系名（或去括号核心名）
+  // 出现在任一即算已接触——正文提过就是玩家见过。已揭示名单存 $ad_roster.revealed，
+  // 单调只增不减（旧楼被 LWB 隐藏/敌人名单轮换后不回退成灰卡）。
+  // 返回 { roster, newly }：newly = 本拍新揭示（renderWire 用于金色揭幕闪动，仅首拍）。
+  function syncRevealState() {
+    const roster = getRoster();
+    const pending = roster.factions.filter(n => !roster.revealed.includes(n) && !roster.tombstones.includes(n));
+    if (!pending.length) return { roster, newly: [] };
+    let vision = '';
+    try {
+      const stat = readLatestStatData() || {};
+      vision = [getShadowlineFloorContext(), getLwbSummaryText(), JSON.stringify(stat['人物'] || {})].join('\n');
+    } catch (e) { return { roster, newly: [] }; }
+    const newly = [];
+    for (const name of pending) {
+      const core = name.replace(/[（(][^）)]*[）)]/g, '').trim();
+      if (vision.includes(name) || (core.length >= 2 && core !== name && vision.includes(core))) {
+        roster.revealed.push(name);
+        newly.push(name);
+      }
+    }
+    if (newly.length) saveRoster(roster);
+    return { roster, newly };
   }
 
   // —— 触发矩阵（每楼 dispatchNow 末尾检查；去抖=新楼才检查 + busy 锁）—————
@@ -1401,6 +1434,7 @@
         }
       }
       renderTicker();
+      renderWire();   // S4：事件号外即时上报纸（灰卡/署名按接触状态渲染）
       toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系动向`);
       log('暗线报告完成', `派系 ${report.factions.length}，预约 ${report['ambush预约'].length}`);
       openReportModal(report);   // GM 查看弹窗（手动/自动触发均弹出）
@@ -1586,7 +1620,7 @@
   .ad-theme-paper .ad-head {
     border-bottom: 4px double var(--ad-line-strong);
     background: rgba(244, 238, 219, 0.95);
-    padding: 10px 14px 7px;
+    padding: 26px 14px 8px;
     position: relative;
     flex: none;
     display: flex;
@@ -1599,7 +1633,6 @@
     border-bottom: 1px solid var(--ad-line-strong); padding-bottom: 3px; margin-bottom: 2px;
     font-size: 8.5px; letter-spacing: 1px; color: var(--ad-ink-dim); text-transform: uppercase;
     font-family: 'Courier Prime', 'Courier New', monospace;
-    padding-right: 118px;
   }
   .ad-theme-paper .ad-head-ears .ear-motto { font-style: italic; color: var(--ad-accent); font-family: var(--ad-font); }
   .ad-theme-paper .ad-head-main {
@@ -1614,7 +1647,7 @@
     margin: 2px 0 3px;
   }
   .ad-theme-paper .ad-head-btns {
-    position: absolute; right: 10px; top: 7px; z-index: 20; display: flex; gap: 3px;
+    position: absolute; right: 3px; top: 3px; z-index: 20; display: flex; gap: 3px;
   }
   .ad-theme-paper .ad-head-btns button {
     background: rgba(244, 238, 219, 0.9); border: 1px solid var(--ad-line-strong);
@@ -1734,16 +1767,16 @@
     display: flex; flex-direction: column; font-family: var(--ad-font); color: var(--ad-ink);
     transition: right .38s cubic-bezier(0.22, 1, 0.36, 1); }
   #ad-panel.open { right: 0; }
-  /* 报头基础布局 */
+  /* 报头基础布局（GM 按钮独立顶条：绝对定位至报头最右上，不再与标题同行遮挡） */
   .ad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-    padding: 7px 12px; border-bottom: 1px solid var(--ad-line-strong); flex: none; position: relative; }
+    padding: 24px 12px 7px; border-bottom: 1px solid var(--ad-line-strong); flex: none; position: relative; }
   .ad-head-ears { display: none; }
-  .ad-head-main { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; padding-right: 65px; }
+  .ad-head-main { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; }
   .ad-head-title { font-size: 11px; font-weight: bold; letter-spacing: 1px; color: var(--ad-ink-strong); }
   .ad-head-sub { display: none; }
   .ad-head-info { font-size: 10.5px; letter-spacing: 1px; color: var(--ad-ink-dim); white-space: nowrap; overflow: hidden; }
   .ad-head-info .stage { color: var(--ad-accent); }
-  .ad-head-btns { position: absolute; right: 10px; top: 6px; display: flex; gap: 4px; z-index: 10; }
+  .ad-head-btns { position: absolute; right: 2px; top: 2px; display: flex; gap: 4px; z-index: 10; }
   .ad-head-btns button { background: none; color: var(--ad-ink-dim); border: none; cursor: pointer;
     font-family: inherit; font-size: 12px; padding: 2px 4px; line-height: 1; transition: color .2s; }
   .ad-head-btns button:hover { color: var(--ad-accent); }
@@ -1762,6 +1795,16 @@
   .ad-item { padding: 7px 12px 8px; }
   .ad-item + .ad-item { border-top: 1px solid var(--ad-line); }
   .ad-item.hit { background: var(--ad-hit); }
+  /* S4 灰卡（未接触派系遮名）/ 新面孔标记 / 平静占位 / 金色揭幕闪动 */
+  .ad-item.grey .ad-item-place { color: var(--ad-ink-faint); letter-spacing: 3px; }
+  .ad-item.grey .ad-item-reaction { opacity: 0.78; }
+  .ad-newcomer { color: var(--ad-accent); font-weight: bold; }
+  .ad-item.quiet .ad-item-reaction { color: var(--ad-ink-faint); }
+  @keyframes ad-unveil-flash {
+    0% { background: rgba(251, 191, 36, 0.32); box-shadow: inset 2px 0 0 var(--ad-accent); }
+    100% { background: transparent; box-shadow: none; }
+  }
+  .ad-item.unveil { animation: ad-unveil-flash 2.4s ease-out 1; }
   .ad-item-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
   .ad-item-kicker { font-size: 9.5px; color: var(--ad-ink-dim); letter-spacing: 0.5px; }
   .ad-item-alert { font-size: 9px; letter-spacing: 1px; color: var(--ad-ink-faint); padding: 1px 4px; }
@@ -1877,14 +1920,14 @@
         <div class="ad-head-main">
           <span class="ad-head-info"><span id="ad-mast-date-slate">—</span> · <span class="stage" id="ad-mast-stage-slate">—</span></span>
           <span class="ad-head-title">悉尼星期增刊 · GAZETTE</span>
-          <span class="ad-head-btns">
-            <button id="ad-btn-report" title="暗线推演：查看最新报告 / 手动触发（S3）">📡</button>
-            <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
-            <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
-            <button id="ad-btn-roster" title="派系名册：名册/墓碑管理（S5）">📜</button>
-            <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
-          </span>
         </div>
+        <span class="ad-head-btns">
+          <button id="ad-btn-report" title="暗线推演：查看最新报告 / 手动触发（S3）">📡</button>
+          <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
+          <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
+          <button id="ad-btn-roster" title="派系名册：名册/墓碑管理（S5）">📜</button>
+          <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
+        </span>
         <div class="ad-head-sub">
           <span id="ad-mast-date">—</span>
           <span class="stage" id="ad-mast-stage">—</span>
@@ -2011,20 +2054,37 @@
       html += `<div class="ad-empty">情报流为空——在 🗂 中导入卡片，或等待 S2 态势位自动产卡。</div>`;
     }
 
-    // S4 最小版：报告 surface 公开征兆上报纸（有报告时替代卡片池成为玩家可见内容；
-    // 卡片池属态势数据/后台信息，仅无报告时作占位展示）
+    // S4 完全体：报告 surface 公开征兆上报纸（有报告时替代卡片池成为玩家可见内容）。
+    // 灰卡阶段揭示（接触即揭）：未接触派系 ？？？ 遮名（只可见征兆）；已接触署名 + 三态徽标；
+    // 插件自动登记的派系带"新面孔"标记（预输入无）；新揭示首拍金色揭幕闪动；
+    // 已接触但本轮无条目的名册派系给平静占位卡（漏更新不丢卡）。
     const report = readChatVar(CV.report);
     if (report && Array.isArray(report.factions) && report.factions.length) {
+      const { roster, newly } = syncRevealState();
       const reportDate = report.generatedAt ? new Date(report.generatedAt).toLocaleDateString() : '';
       for (const f of report.factions) {
-        const stateCls = f.state === '已兑现' ? 'hot' : (f.state === '已渗透' ? '' : '');
-        html += `<div class="ad-item">
+        if (roster.tombstones.includes(f.name)) continue;   // 墓碑兜底（级联已删，双保险）
+        const shown = roster.revealed.includes(f.name);
+        const fresh = !roster.manual.includes(f.name);      // 插件自建 → 新面孔（预输入无标记）
+        const stateCls = f.state === '已兑现' ? 'hot' : '';
+        html += `<div class="ad-item${shown ? '' : ' grey'}${newly.includes(f.name) ? ' unveil' : ''}">
           <div class="ad-item-header">
-            <span class="ad-item-kicker">《悉尼宪报》 · ${esc(reportDate)}</span>
-            <span class="ad-item-alert ${stateCls}">${esc(f.state || '推断中')}</span>
+            <span class="ad-item-kicker">《悉尼宪报》 · ${esc(reportDate)}${fresh ? ' · <span class="ad-newcomer">新面孔</span>' : ''}</span>
+            ${shown ? `<span class="ad-item-alert ${stateCls}">${esc(f.state || '推断中')}</span>` : ''}
           </div>
-          <div class="ad-item-title"><span class="ad-item-place">${esc(f.name)}</span></div>
+          <div class="ad-item-title"><span class="ad-item-place">${shown ? esc(f.name) : '？？？'}</span></div>
           <div class="ad-item-reaction">${esc(f.surface || '')}</div>
+        </div>`;
+      }
+      // 平静占位：已接触（含预输入）但本轮报告无条目——"永远有卡，漏更新不丢卡"；
+      // 未接触派系不出占位卡（不剧透存在感——它们只经征兆灰卡登场）
+      const reportNames = new Set(report.factions.map(f => f.name));
+      for (const name of roster.factions) {
+        if (reportNames.has(name) || roster.tombstones.includes(name) || !roster.revealed.includes(name)) continue;
+        html += `<div class="ad-item quiet">
+          <div class="ad-item-header"><span class="ad-item-kicker">《悉尼宪报》 · 平静</span></div>
+          <div class="ad-item-title"><span class="ad-item-place">${esc(name)}</span></div>
+          <div class="ad-item-reaction">暂无可察异动。</div>
         </div>`;
       }
       els.wireBody.innerHTML = html;
