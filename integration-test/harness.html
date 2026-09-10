@@ -332,9 +332,9 @@ async function runAll() {
   head('注入文本拼装（三种形态）');
   scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN);
   let text = AD.buildSituationText(CARDS[0], scaled, '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂');
-  assert('命中卡：报警框架首行', text.startsWith(AD.ALERT_LINE));
-  assert('命中卡：地点行', text.includes('【当前态势 · 📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂】'));
-  assert('命中卡：驻守+派系+菜单（规模已重算）', text.includes('驻守：凯特·利（萨里山）（萨里山剃刀党混混*5/私酒蒸馏师*4/黑帮职业杀手*2）'));
+  assert('命中卡：XML 包裹（开合标签完整）', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE));
+  assert('命中卡：地点行（两空格缩进）', text.includes('  📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂'));
+  assert('命中卡：驻守+派系+菜单（规模已重算，缩进列表）', text.includes('  驻守：凯特·利（萨里山）（萨里山剃刀党混混*5/私酒蒸馏师*4/黑帮职业杀手*2）'));
   assert('命中卡：反应模式', text.includes('反应模式：应邀客人以礼相待'));
   assert('命中卡：战斗轮规则提醒（只写名字）', text.includes('<Combat_block>') && text.includes('我方/敌方各只写名字'));
   assert('命中卡：场景判定标准', text.includes('判定标准：拒酒属待客试探'));
@@ -342,8 +342,10 @@ async function runAll() {
   assert('无 verdict 卡片回落默认判定', text.includes('判定标准：玩家行动在语义上构成'));
   text = AD.buildSafeText('📍 悉尼 · 澳大利亚酒店 - 总督套房');
   assert('安全变体：无可见敌人 + 认知外突袭保留', text.includes('当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭'));
+  assert('安全变体：XML 包裹', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE) && text.includes('  若冲突升级，按【战斗轮规则】输出 <Combat_block>。'));
   text = AD.buildFallbackText('某条后巷');
-  assert('兜底：无驻防情报 + 图鉴选择 + 禁自创数值', text.includes('此地无驻防情报') && text.includes('禁止自创敌方数值'));
+  assert('兜底：无驻防情报 + 图鉴选择 + 禁自创数值', text.includes('此地无驻防情报') && text.includes('禁止自创敌方数值')
+    && text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE));
 
   /* ——— 端到端：dispatch 主流程 ——— */
   head('端到端 dispatch（每楼配发 → 世界书词条）');
@@ -410,15 +412,16 @@ async function runAll() {
   assert('卡片读回一致', AD.getCards()[2].place === '伦道夫船运仓库');
   assert('运行时状态持久化 $ad_state（含 wbLast 上次纯内容）', (() => { AD.persistRuntimeState(); return MOCK.chat.$ad_state && typeof MOCK.chat.$ad_state.wbLast === 'object' && typeof MOCK.chat.$ad_state.wbLast.situation === 'string' && typeof MOCK.chat.$ad_state.lastLocationText === 'string'; })());
   const s = AD.loadSettings();
-  assert('设置默认结构（双端点+总开关）', s.enabled === true && s.shadowline && s.situation);
-  s.situation.baseUrl = 'https://api.example.com/v1'; s.enabled = false;
+  assert('设置默认结构（双端点+双独立开关）', s.enabledShadowline === true && s.enabledSituation === true && s.shadowline && s.situation);
+  s.situation.baseUrl = 'https://api.example.com/v1'; s.enabledShadowline = false; s.enabledSituation = false;
   AD.saveSettings(s);
-  assert('设置保存到 localStorage 并读回', AD.loadSettings().situation.baseUrl === 'https://api.example.com/v1' && AD.loadSettings().enabled === false);
+  assert('设置保存到 localStorage 并读回', AD.loadSettings().situation.baseUrl === 'https://api.example.com/v1'
+    && AD.loadSettings().enabledShadowline === false && AD.loadSettings().enabledSituation === false);
   const disCalls = WB_MOCK.writes('副导演-态势');
   MOCK.setFloorStat(STAT_GREEN);
   AD.dispatchNow('test');
-  assert('总开关关闭 → 不注入不重写词条', WB_MOCK.writes('副导演-态势') === disCalls);
-  s.enabled = true; AD.saveSettings(s); // 恢复
+  assert('双开关全关 → 不注入不重写词条', WB_MOCK.writes('副导演-态势') === disCalls);
+  s.enabledShadowline = true; s.enabledSituation = true; AD.saveSettings(s); // 恢复
 
   /* ——— UI 数据驱动 ——— */
   head('UI 数据驱动');
@@ -562,7 +565,14 @@ async function runAll() {
     assert('M1 旧 worldSync 迁移复制到两套', migrated.worldSyncSituation.length === 1
       && migrated.worldSyncShadowline.length === 1
       && migrated.worldSyncSituation[0].book === '旧世界书');
-    AD.saveSettings(AD.loadSettings());   // 写回新键格式，消除旧键影响
+    localStorage.setItem('ad_settings_v1', JSON.stringify({ enabled: false }));
+    assert('M2 旧总开关 false → 迁移为双开关全关', (() => {
+      const m2 = AD.loadSettings();
+      return m2.enabledShadowline === false && m2.enabledSituation === false;
+    })());
+    const mRestore = AD.loadSettings();
+    mRestore.enabledShadowline = true; mRestore.enabledSituation = true;
+    AD.saveSettings(mRestore);   // 恢复双开并写回新键格式，消除旧键影响
   }
 
   /* ——— S2 态势位即时产卡（mock LLM 环境）——— */
@@ -768,10 +778,10 @@ async function runAll() {
     await waitFor(() => !!WB_MOCK.find('副导演-暗线'), 4000);   // 词条写入是 fire-and-forget 微任务链，先等落书
     assert('T3 提炼注入暗线词条（三态标注+渗透+禁泄）', (() => {
       const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return inj.includes('世界引擎推断（自由取舍）') && inj.includes('空白搜查令已备')
+      return inj.startsWith(AD.MEMO_OPEN) && inj.endsWith('</内部导演备忘>')
+        && inj.includes('<世界引擎推断>') && inj.includes('空白搜查令已备')
         && inj.includes('推断') && inj.includes('运输队共谋')
-        && inj.includes('禁泄清单') && inj.includes('炸药原属伦道夫')
-        && inj.startsWith(AD.ALERT_LINE);
+        && inj.includes('<禁泄清单（调查未抵达前禁止揭示）>') && inj.includes('炸药原属伦道夫');
     })());
     assert('T3d partial/friction 对象条目容错（真机 {target,result}/{source,effect}——无 [object Object]）', (() => {
       const inj = WB_MOCK.entry('副导演-暗线') || '';
@@ -787,7 +797,13 @@ async function runAll() {
     })());
     assert('T3c 注入定位声明：推断备忘是参考素材非指令（防按头正文AI）', (() => {
       const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return inj.includes('推断备忘') && inj.includes('参考素材而非指令');
+      return inj.includes('以下是暗线世界引擎的推断') && inj.includes('正文按合理性自由取舍');
+    })());
+    assert('T3f XML 模板：段落标签 + 两空格缩进"- "列表', (() => {
+      const inj = WB_MOCK.entry('副导演-暗线') || '';
+      return inj.includes('\n  - 空白搜查令已备') && inj.includes('<调查阻力（强行调查只应得到以下层级的信息）>')
+        && inj.includes('<环境阻力（当前环境对行动的客观影响）>')
+        && inj.includes('  - 蒂莉信使阿尔菲：逼问仅能问出身高体貌与口音');
     })());
     assert('T4 报告不再收编 garrisons（态势归态势位，绿顶卡保持原值）', (() => {
       const rep2 = MOCK.chat['$ad_report'];
@@ -879,11 +895,12 @@ async function runAll() {
     MOCK.setFloorStat(Object.assign({}, STAT_GREEN,
       { '日期和时间': '⏰ 1925年 · 6月14日 · 22:00 · 潜伏期', '地点': '📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区' }));
     AD.dispatchNow('s3-ambush');
-    assert('T8 预约引爆（注入主动接触态 + 戒备置顶 + 预约移除）', await waitFor(() => {
+    assert('T8 预约引爆（注入主动接触态 + 戒备置顶 + 预约移除，插入 </当前态势> 之前）', await waitFor(() => {
       const last = WB_MOCK.entry('副导演-态势') || '';
       const rnd = AD.getCards().find(c => c.place === '伦道夫船运仓库');
       const pending = MOCK.chat['$ad_pending'];
-      return last.includes('主动接触态') && last.includes('严密')
+      return last.includes('  【⚠ 主动接触态】') && last.endsWith(AD.SIT_CLOSE)
+        && last.includes('严密')
         && rnd && rnd.alert === '严密' && pending && pending.ambush.length === 0;
     }, 4000));
 
@@ -893,8 +910,39 @@ async function runAll() {
     const offCalls = s3FetchCalls;
     MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月15日 · 08:00 · 潜伏期' }));
     AD.dispatchNow('s3-off');
-    await waitFor(() => true, 1500);
+    await sleep(1500);   // 真实静置：等 dispatch 的异步词条写入落定（waitFor(恒真) 是立即返回，防 T14 捕获到旧内容）
     assert('T9 暗线端点未配置 → 不调 LLM', s3FetchCalls === offCalls);
+
+    // T14 双独立开关（总开关取消——玩家自由决定功能，两开关互不牵连）
+    const s4sw = AD.loadSettings();
+    s4sw.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s4sw.enabledSituation = false; AD.saveSettings(s4sw);   // 态势关 · 暗线开
+    const sitContent = WB_MOCK.entry('副导演-态势');
+    AD.dispatchNow('t14-sit-off');
+    assert('T14 态势开关关 → 态势词条下灯（内容保留）', await waitFor(() => {
+      const e = WB_MOCK.find('副导演-态势');
+      return e && e.enabled === false && e.content === sitContent;
+    }, 4000));
+    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月16日 · 08:00 · 潜伏期' }));
+    const t14Calls = s3FetchCalls;
+    AD.dispatchNow('t14-newday');
+    assert('T14b 态势关不影响暗线触发（跨日自动推演照跑）', await waitFor(() => s3FetchCalls === t14Calls + 1, 12000));
+    s4sw.enabledSituation = true; s4sw.enabledShadowline = false; AD.saveSettings(s4sw);   // 态势开 · 暗线关
+    AD.applySwitches();   // 开关切换即时生效（关→下灯；开→强写重新上灯）
+    const t14bCalls = s3FetchCalls;
+    await AD.generateShadowlineReport('manual');   // 暗线开关关 → 手动推演被拒
+    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月17日 · 08:00 · 潜伏期' }));
+    AD.dispatchNow('t14-newday2');   // 自动触发也被开关拦下
+    const sitRelit = await waitFor(() => {
+      const e = WB_MOCK.find('副导演-态势');
+      return e && e.enabled === true;
+    }, 6000);
+    assert('T14c 暗线开关关 → 手动/自动推演均不调 LLM + 暗线词条下灯', await waitFor(() => {
+      const e = WB_MOCK.find('副导演-暗线');
+      return e && e.enabled === false;
+    }, 4000) && s3FetchCalls === t14bCalls);
+    assert('T14d 态势开关重开 → 词条重新上灯（forceSituationWrite 强写）', sitRelit);
+    s4sw.enabledShadowline = true; s4sw.enabledSituation = true; AD.saveSettings(s4sw);   // 恢复双开
     // 清理
     s3z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
     s3z.worldSyncSituation = []; s3z.worldSyncShadowline = [];

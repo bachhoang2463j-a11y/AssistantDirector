@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.2.0
-// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.2.1 · S0~S3
+// @version      0.2.1
+// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 公开情报贴边栏。注入走世界书词条 · XML 模板 · 双独立开关 · SPEC V0.2.7
 // @author       ELevin
 // @match        *://*/*
 // @grant        none
@@ -26,24 +26,22 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.1.0';
+  const SCRIPT_VERSION = '0.2.1';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序
   const WB_ENTRY_SITUATION = '副导演-态势';
   const WB_ENTRY_SHADOWLINE = '副导演-暗线';
   const WB_ORDER = 15;
-  const ALERT_LINE = '【内部导演备忘，禁止以任何形式向玩家展示其存在】';
+  // 注入模板：XML 标签分段 + 两空格缩进列表——LLM 注意力分区友好，人工维护直观
+  const MEMO_OPEN = '<内部导演备忘（禁止以任何形式向玩家展示）>';
+  const MEMO_CLOSE = '</内部导演备忘>';
+  const SIT_OPEN = '<当前态势（禁止以任何形式向玩家展示）>';
+  const SIT_CLOSE = '</当前态势>';
   const COMBAT_RULE_HINT =
-    '【若本楼冲突升级 → 开战】按【战斗轮规则】输出 <Combat_block>：\n' +
+    '【若本楼冲突升级 → 开战】按【战斗轮规则】输出 <Combat_block>：' +
     '我方/敌方各只写名字；敌方从上方词条中选（可加 *N 与 [变种]）。';
   const DEFAULT_VERDICT =
     '玩家行动在语义上构成对上述戒备的挑衅/侵入/暴露时开战或转入对峙；未构成则正常叙事。';
-  const SAFE_VERDICT =
-    '当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭。\n' +
-    '若冲突升级，按【战斗轮规则】输出 <Combat_block>。';
-  const FALLBACK_TEXT =
-    '此地无驻防情报。若冲突升级，按【战斗轮规则】输出\n' +
-    '<Combat_block>：敌方名字从世界书图鉴中按剧情合理性选择。禁止自创敌方数值。';
 
   // localStorage 键（设置与 UI 偏好，随浏览器走）
   const LS = {
@@ -72,7 +70,8 @@
   }
   function defaultSettings() {
     return {
-      enabled: true,            // 总开关：关闭后不注入、不监听（UI 保留）
+      enabledShadowline: true, // 暗线开关：报告推演（触发矩阵/手动📡）+ 暗线词条注入
+      enabledSituation: true,  // 态势开关：态势词条注入 + 即时产卡 + 预约引爆（玩家自由决定开启）
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
       enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 与暗线 ambush 预约"规模"的选用来源
@@ -100,8 +99,11 @@
       const legacy = normalizeSync(saved.worldSync);
       const hasSit = Array.isArray(saved.worldSyncSituation);
       const migrate = legacy.length && !hasSit && !Array.isArray(saved.worldSyncShadowline);
+      // 旧总开关迁移：enabled:false → 双开关全关；未设置新键时随旧开关（默认双开）
+      const legacyOn = saved.enabled !== false;
       return {
-        enabled: saved.enabled !== false,
+        enabledShadowline: saved.enabledShadowline !== undefined ? saved.enabledShadowline !== false : legacyOn,
+        enabledSituation: saved.enabledSituation !== undefined ? saved.enabledSituation !== false : legacyOn,
         shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
         situation: Object.assign(def.situation, saved.situation || {}),
         enemyPool: typeof saved.enemyPool === 'string' ? saved.enemyPool : '',
@@ -393,9 +395,19 @@
 
   // 重挂载/换聊天：按存档报告重建暗线词条（无报告则禁用，防上一聊天残留）
   function syncShadowlineEntry() {
+    if (!SETTINGS.enabledShadowline) { disableWbEntries([WB_ENTRY_SHADOWLINE]); return; }
     const report = readChatVar(CV.report);
     if (report && Array.isArray(report.factions)) writeWbEntry(WB_ENTRY_SHADOWLINE, buildShadowlineInjection(report));
     else disableWbEntries([WB_ENTRY_SHADOWLINE]);
+  }
+
+  // 功能开关切换即时生效：关 → 词条下灯；开 → 强制一次重写重新上灯
+  // （writeWbEntryNow 见词条 disabled 会原内容重开灯，merge3 基线不动——用户改动保留）
+  function applySwitches() {
+    if (SETTINGS.enabledShadowline) syncShadowlineEntry();
+    else disableWbEntries([WB_ENTRY_SHADOWLINE]);
+    if (SETTINGS.enabledSituation) { State.forceSituationWrite = true; scheduleDispatch('switch-on'); }
+    else disableWbEntries([WB_ENTRY_SITUATION]);
   }
 
   // —— 事件封装 ——————————————————————————————————————————
@@ -419,6 +431,7 @@
 
   const State = {
     wbLast: { situation: '', shadowline: '' },  // 上次注入词条的「纯脚本内容」——merge3 的 base（≠词条现状即用户改过）
+    forceSituationWrite: false, // 态势开关重开的一次性强写标记（不持久化——词条见 disabled 会重新上灯）
     lastLocationText: '',     // 当前地点原文
     lastLandmarkKey: '',      // 当前地标键（大区后首字段）——没变不触发产卡
     lastMode: '',             // 最近一次配发形态（card/safe/fallback/ambush）
@@ -461,7 +474,7 @@
   }
 
   function onFloorEvent() {
-    if (!SETTINGS.enabled) return;
+    if (!SETTINGS.enabledSituation && !SETTINGS.enabledShadowline) return;
     scheduleDispatch('floor-event');
   }
   function onChatChanged() {
@@ -480,9 +493,10 @@
     Trigger.lastFloorId = -1;
     Trigger.floorsSinceReport = 0;
     wbNameCache = null;   // 换卡/换聊天：重探角色卡主世界书
-    if (!SETTINGS.enabled) return;
-    syncShadowlineEntry();          // 暗线词条按新聊天报告重建（无报告禁用）
-    scheduleDispatch('chat-changed'); // 态势词条随 dispatch 重写
+    if (!SETTINGS.enabledSituation && !SETTINGS.enabledShadowline) return;
+    if (SETTINGS.enabledShadowline) syncShadowlineEntry();   // 暗线词条按新聊天报告重建（无报告禁用）
+    else disableWbEntries([WB_ENTRY_SHADOWLINE]);
+    scheduleDispatch('chat-changed'); // 态势词条随 dispatch 重写（关→下灯）
   }
 
   // ═════════════════════════════════════════════════════════════════════
@@ -582,7 +596,7 @@
     });
   }
 
-  // —— 注入文本拼装（三种形态）—————————————————————————————
+  // —— 注入文本拼装（三种形态；XML 标签包裹 + 两空格缩进）———————————
 
   // 命中卡片（menu 非空）：驻防 + 菜单（规模已随行重算）+ 反应 + 战斗轮提醒 + 判定标准
   function buildSituationText(card, scaledEntries, locationText) {
@@ -592,23 +606,36 @@
     const alert = ALERT_LEVELS.includes(card.alert) ? card.alert : '常规';
     const verdict = card.verdict || DEFAULT_VERDICT;
     return [
-      ALERT_LINE,
-      `【当前态势 · ${locationText}】`,
-      `驻守：${card.faction || '未知派系'}（${menuStr}），戒备等级：${alert}`,
-      `反应模式：${card.reaction || '（未提供——按戒备等级常识演出）'}`,
-      COMBAT_RULE_HINT,
-      `判定标准：${verdict}`,
+      SIT_OPEN,
+      `  ${locationText}`,
+      `  驻守：${card.faction || '未知派系'}（${menuStr}），戒备等级：${alert}`,
+      `  反应模式：${card.reaction || '（未提供——按戒备等级常识演出）'}`,
+      `  ${COMBAT_RULE_HINT}`,
+      `  判定标准：${verdict}`,
+      SIT_CLOSE,
     ].join('\n');
   }
 
   // 绝对安全地点变体（命中卡片但 menu 为空，或卡片标记 safe）
   function buildSafeText(locationText) {
-    return `${ALERT_LINE}\n【当前态势 · ${locationText}】${SAFE_VERDICT}`;
+    return [
+      SIT_OPEN,
+      `  ${locationText}`,
+      '  当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭。',
+      '  若冲突升级，按【战斗轮规则】输出 <Combat_block>。',
+      SIT_CLOSE,
+    ].join('\n');
   }
 
   // 通用兜底（卡片池未命中）
   function buildFallbackText(locationText) {
-    return `${ALERT_LINE}\n【当前态势 · ${locationText}】${FALLBACK_TEXT}`;
+    return [
+      SIT_OPEN,
+      `  ${locationText}`,
+      '  此地无驻防情报。若冲突升级，按【战斗轮规则】输出',
+      '  <Combat_block>：敌方名字从世界书图鉴中按剧情合理性选择。禁止自创敌方数值。',
+      SIT_CLOSE,
+    ].join('\n');
   }
 
   // —— 主配发流程（纯程序，零 LLM）—————————————————————————
@@ -623,7 +650,7 @@
   }
 
   function dispatchNow(reason) {
-    if (!SETTINGS.enabled) return;   // 总开关关闭：手动重算/事件触发一律不注入
+    if (!SETTINGS.enabledSituation && !SETTINGS.enabledShadowline) return;   // 双开关全关：完全静默
     const stat = readLatestStatData();
     if (!stat) {
       log('无 stat_data 可用（MMS 未运行或尚无楼层变量），跳过本轮配发');
@@ -636,13 +663,17 @@
       logWarn('stat_data 缺少地点字段，跳过');
       return;
     }
-    const ambushHit = checkAmbush(locationText, stat);   // S3 预约引爆（先置顶戒备，再拼注入）
+    const sitOn = SETTINGS.enabledSituation;
+    // 预约引爆作用于态势注入与卡片戒备——归态势开关（暗线开关只管埋雷，不管引爆）
+    const ambushHit = sitOn ? checkAmbush(locationText, stat) : null;
     const cards = getCards();
-    const hit = matchCard(locationText, cards);
+    const hit = sitOn ? matchCard(locationText, cards) : null;
 
-    let text;
-    let mode;
-    if (hit) {
+    let text = '';
+    let mode = '';
+    if (!sitOn) {
+      mode = 'off';
+    } else if (hit) {
       const entries = parseMenu(hit.card.menu);
       const hasMenu = entries.length > 0 && entries.some(e => e.min || e.max);
       if (hit.card.safe || !hasMenu) {
@@ -662,11 +693,19 @@
     const keyChanged = lKey !== State.lastLandmarkKey;
     State.lastLandmarkKey = lKey;
     let textFinal = text;
-    if (ambushHit) {
-      textFinal += `\n【⚠ 主动接触态】${ambushHit['派系']}正在主动接触（预约引爆：${ambushHit['规模'] || ''}）——本楼遇敌概率极高，戒备已置顶。`;
+    if (ambushHit && textFinal) {
+      // 主动接触态插到 </当前态势> 之前，保持 XML 包裹完整
+      const line = `  【⚠ 主动接触态】${ambushHit['派系']}正在主动接触（预约引爆：${ambushHit['规模'] || ''}）——本楼遇敌概率极高，戒备已置顶。`;
+      textFinal = textFinal.endsWith(SIT_CLOSE)
+        ? textFinal.slice(0, -SIT_CLOSE.length) + line + '\n' + SIT_CLOSE
+        : textFinal + '\n' + line;
       mode = 'ambush';
     }
-    if (HAS_WB && textFinal !== State.wbLast.situation) {
+    if (!sitOn) {
+      disableWbEntries([WB_ENTRY_SITUATION]);   // 开关关闭：词条下灯（已禁用时幂等无调用）
+      log(`态势开关关闭，跳过注入（${reason}）`);
+    } else if (HAS_WB && (State.forceSituationWrite || textFinal !== State.wbLast.situation)) {
+      State.forceSituationWrite = false;   // 开关重开的一次性强写（词条见 disabled 会重新上灯）
       writeWbEntry(WB_ENTRY_SITUATION, textFinal);   // 异步写词条（内部幂等 + merge3 用户改动兜底）
       pushTickerHead(mode, (hit && hit.card.place) || locationText);
       if (els.dot) els.dot.classList.add('on');   // 更新提醒：展开后熄灭
@@ -678,9 +717,9 @@
     updatePanelStatus(null, { mode, locationText, card: hit ? hit.card : null, text });
     updatePanelMeta(stat);
     if (IS_LIVE) {
-      // S2：主地点未命中 && 地标键变化 → 产卡（地标没变不重复产）；分兵点位独立检查
-      triggerInstant(mode === 'fallback' && keyChanged, lKey, stat);
-      checkTriggers(stat);                                       // S3：触发矩阵（newday/号外/兜底）
+      // S2：主地点未命中 && 地标键变化 → 产卡（地标没变不重复产）；分兵点位独立检查——归态势开关
+      if (sitOn) triggerInstant(mode === 'fallback' && keyChanged, lKey, stat);
+      if (SETTINGS.enabledShadowline) checkTriggers(stat);   // S3：触发矩阵（newday/号外/兜底）——归暗线开关
     }
   }
 
@@ -768,13 +807,13 @@
       });
     } catch (e) {
       if (SETTINGS.debug) console.warn(`[${SCRIPT_NAME}][LLM✗]`, label, `请求失败（${Date.now() - t0}ms）：`, e.message || e);
-      debugRecord({ label, url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: e.message || String(e) });
+      debugRecord({ label, at: Date.now(), url, model: cfg.model, messages, raw: '', ok: false, ms: Date.now() - t0, error: e.message || String(e) });
       throw new Error(`请求失败：${e.message || e}`);
     }
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       if (SETTINGS.debug) console.warn(`[${SCRIPT_NAME}][LLM✗]`, label, `HTTP ${res.status}（${Date.now() - t0}ms）：`, errText.slice(0, 500));
-      debugRecord({ label, url, model: cfg.model, messages, raw: errText.slice(0, 2000), ok: false, ms: Date.now() - t0, error: `HTTP ${res.status}` });
+      debugRecord({ label, at: Date.now(), url, model: cfg.model, messages, raw: errText.slice(0, 2000), ok: false, ms: Date.now() - t0, error: `HTTP ${res.status}` });
       throw new Error(`HTTP ${res.status}${errText ? '：' + errText.slice(0, 200) : ''}`);
     }
     const data = await res.json();
@@ -782,13 +821,13 @@
       && data.choices[0].message.content;
     if (!content) {
       if (SETTINGS.debug) console.warn(`[${SCRIPT_NAME}][LLM✗]`, label, `响应缺少 content（${Date.now() - t0}ms）：`, JSON.stringify(data).slice(0, 500));
-      debugRecord({ label, url, model: cfg.model, messages, raw: JSON.stringify(data).slice(0, 2000), ok: false, ms: Date.now() - t0, error: '响应缺少 choices[0].message.content' });
+      debugRecord({ label, at: Date.now(), url, model: cfg.model, messages, raw: JSON.stringify(data).slice(0, 2000), ok: false, ms: Date.now() - t0, error: '响应缺少 choices[0].message.content' });
       throw new Error('响应缺少 choices[0].message.content');
     }
     if (SETTINGS.debug) console.log(`[${SCRIPT_NAME}][LLM←]`, label, `成功 ${content.length} 字符（${Date.now() - t0}ms）
 —— 响应原文 ——
 ` + content);
-    debugRecord({ label, url, model: cfg.model, messages, raw: content, ok: true, ms: Date.now() - t0, error: '' });
+    debugRecord({ label, at: Date.now(), url, model: cfg.model, messages, raw: content, ok: true, ms: Date.now() - t0, error: '' });
     return content;
   }
 
@@ -1163,52 +1202,62 @@
     };
   }
 
-  // —— 提炼注入（ad_shadowline：深度0 system 持续在场，报告后刷新）—————
+  // —— 提炼注入（副导演-暗线词条：深度0 system 持续在场，报告后刷新）———
 
   function buildShadowlineInjection(report) {
-    // 定位声明放首行之后：副导演输出是推断与提案，正文AI参考演出而非执行——防按头
-    const lines = [
-      ALERT_LINE,
-      '以下是世界导演的推断备忘（多数未经正文演出，是参考素材而非指令）——用于环境渗透、NPC 行为自洽与剧情伏笔，正文按合理性自由取舍。',
-    ];
+    // 定位声明放开标签之后：副导演输出是推断与提案，正文AI参考演出而非执行——防按头
     // 派系行尾缀：接触人/圈套/间谍（非空才带——正文 AI 可借环境渗透演出，间谍揭示节奏由三态+禁泄控制）
     const extra = f => [
       f.contact && `｜接触：${f.contact}`,
       f.scheme && `｜圈套：${f.scheme}`,
       f.mole && `｜间谍：${f.mole}`,
     ].filter(Boolean).join('');
+    // 段落 = [标签名, 列表行]；标签内两空格缩进 "- " 列表，段间空行
+    const sections = [];
     const facts = report.factions.filter(f => f.state !== '推断中');
     if (facts.length) {
-      lines.push('——世界引擎推断（自由取舍）——');
-      for (const f of facts) lines.push(`· ${f.truth}【${f.state}·${(f.causes || [])[0] || ''}】${extra(f)}`);
+      sections.push(['世界引擎推断', facts.map(f =>
+        `  - ${f.truth}【${f.state}·${(f.causes || [])[0] || ''}】${extra(f)}`)]);
     }
     const infers = report.factions.filter(f => f.state === '推断中');
     if (infers.length) {
-      lines.push('——幕后动向（推断中·仅可环境渗透，禁止直接揭示）——');
-      for (const f of infers) lines.push(`· ${f.truth}【推断·${(f.causes || [])[0] || ''}】${extra(f)}`);
+      sections.push(['幕后动向（推断中·仅可环境渗透，禁止直接揭示）', infers.map(f =>
+        `  - ${f.truth}【推断·${(f.causes || [])[0] || ''}】${extra(f)}`)]);
     }
     const forbidden = (report.resistance && report.resistance.forbidden) || [];
     if (forbidden.length) {
-      lines.push('——禁泄清单（调查未抵达前禁止揭示）——');
-      for (const x of forbidden) lines.push(`· ${x.truth}【途径：${x.path}】`);
+      sections.push(['禁泄清单（调查未抵达前禁止揭示）', forbidden.map(x =>
+        `  - ${x.truth}【途径：${x.path}】`)]);
     }
     const partial = (report.resistance && report.resistance.partial) || [];
     if (partial.length) {
-      lines.push('——调查阻力（强行调查只应得到以下层级的信息）——');
-      for (const p of partial) lines.push(`· ${p}`);
+      sections.push(['调查阻力（强行调查只应得到以下层级的信息）', partial.map(p => `  - ${p}`)]);
     }
     const friction = (report.resistance && report.resistance.friction) || [];
     if (friction.length) {
-      lines.push('——环境阻力（当前环境对行动的客观影响）——');
-      for (const f of friction) lines.push(`· ${f}`);
+      sections.push(['环境阻力（当前环境对行动的客观影响）', friction.map(f => `  - ${f}`)]);
     }
-    return lines.join('\n');
+    const body = sections.map(([tag, items]) => `<${tag}>\n${items.join('\n')}\n</${tag}>`).join('\n\n');
+    return [
+      MEMO_OPEN,
+      '',
+      '以下是暗线世界引擎的推断——用于环境渗透、NPC 行为自洽与剧情伏笔参考，正文按合理性自由取舍。',
+      '',
+      body,
+      '',
+      MEMO_CLOSE,
+    ].join('\n');
   }
 
   // —— 报告生成主流程 ——————————————————————————————————————
 
   async function generateShadowlineReport(reason) {
     if (Trigger.busy) { toast('📡 推演进行中，请稍候（上次任务未完成）'); return; }
+    if (!SETTINGS.enabledShadowline) {
+      if (reason === 'manual') toast('暗线推演已关闭——⚙ 设置 → 功能开关');
+      log(`暗线开关关闭，跳过${reason}触发`);
+      return;
+    }
     const cfg = SETTINGS.shadowline;
     if (!cfg.baseUrl || !cfg.model) {
       log(`暗线位端点未配置，跳过${reason}触发`);
@@ -1678,6 +1727,18 @@
     padding: 6px 14px; cursor: pointer; }
   .ad-btnrow button:hover { border-color: var(--ad-accent); color: var(--ad-accent); }
   .ad-btnrow button.primary { border-color: var(--ad-accent-dim); color: var(--ad-accent); }
+  /* 调试日志：角色分块 + 换行渲染（pre-wrap——\n 真实呈现，不再是转义字面量） */
+  .ad-dbg-role { display: inline-block; font-size: 9.5px; letter-spacing: 1px; padding: 1px 9px;
+    border: 1px solid var(--ad-line-strong); border-radius: 99px; color: var(--ad-ink-strong);
+    margin: 8px 0 3px; }
+  .ad-dbg-role.sys { color: var(--ad-accent); border-color: var(--ad-accent-dim); }
+  .ad-dbg-block { background: var(--ad-input-bg); border: 1px solid var(--ad-border);
+    border-radius: var(--ad-radius-sm); padding: 8px 10px; margin: 0 0 4px;
+    font-family: Consolas, Menlo, monospace; font-size: 10.5px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word; color: var(--ad-ink);
+    max-height: 280px; overflow-y: auto; }
+  .ad-dbg-ok { color: #4ade80; }
+  .ad-dbg-fail { color: #f87171; }
   .ad-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
     background: var(--ad-box-bg); border: 1px solid var(--ad-accent-dim); color: var(--ad-accent-bright);
     border-radius: var(--ad-radius); padding: 8px 18px; font-size: 12px; letter-spacing: 1px; z-index: 100000;
@@ -2099,8 +2160,10 @@
         <option value="paper">paper · 1920s 阿卡姆大报（方案 A · 默认）</option>
         <option value="slate">slate · 深色档案（MMS 基因）</option>
       </select></div>
-      <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
-        <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">功能开关</label><div style="display:flex;flex-direction:column;gap:4px">
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledShadowline" ${s.enabledShadowline ? 'checked' : ''}> 暗线推演（报告 + 暗线词条注入）</label>
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledSituation" ${s.enabledSituation ? 'checked' : ''}> 态势配发（态势词条注入 + 即时产卡 + 预约引爆）</label>
+      </div></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">本轮敌人名单</label>
         <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 与暗线预约"规模"从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不校验 menu</span></div>
@@ -2132,6 +2195,9 @@
       el.addEventListener('change', () => {
         collectFormToSettings();
         saveSettings(SETTINGS);
+        // 双功能开关切换即时生效：关→词条下灯；开→强制重写重新上灯
+        const k = el.getAttribute('data-k');
+        if (k === 'enabledShadowline' || k === 'enabledSituation') applySwitches();
       });
     });
 
@@ -2181,8 +2247,8 @@
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       collectFormToSettings();
       persistSyncNow();
-      if (!SETTINGS.enabled) disableWbEntries();   // 总开关关闭：注入词条下灯（不删除）
-      else scheduleDispatch('settings-saved');
+      applySwitches();   // 开关状态兜底生效（表单与即时监听一致时幂等）
+      if (SETTINGS.enabledSituation || SETTINGS.enabledShadowline) scheduleDispatch('settings-saved');
       const theme = els.modalBox.querySelector('#ad-set-theme').value;
       const p = loadUiPrefs(); p.theme = theme; saveUiPrefs(p);
       applyTheme(theme);
@@ -2198,7 +2264,7 @@
     const rows = DebugLog.slice().reverse().map((e, i) => `
       <div class="ad-card-item" data-dbg="${DebugLog.length - 1 - i}" style="cursor:pointer">
         <span class="place">${esc(e.label)} · ${esc(e.model || '')}</span>
-        <span class="meta">${new Date(e.ms ? Date.now() - e.ms : Date.now()).toLocaleTimeString()} 前触发 · ${e.ok ? '✓ ' + e.ms + 'ms' : '✗ ' + esc(e.error || '')}</span>
+        <span class="meta">${e.at ? new Date(e.at).toLocaleTimeString() : ''} · ${e.ms}ms · ${e.ok ? '<span class="ad-dbg-ok">✓ 成功</span>' : `<span class="ad-dbg-fail">✗ ${esc(e.error || '失败')}</span>`}</span>
       </div>`).join('') || '<div class="dim" style="padding:10px 4px">暂无记录——开启调试模式后，每次 LLM 调用（产卡/推演）会记录请求与响应。</div>';
     openModal(`
       <h3>🐞 LLM 调试日志（${DebugLog.length}）</h3>
@@ -2209,13 +2275,17 @@
       n.addEventListener('click', () => {
         const e = DebugLog[+n.getAttribute('data-dbg')];
         if (!e) return;
+        // messages 按角色分块渲染：换行真实呈现（pre-wrap），不再是被 JSON.stringify 转义的 \n 字面量
+        const msgHtml = (e.messages || []).map(m => `
+          <span class="ad-dbg-role${m.role === 'system' ? ' sys' : ''}">${esc(String(m.role || '?').toUpperCase())}</span>
+          <div class="ad-dbg-block">${esc(typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 1))}</div>`).join('');
         openModal(`
-          <h3>🐞 ${esc(e.label)} · ${esc(e.model || '')} · ${e.ok ? '✓' : '✗ ' + esc(e.error || '')}</h3>
-          <div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-bottom:6px">${esc(e.url)} · ${e.ms}ms</div>
-          <div class="ad-sec-title">请求 messages</div>
-          <textarea readonly style="width:100%;height:200px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(JSON.stringify(e.messages, null, 1))}</textarea>
-          <div class="ad-sec-title">响应原文</div>
-          <textarea readonly style="width:100%;height:200px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(e.raw || '（空）')}</textarea>
+          <h3>🐞 ${esc(e.label)} · ${esc(e.model || '')} · ${e.ok ? '<span class="ad-dbg-ok">✓</span>' : '<span class="ad-dbg-fail">✗ ' + esc(e.error || '') + '</span>'}</h3>
+          <div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-bottom:6px">${esc(e.url)} · ${e.ms}ms${e.at ? ' · ' + new Date(e.at).toLocaleTimeString() : ''}</div>
+          <div class="ad-sec-title">请求 messages（按角色分块）</div>
+          ${msgHtml || '<div class="dim">（无）</div>'}
+          <div class="ad-sec-title" style="margin-top:10px">响应原文</div>
+          <div class="ad-dbg-block">${esc(e.raw || '（空）')}</div>
           <div class="ad-btnrow"><button id="ad-dbg-back2">返回日志</button></div>`);
         els.modalBox.querySelector('#ad-dbg-back2').addEventListener('click', openDebugModal);
       });
@@ -2424,11 +2494,13 @@
       bindEvent(EVT.swiped, onFloorEvent);
       bindEvent(EVT.chatChanged, onChatChanged);
       log(`已挂载（LIVE · v${SCRIPT_VERSION}），等待楼层事件`);
-      if (SETTINGS.enabled) {
-        syncShadowlineEntry();   // 重挂载：按存档报告重建暗线词条（词条被删/被改也在此兜底）
+      if (SETTINGS.enabledSituation || SETTINGS.enabledShadowline) {
+        if (SETTINGS.enabledShadowline) syncShadowlineEntry();   // 重挂载：按存档报告重建暗线词条（词条被删/被改也在此兜底）
+        else disableWbEntries([WB_ENTRY_SHADOWLINE]);
+        if (SETTINGS.enabledSituation) State.forceSituationWrite = true;   // 自愈：词条残留禁用态时首拍重新上灯
         scheduleDispatch('init');
       }
-      else log('总开关关闭，仅 UI 待命');
+      else log('暗线与态势均已关闭，仅 UI 待命');
     } else {
       log(`已挂载（DEMO · v${SCRIPT_VERSION}）——无酒馆助手环境，UI/卡片管理可用，注入与监听待命`);
       updatePanelStatus('演示模式 · 无酒馆环境');
@@ -2461,9 +2533,9 @@
     state: State, settings: () => SETTINGS,
     getCards, setCards, saveSettings, loadSettings,
     readLatestStatData, dispatchNow, scheduleDispatch, persistRuntimeState, loadRuntimeState,
-    // 注入通道（世界书词条）
-    writeWbEntry, merge3, disableWbEntries, syncShadowlineEntry, HAS_WB,
-    CV, WB_ENTRY_SITUATION, WB_ENTRY_SHADOWLINE, ALERT_LINE,
+    // 注入通道（世界书词条）与功能开关
+    writeWbEntry, merge3, disableWbEntries, syncShadowlineEntry, applySwitches, HAS_WB,
+    CV, WB_ENTRY_SITUATION, WB_ENTRY_SHADOWLINE, MEMO_OPEN, SIT_OPEN, SIT_CLOSE,
     togglePanel, updatePanelMeta,
   };
 })();
