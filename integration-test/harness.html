@@ -682,8 +682,12 @@ async function runAll() {
       ],
       resistance: {
         forbidden: [{ truth: '炸药原属伦道夫/黑法老兄弟会', path: '由玩家在谈判桌上自行打出', leak_cost: '谈判筹码崩塌' }],
-        partial: ['只得到"有人整箱扫货"的粗话原话'],
-        friction: ['收网前夜便衣密度高'],
+        // 对象形式（真机实证 3.1P 输出 {target,result}/{source,effect}——validateReport 对象容错拼接）
+        partial: [
+          '只得到"有人整箱扫货"的粗话原话',
+          { target: '蒂莉信使阿尔菲', result: '逼问仅能问出身高体貌与口音，无法得知买家代号' },
+        ],
+        friction: [{ source: '警方全城戒备', effect: '牛津街机动巡逻增加三倍，携带长枪即遭截停' }],
       },
       roster_ops: [],
       garrisons: [
@@ -710,10 +714,17 @@ async function runAll() {
     })());
     assert('T3 提炼注入 ad_shadowline（三态标注+渗透+禁泄）', (() => {
       const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
-      return inj && inj.content.includes('事实提醒') && inj.content.includes('空白搜查令已备')
+      return inj && inj.content.includes('世界引擎推断（自由取舍）') && inj.content.includes('空白搜查令已备')
         && inj.content.includes('推断') && inj.content.includes('运输队共谋')
         && inj.content.includes('禁泄清单') && inj.content.includes('炸药原属伦道夫')
         && inj.content.startsWith(AD.ALERT_LINE);
+    })());
+    assert('T3d partial/friction 对象条目容错（真机 {target,result}/{source,effect}——无 [object Object]）', (() => {
+      const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
+      return inj && !inj.content.includes('[object Object]')
+        && inj.content.includes('蒂莉信使阿尔菲：逼问仅能问出身高体貌与口音，无法得知买家代号')
+        && inj.content.includes('警方全城戒备：牛津街机动巡逻增加三倍')
+        && inj.content.includes('只得到"有人整箱扫货"的粗话原话');
     })());
     assert('T3b 注入含圈套/间谍/接触缀行（非空才带，事实与推断两段均缀）', (() => {
       const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');

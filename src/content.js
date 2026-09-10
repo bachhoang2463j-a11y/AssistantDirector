@@ -980,8 +980,19 @@
     });
     const resistance = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
     resistance.forbidden = (resistance.forbidden || []).filter(x => x && x.truth && x.path);
-    resistance.partial = (resistance.partial || []).map(String).filter(Boolean);
-    resistance.friction = (resistance.friction || []).map(String).filter(Boolean);
+    // 对象条目容错（真机实证 3.1P 输出 {target,result}/{source,effect} 对象）——按键取值拼接，防 [object Object]
+    const plainText = (x, keys) => {
+      if (x == null) return '';
+      if (typeof x === 'string') return x.trim();
+      if (typeof x === 'object' && !Array.isArray(x)) {
+        const parts = keys.filter(k => x[k] != null && x[k] !== '').map(k => String(x[k]));
+        const s = parts.length ? parts : Object.values(x).filter(v => typeof v === 'string');
+        return s.join('：');
+      }
+      return String(x);
+    };
+    resistance.partial = (resistance.partial || []).map(x => plainText(x, ['target', 'result'])).filter(Boolean);
+    resistance.friction = (resistance.friction || []).map(x => plainText(x, ['source', 'effect'])).filter(Boolean);
     const ambush = (report['ambush预约'] || []).filter(a => a && a['派系'] && a['条件'] && typeof a['条件'] === 'object');
     return {
       report: {
@@ -1010,7 +1021,7 @@
     ].filter(Boolean).join('');
     const facts = report.factions.filter(f => f.state !== '推断中');
     if (facts.length) {
-      lines.push('——事实提醒（已发生，正文须与之自洽）——');
+      lines.push('——世界引擎推断（自由取舍）——');
       for (const f of facts) lines.push(`· ${f.truth}【${f.state}·${(f.causes || [])[0] || ''}】${extra(f)}`);
     }
     const infers = report.factions.filter(f => f.state === '推断中');
@@ -1027,6 +1038,11 @@
     if (partial.length) {
       lines.push('——调查阻力（强行调查只应得到以下层级的信息）——');
       for (const p of partial) lines.push(`· ${p}`);
+    }
+    const friction = (report.resistance && report.resistance.friction) || [];
+    if (friction.length) {
+      lines.push('——环境阻力（当前环境对行动的客观影响）——');
+      for (const f of friction) lines.push(`· ${f}`);
     }
     return lines.join('\n');
   }
