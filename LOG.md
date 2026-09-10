@@ -431,3 +431,19 @@
 **验证**：134/134（T3c 定位声明、T11b2 附加铁律文末注入且序在最后、T11c 人格断言扩展：下限也是上限/报纸体/尊重实力/一句话以内/推断与提案）。
 
 ---
+
+## 2026-09-10 ｜ fix：真机二测——注入栏头/对象容错/friction 补段（业务提交 `40dd958`）
+
+**变更行为**：注入栏头"事实提醒（已发生，正文须与之自洽）"改为"世界引擎推断（自由取舍）"；validateReport 的 partial/friction 容错从 map(String) 改为对象拼接（识别 {target,result}/{source,effect} 键）；buildShadowlineInjection 补 friction"环境阻力"段（原被静默丢弃）。harness 135/135（T3 断言改新栏头、T3d 新增对象容错断言、mock 改真机实证对象形式）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`
+
+**决策原因**（用户二测："提示词改进后整体输出效果还行，但是提示词拼装还有问题"）：
+1. 栏头改名（用户指定）："事实提醒"暗示既定事实，与上一轮"推断非指令"定位矛盾——正文 AI 见到"已发生须自洽"就会按头执行。改为"世界引擎推断（自由取舍）"。
+2. [object Object] 根因：真机 3.1P 把 partial/friction 输出成 {target,result}/{source,effect} 对象数组（旧 mock 只测过字符串形式），validateReport 的 map(String) 把对象直接字符串化。修复：plainText 容错——字符串直用、对象按键拼接（"警方全城戒备：牛津街机动巡逻增加三倍"）、其他键兜底取字符串值。
+3. friction 全丢根因：buildShadowlineInjection 从一开始就只拼了 partial 段，friction（环境阻力）在注入侧从未有过出口——数据存了但正文 AI 永远看不到。补"环境阻力（当前环境对行动的客观影响）"段。
+4. 旧版注入仍显示旧文本系浏览器缓存产物，清 localStorage + 带版本参数重载后 135/135。
+
+**验证**：135/135（T3d 三子条件：无 [object Object]、对象键拼接文本、字符串条目原样保留；环境阻力段渲染）。
+
+---
