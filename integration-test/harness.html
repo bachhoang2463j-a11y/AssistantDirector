@@ -656,6 +656,7 @@ async function runAll() {
     const s3 = AD.loadSettings();
     s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
     s3.coreTeam = '弗兰克，林有声';   // 主角核心白名单（手输）——验证注入暗线输入
+    s3.extraRules = '灰瘟与邪教无任何关系，禁止关联';   // 附加铁律（手输）——验证拼到暗线输入文末
     s3.debug = true;
     AD.saveSettings(s3);
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
@@ -719,6 +720,10 @@ async function runAll() {
       return inj && inj.content.includes('｜圈套：以酒馆谈判为饵') && inj.content.includes('｜间谍：酒店门童比利')
         && inj.content.includes('｜接触：便衣警员雷诺兹');
     })());
+    assert('T3c 注入定位声明：推断备忘是参考素材非指令（防按头正文AI）', (() => {
+      const inj = [...MOCK.injections.calls].reverse().find(c => c.id === 'ad_shadowline');
+      return inj && inj.content.includes('推断备忘') && inj.content.includes('参考素材而非指令');
+    })());
     assert('T4 报告不再收编 garrisons（态势归态势位，绿顶卡保持原值）', (() => {
       const rep2 = MOCK.chat['$ad_report'];
       const green = AD.getCards().find(c => c.place === '绿顶酒馆');
@@ -743,9 +748,17 @@ async function runAll() {
     })());
     assert('T11b 主角核心白名单注入暗线输入（手输设置）', s3LastPrompt.includes('【主角核心白名单（绝不背叛、绝不可能是间谍）】')
       && s3LastPrompt.includes('弗兰克 / 林有声'));
-    assert('T11c 暗线人格重写：架构师 + 反废话铁律 + 圈套覆盖率', s3LastSys.includes('开放世界的架构师')
+    assert('T11b2 附加铁律拼到暗线输入文末（用户指定最高优先级）', (() => {
+      const i = s3LastPrompt.indexOf('【附加铁律（用户指定，优先级高于本文所有默认规则）】');
+      return i >= 0 && s3LastPrompt.slice(i).includes('灰瘟与邪教无任何关系')
+        && i > s3LastPrompt.indexOf('【上次报告的派系三态');   // 必须在文末
+    })());
+    assert('T11c 暗线人格重写：架构师 + 反废话铁律 + 圈套纪律', s3LastSys.includes('开放世界的架构师')
       && s3LastSys.includes('你不是记录的庸才') && s3LastSys.includes('永远不顺水推舟写看似合理的废话')
-      && s3LastSys.includes('floor(N/2)') && s3LastSys.includes('contact') && s3LastSys.includes('scheme') && s3LastSys.includes('mole'));
+      && s3LastSys.includes('floor(N/2)') && s3LastSys.includes('这是下限也是上限')
+      && s3LastSys.includes('推断与提案，不是既定事实') && s3LastSys.includes('报纸社会新闻或街头传闻体')
+      && s3LastSys.includes('尊重实力设定') && s3LastSys.includes('每项一句话以内')
+      && s3LastSys.includes('contact') && s3LastSys.includes('scheme') && s3LastSys.includes('mole'));
 
     // T13 提示词预设（默认锁定 / 新建=快照 / 自定义生效 / 删除回落 / 更新不写默认）
     {

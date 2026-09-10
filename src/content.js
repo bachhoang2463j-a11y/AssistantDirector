@@ -74,6 +74,7 @@
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
       enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 的唯一权威选项来源
       coreTeam: '',             // 主角核心白名单（手输，逗号/换行分隔）——这些人绝不背叛、绝不被指定为间谍
+      extraRules: '',           // 附加铁律（手输，多行文本）——拼到暗线输入文末，用户给副导演的最高优先级注意事项（如世界观纠偏、尺度约束）
       worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
       worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
       shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
@@ -102,6 +103,7 @@
         situation: Object.assign(def.situation, saved.situation || {}),
         enemyPool: typeof saved.enemyPool === 'string' ? saved.enemyPool : '',
         coreTeam: typeof saved.coreTeam === 'string' ? saved.coreTeam : '',
+        extraRules: typeof saved.extraRules === 'string' ? saved.extraRules : '',
         worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
         worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
         shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
@@ -896,6 +898,7 @@
       worldSync,
       statData: stat,
       coreTeam: getCoreTeam(),
+      extraRules: String(SETTINGS.extraRules || '').trim(),
       knownFactions: roster.factions, roster,
       lastReportFactions: lastReport && Array.isArray(lastReport.factions)
         ? lastReport.factions.map(f => ({ name: f.name, state: f.state, truth: f.truth })) : [],
@@ -907,16 +910,20 @@
   function DEFAULT_SHADOWLINE_SYS() {
     return [
       '你是开放世界的架构师、顶级权谋小说作家——为正文AI制造巫师3级别的叙事波折，而不是记录世界。',
-      '任务：根据全部输入资料，输出一份 JSON 战略报告，设计各派系在玩家视线之外的动向与阴谋。',
+      '任务：根据全部输入资料，输出一份 JSON 战略报告，推断各派系在玩家视线之外的动向。',
       '铁律：',
-      '0. 严禁复述前文表层信息、玩家已知常识或主角团已推导出的内容——你不是记录的庸才。除"从前文合理构思的报纸报道和街头传闻"可作事实引用外，其余全部写推断与设计；永远不顺水推舟写看似合理的废话。',
-      '1. factions：每派系一条，字段结构必须照此（键名用英文）：{"name":"派系名","surface":"街头可见的公开征兆一句话（展示给玩家，不得含真相；须体现与其他派系的互动迹象，禁止静态环境描述）","truth":"幕后真相：该派系前文很可能未出现过的深层动机+由动机生长的具体行动（仅注入正文AI）","contact":"主角团已引起其注意时：派出接触的具体人物（姓名/代号+伪装身份+真实目的），否则空串","scheme":"遵从动机为主角团设下的圈套（诱饵+真实杀招），无则空串","mole":"安插在主角团身边或社会面的间谍（具体身份与掩护；优先选最无害、揭示时戏剧反转最大的人选；【主角核心白名单】人物严禁入选），无则空串","causes":["楼23"],"state":"推断中|已渗透|已兑现"}。surface 与 truth 必须成对、指向同一动向的两个层次；causes=楼层出处数组（引用输入中真实存在的楼层号）；state 三态：推断中（尚未演出）/已渗透（正文演出过部分征兆）/已兑现（真相已落地）——延续上次报告的三态，正文演出过即升级。',
-      '2. 圈套覆盖率：至少 floor(N/2)（N=报告派系总数，向下取整）个派系的 scheme 非空。像最苛刻的编辑一样，从前文主角团浅薄的推理中找出漏洞，把圈套建在漏洞上。',
-      '3. 深层动机必须从派系既得利益与前文行为中合理生长——推断可以大胆，动机必须有根。',
-      '4. 墓碑名单中的派系禁止以任何形式复活或提及。',
-      '5. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
-      '6. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
-      '7. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
+      '0. 认知定位：你的全部输出是你的推断与提案，不是既定事实——正文AI把它们当参考素材而非指令。以这种心态写作：动机写"最可能的解释"，行动写"正在准备的方案"，禁止上帝视角的确定性断言。三态诚实：延续上次报告的三态，前文明确演出过才标"已渗透"，真相落地才标"已兑现"，拿不准一律"推断中"。',
+      '1. 反废话：严禁复述前文表层信息、玩家已知常识或主角团已推导的内容——你不是记录的庸才。除"从前文合理构思的报纸报道和街头传闻"可作事实引用外，其余全部写推断与设计；永远不顺水推舟写看似合理的废话。',
+      '2. factions：每派系一条，字段结构必须照此（键名用英文）：{"name":"派系名","surface":"公开征兆一句话（展示给玩家）","truth":"幕后真相：前文很可能未出现过的深层动机+由动机生长的具体行动（仅注入正文AI）","contact":"主角团已引起其注意时：派出接触的具体人物（姓名/代号+伪装身份+真实目的），否则空串","scheme":"遵从动机为主角团设下的圈套（诱饵+真实杀招），无则空串","mole":"安插在主角团身边或社会面的间谍（优先选最无害、揭示时戏剧反转最大的人选；【主角核心白名单】人物严禁入选），无则空串","causes":["楼23"],"state":"推断中|已渗透|已兑现"}。surface 与 truth 成对、同一动向两个层次；causes=楼层出处数组（引用真实楼层号）。',
+      '3. surface 必须是市民视角的公开信息——报纸社会新闻或街头传闻体（"城里发生了什么"），普通市民自然可见。严禁写成调查线索、内幕细节、人员调动内情或任何针对主角团的针对性情报——那些属于 truth/contact/mole 层。surface 须体现与其他派系的互动迹象，禁止静态环境描述。',
+      '4. 圈套纪律：恰好 floor(N/2)（N=报告派系总数，向下取整）个派系对主角团设圈套（scheme 非空）——这是下限也是上限，全员针对主角团=失败。其余派系的动向必须围绕自身利益运转（自己的敌人、生意、日程、地盘纠纷），与主角团无关或仅顺带相遇。圈套建在主角团推理的漏洞上，像最苛刻的编辑一样审视前文。',
+      '5. 尊重实力设定：主角团的前文战绩、背景靠山、警觉程度是硬约束——针对他们的算计必须匹配相应的谨慎、成本与失败风险；把强者当无防备的工具人是廉价的阴谋论。',
+      '6. 深层动机必须从派系既得利益与前文行为中合理生长——推断可以大胆，动机必须有根。',
+      '7. 墓碑名单中的派系禁止以任何形式复活或提及。',
+      '8. 措辞紧凑：truth/contact/scheme/mole 每项一句话以内，禁止铺陈细节与心理描写长篇。',
+      '9. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
+      '10. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
+      '11. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
     ].join('\n');
   }
 
@@ -941,6 +948,8 @@
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
       `【上次报告的派系三态（延续用）】\n${ctx.lastReportFactions.length ? JSON.stringify(ctx.lastReportFactions, null, 1) : '（首次报告）'}`,
+      // ⑧ 附加铁律（用户手输，最高优先级）——放文末：末尾注意力区块，压过前文的默认规则
+      ...(ctx.extraRules ? [`【附加铁律（用户指定，优先级高于本文所有默认规则）】\n${ctx.extraRules}`] : []),
     ].join('\n\n');
     return [{ role: 'system', content: sys }, { role: 'user', content: user }];
   }
@@ -988,7 +997,11 @@
   // —— 提炼注入（ad_shadowline：深度0 system 持续在场，报告后刷新）—————
 
   function buildShadowlineInjection(report) {
-    const lines = [ALERT_LINE];
+    // 定位声明放首行之后：副导演输出是推断与提案，正文AI参考演出而非执行——防按头
+    const lines = [
+      ALERT_LINE,
+      '以下是世界导演的推断备忘（多数未经正文演出，是参考素材而非指令）——用于环境渗透、NPC 行为自洽与剧情伏笔，正文按合理性自由取舍。',
+    ];
     // 派系行尾缀：接触人/圈套/间谍（非空才带——正文 AI 可借环境渗透演出，间谍揭示节奏由三态+禁泄控制）
     const extra = f => [
       f.contact && `｜接触：${f.contact}`,
@@ -1924,6 +1937,9 @@
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">主角核心白名单</label>
         <textarea data-k="coreTeam" rows="2" placeholder="手输绝不背叛的核心队友，逗号/换行分隔&#10;例：弗兰克，林有声">${esc(s.coreTeam || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则任何人都可能是间谍</span></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">附加铁律</label>
+        <textarea data-k="extraRules" rows="3" placeholder="手输给副导演的最高优先级注意事项（多行），拼到暗线输入文末，压过默认规则&#10;例：灰瘟与邪教无任何关系，禁止关联；主角团是身经百战的强者，算计他们必须有成本与风险">${esc(s.extraRules || '')}</textarea>
+        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">世界观纠偏/尺度约束</span></div>
       <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
