@@ -75,7 +75,7 @@
       enabled: true,            // 总开关：关闭后不注入、不监听（UI 保留）
       shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
       situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
-      enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 的唯一权威选项来源
+      enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 与暗线 ambush 预约"规模"的选用来源
       coreTeam: '',             // 主角核心白名单（手输，逗号/换行分隔）——这些人绝不背叛、绝不被指定为间谍
       extraRules: '',           // 附加铁律（手输，多行文本）——拼到暗线输入文末，用户给副导演的最高优先级注意事项（如世界观纠偏、尺度约束）
       worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
@@ -1052,6 +1052,7 @@
       lwb: getLwbSummaryText(),
       worldSync,
       statData: stat,
+      enemyPool: getEnemyPool(),   // ambush 预约"规模"的选用源——与态势位产卡同一名单（单一事实源）
       coreTeam: getCoreTeam(),
       extraRules: String(SETTINGS.extraRules || '').trim(),
       knownFactions: roster.factions, roster,
@@ -1077,7 +1078,7 @@
       '7. 墓碑名单中的派系禁止以任何形式复活或提及。',
       '8. 措辞紧凑：truth/contact/scheme/mole 每项一句话以内，禁止铺陈细节与心理描写长篇。',
       '9. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
-      '10. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。',
+      '10. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。规模词条只能从【可选敌人名单】中选用（名单为空时自行按剧情合理性命名）——引爆发敌须与战斗链路（图鉴/卡片菜单）对得上。',
       '11. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
     ].join('\n');
   }
@@ -1099,6 +1100,8 @@
         '地点': ctx.statData['地点'],
         '敌方动向': (ctx.statData['人物'] && ctx.statData['人物']['敌人']) || [],
       }, null, 1)}`,
+      // ④b 可选敌人名单——预约"规模"的敌方词条只能从中选（否则引爆发敌与图鉴/卡片菜单脱节，Combat_block 链路对不上）
+      `【可选敌人名单（ambush 预约的"规模"只能从中选用）】\n${(ctx.enemyPool || []).join(' / ') || '（无——预约"规模"自行按剧情合理性命名）'}`,
       `【主角核心白名单（绝不背叛、绝不可能是间谍）】\n${(ctx.coreTeam || []).join(' / ') || '（未设置——正文长期塑造的核心同伴也可能被指定为间谍，建议在设置中填写）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
@@ -2099,7 +2102,7 @@
       <div class="ad-form-row"><label>总开关</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> 启用（关闭后不注入、不监听）</label></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">本轮敌人名单</label>
-        <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 只能从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
+        <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 与暗线预约"规模"从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不校验 menu</span></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">主角核心白名单</label>
         <textarea data-k="coreTeam" rows="2" placeholder="手输绝不背叛的核心队友，逗号/换行分隔&#10;例：弗兰克，林有声">${esc(s.coreTeam || '')}</textarea>

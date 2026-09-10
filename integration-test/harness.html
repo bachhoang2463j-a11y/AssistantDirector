@@ -709,6 +709,7 @@ async function runAll() {
     s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
     s3.coreTeam = '弗兰克，林有声';   // 主角核心白名单（手输）——验证注入暗线输入
     s3.extraRules = '灰瘟与邪教无任何关系，禁止关联';   // 附加铁律（手输）——验证拼到暗线输入文末
+    s3.enemyPool = '达令港码头武装打手，萨里山剃刀党混混';   // 可选敌人名单——验证注入暗线输入（预约"规模"选用源）
     s3.debug = true;
     AD.saveSettings(s3);
     MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
@@ -806,10 +807,16 @@ async function runAll() {
       const ifl = p.indexOf('【非隐藏楼层原文'), it = p.indexOf('【当前时空与敌方动向】');
       return iw >= 0 && il > iw && ifl > il && it > ifl
         && !p.includes('角色列表') && !p.includes('小地图') && !p.includes('内心')
-        && !p.includes('当前态势卡片池') && !p.includes('可选敌人名单')
+        && !p.includes('当前态势卡片池')
         && p.includes('日期和时间') && p.includes('━━━━━━ 楼层')
         && !p.includes('玩家输入') && !p.includes('被LWB隐藏');
     })());
+    assert('T11d 可选敌人名单注入暗线输入（预约"规模"选用源，与产卡同一名单）', (() => {
+      const i = s3LastPrompt.indexOf('【可选敌人名单（ambush 预约的"规模"只能从中选用）】');
+      return i >= 0 && s3LastPrompt.includes('达令港码头武装打手') && s3LastPrompt.includes('萨里山剃刀党混混')
+        && i > s3LastPrompt.indexOf('【当前时空与敌方动向】');   // 跟在辅助信息块内
+    })());
+    assert('T11e 预约规模铁律指向名单（引爆发敌与战斗链路对齐）', s3LastSys.includes('规模词条只能从【可选敌人名单】中选用'));
     assert('T11b 主角核心白名单注入暗线输入（手输设置）', s3LastPrompt.includes('【主角核心白名单（绝不背叛、绝不可能是间谍）】')
       && s3LastPrompt.includes('弗兰克 / 林有声'));
     assert('T11b2 附加铁律拼到暗线输入文末（用户指定最高优先级）', (() => {
@@ -891,6 +898,7 @@ async function runAll() {
     // 清理
     s3z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
     s3z.worldSyncSituation = []; s3z.worldSyncShadowline = [];
+    s3z.enemyPool = '';
     AD.saveSettings(s3z);
     window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
   }
