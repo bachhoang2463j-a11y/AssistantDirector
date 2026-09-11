@@ -581,3 +581,15 @@
 **测试要点**：K1-K5——推演快照（checkpoint=旧 round/digest）+ 锚点（floorId=当前楼层）、楼层回退回滚（round/digest 还原/骰子基线重置/锁重置/词条同步）、单级回滚（锚点重置后不再重复回退）、无快照回退（清空回未推演态）。排障两教训：① mock `replaceVariables` 重新赋值致 MOCK.chat 引用脱钩（S8 经 MOCK.chat 读不到写入、K2 对 undefined 取属性崩掉 runAll——改原地清空）；② mock `eventEmit` 包装只转发事件名漏掉参数——S6 的 swipe/regenerate/dryRun 守卫全部失效走真随机概率路径（~14%/轮 假失败率、失败用例漂移、hook console 时"全绿"纯属时序运气）——该 bug 自 S6 诞生即潜伏，本轮连跑两轮全绿确认修复。
 
 **验收依据**：IAB harness 166/166 连跑两轮全绿；真机验证留给用户（删楼后报纸世界状态回退 + toast"↩ 楼层回退"提示）。
+
+## 2026-09-12 ｜ V0.3.4 战斗结束冷却（任意战斗后 N 楼不掷随机）（业务提交 `95ea8d9`）
+
+**变更行为**：用户提出"剧情战刚结束就随机开战很出戏"的补充防护——① 新设置 `randomCombatCooldown`（开关，默认开）+ `randomCombatCooldownFloors`（冷却楼数，默认 3，设置弹窗随机遭遇块内联）；② **结束检测**：每楼 dispatchNow 跑 `trackCombatEnd`——`combatLastSeen→false` 跳变（上楼在战、本楼无块）即战斗结束，记录 `combatEndFloorId`（持久化 $ad_state，页面重载不丢、换聊天重置）；任意战斗都算（随机遭遇/剧情开战/用户命令——RpgCombat 统一用 Combat_block 续写）；③ **冷却判定** `combatCooldownActive`：当前楼层距结束楼 < N → S6 掷骰直接跳过——**只拦本插件随机掷骰**，用户输入命令与正文 AI 自行输出战斗不经此路径，天然不受影响。@version 0.3.4；harness 170/170（+4：CD1 结束检测/CD2 窗口内 chance=100 也拦/CD3 推进 3 楼解除/CD4 开关关闭不拦）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策依据**：用户确认加"任意战斗结束后 3 楼冷却，可开关可调数字，只影响本插件随机遭遇"。与防连战锁的分工：锁管"随机战打完到下次推演"的周期间隙，冷却管"任意战斗刚结束"的楼数窗口——两道闸互补。
+
+**测试要点**：CD1 跳变检测（手置 combatLastSeen 模拟上楼在战）；CD2 spots chance=100 也拦（证明是冷却拦截而非概率未中）；CD3 addFloor×3 推进楼层后解除并注入；CD4 关开关不拦（需先解除 CD3 注入上的防连战锁——两道闸独立性的反向验证）。SPEC §4.2 冷却语义同步。
+
+**验收依据**：IAB harness 170/170；真机验证留给用户（剧情战打完后 3 楼内无随机遭遇 toast，第 4 楼起恢复）。
