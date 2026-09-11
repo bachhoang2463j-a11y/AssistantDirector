@@ -273,7 +273,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.6（区域突发事件）', json.content.includes("@version      0.3.6"));
+  assert('版本 v0.3.7（设置 UI 双路分流）', json.content.includes("@version      0.3.7"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -1557,6 +1557,94 @@ async function runAll() {
     s9z.regionalIncidentDuration = 5; s9z.regionalIncidentCooldown = 5; s9z.directorEveryX = 3;
     s9z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
     AD.saveSettings(s9z);
+    MOCK.reset();
+  }
+
+  /* ——— V0.3.7：设置 UI 双路分流（PC 工作台 / 移动端面板内切）——— */
+  head('设置 UI 双路分流');
+  {
+    MOCK.reset(); AD.loadRuntimeState();
+    // UA 检测函数
+    assert('U1 isMobileDevice：函数存在且 IAB 桌面 UA 判 false', typeof AD.isMobileDevice === 'function'
+      && AD.isMobileDevice() === false);
+    // 面板双视图骨架
+    assert('U2 面板双视图骨架（news 常显 / settings CSS 隐藏；wire/tabs 在 news 内）', (() => {
+      const news = document.getElementById('panel-view-news');
+      const st = document.getElementById('panel-view-settings');
+      return news && st && getComputedStyle(news).display === 'flex' && getComputedStyle(st).display === 'none'
+        && !!news.querySelector('#ad-wire') && !!news.querySelector('#ad-tabs');
+    })());
+    // PC 工作台：打开 → 960 壳 + 8 栏目 + 关键字段在场
+    AD.renderSettingsModal();
+    assert('U3 PC 工作台渲染（st-expanded 壳 + 8 栏目导航）', (() => {
+      const box = document.getElementById('ad-modal-box');
+      const navs = [...box.querySelectorAll('.st-nav-btn')];
+      return box.classList.contains('st-expanded') && navs.length === 8
+        && navs[0].textContent.includes('电传通讯') && navs[7].textContent.includes('诊断');
+    })());
+    assert('U4 PC 工作台字段齐全（API/心跳/遭遇/突发/铁律 data-k 全在场）', (() => {
+      const box = document.getElementById('ad-modal-box');
+      const need = ['director.baseUrl', 'director.model', 'directorEveryX', 'enabledDirector',
+        'randomCombatEnabled', 'randomCombatChance', 'randomCombatOncePerCycle', 'randomCombatCooldown', 'randomCombatCooldownFloors',
+        'regionalIncidentEnabled', 'regionalIncidentChance', 'regionalIncidentDuration', 'regionalIncidentCooldown', 'regionalIncidentTypes',
+        'coreTeam', 'enemyPool', 'extraRules', 'debug'];
+      return need.every(k => !!box.querySelector(`[data-k="${k}"]`));
+    })());
+    assert('U5 栏目切换（点导航 → 对应 pane 激活）', (() => {
+      const box = document.getElementById('ad-modal-box');
+      box.querySelector('.st-nav-btn[data-stab="l-combat"]').click();
+      return box.querySelector('#l-combat').classList.contains('active')
+        && !box.querySelector('#l-api').classList.contains('active');
+    })());
+    // PC 字段修改即时持久化（root 参数化收集）
+    (() => {
+      const inp = document.querySelector('#ad-modal-box [data-k="directorEveryX"]');
+      inp.value = '7';
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+    })();
+    assert('U6 PC 表单修改即时持久化（directorEveryX 3→7）', AD.settings().directorEveryX === 7);
+    document.getElementById('ad-set-close').click();
+    // 移动端面板内切：模拟手机 UA（stub navigator.userAgent）
+    const realUA = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile', configurable: true });
+    document.getElementById('ad-btn-settings').click();
+    assert('U7 移动 UA → ⚙ 面板内切（news 隐藏/settings 显示 + 报头标题切换）', (() => {
+      const news = document.getElementById('panel-view-news');
+      const st = document.getElementById('panel-view-settings');
+      const title = document.getElementById('ad-head-title');
+      return news.style.display === 'none' && st.style.display === 'flex'
+        && title.textContent.includes('设定增刊');
+    })());
+    assert('U8 移动端 4-Tab + 字段在场（电传/遭遇/人事/母版）', (() => {
+      const st = document.getElementById('panel-view-settings');
+      const tabs = [...st.querySelectorAll('.mv-tab')];
+      return tabs.length === 4 && tabs[0].textContent.includes('电传步调') && tabs[1].textContent.includes('遭遇突发')
+        && tabs[2].textContent.includes('人事档案') && tabs[3].textContent.includes('母版日志')
+        && !!st.querySelector('[data-k="director.baseUrl"]') && !!st.querySelector('[data-k="randomCombatEnabled"]')
+        && !!st.querySelector('[data-k="coreTeam"]') && !!st.querySelector('[data-k="extraRules"]');
+    })());
+    // 移动端 tab 切换 + 表单修改（root 参数化收集）
+    document.querySelector('#panel-view-settings [data-mtab="m-combat"]').click();
+    assert('U9 移动端 tab 切换（m-combat pane 激活）', document.getElementById('m-combat').classList.contains('active'));
+    (() => {
+      const inp = document.querySelector('#panel-view-settings [data-k="randomCombatChance"]');
+      inp.value = '9';
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+    })();
+    assert('U10 移动端表单修改即时持久化（randomCombatChance 5→9）', AD.settings().randomCombatChance === 9);
+    // 保存并返回
+    document.getElementById('ad-m-save').click();
+    assert('U11 移动端保存生效 → 返回报纸视图（news 恢复 + 标题还原 + 值保持）', (() => {
+      const news = document.getElementById('panel-view-news');
+      const title = document.getElementById('ad-head-title');
+      return news.style.display === 'flex' && title.textContent.includes('悉尼星期增刊')
+        && AD.settings().randomCombatChance === 9;
+    })());
+    Object.defineProperty(navigator, 'userAgent', { value: realUA, configurable: true });   // 还原 UA
+    // 清理
+    const sz = AD.loadSettings();
+    sz.directorEveryX = 3; sz.randomCombatChance = 5;
+    AD.saveSettings(sz);
     MOCK.reset();
   }
 

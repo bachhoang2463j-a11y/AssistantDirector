@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.6
+// @version      0.3.7
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.6';
+  const SCRIPT_VERSION = '0.3.7';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -2170,6 +2170,96 @@
     max-height: 280px; overflow-y: auto; }
   .ad-dbg-ok { color: #4ade80; }
   .ad-dbg-fail { color: #f87171; }
+  /* ═══ V0.3.7 设置 UI 重构：PC 960px 工作台 + 移动端面板内切（变量全走主题）═══ */
+  /* PC 宽屏弹窗壳 */
+  #ad-modal .ad-modal-box.st-expanded { width: min(960px, 95vw); max-height: 90vh; height: 720px;
+    display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+  .st-head { flex: none; border-bottom: 3px double var(--ad-line-strong); padding: 12px 20px 10px; background: var(--ad-box-bg); }
+  .st-ears { display: flex; justify-content: space-between; border-bottom: 1px solid var(--ad-line-strong);
+    padding-bottom: 4px; margin-bottom: 6px; font-size: 9px; letter-spacing: 2px; color: var(--ad-ink-dim); }
+  .st-head-row { display: flex; justify-content: space-between; align-items: center; }
+  .st-title { font-size: 17px; font-weight: 900; letter-spacing: 3px; color: var(--ad-ink-strong); }
+  .st-title span.sub { font-size: 10px; font-weight: normal; letter-spacing: 1px; color: var(--ad-ink-dim); margin-left: 10px; }
+  .st-body { flex: 1; display: flex; overflow: hidden; }
+  .st-nav { width: 220px; flex-shrink: 0; background: var(--ad-input-bg); border-right: 2px solid var(--ad-line-strong);
+    display: flex; flex-direction: column; justify-content: space-between; }
+  .st-nav-label { padding: 10px 14px 6px; font-size: 9px; font-weight: 700; letter-spacing: 2px;
+    color: var(--ad-ink-faint); border-bottom: 1px solid var(--ad-line); }
+  .st-nav-items { list-style: none; padding: 6px 0; overflow-y: auto; flex: 1; }
+  .st-nav-btn { padding: 9px 14px; display: flex; justify-content: space-between; align-items: center;
+    font-size: 12.5px; font-weight: 700; color: var(--ad-ink); cursor: pointer;
+    border-left: 4px solid transparent; margin-bottom: 2px; transition: all .15s; }
+  .st-nav-btn:hover { color: var(--ad-accent); background: var(--ad-hit); }
+  .st-nav-btn.active { background: var(--ad-box-bg); border-left-color: var(--ad-accent); color: var(--ad-accent); }
+  .st-nav-btn .idx { font-size: 10px; color: var(--ad-ink-dim); }
+  .st-stage { flex: 1; overflow-y: auto; padding: 18px 24px 30px; }
+  .st-stage::-webkit-scrollbar { width: 6px; }
+  .st-stage::-webkit-scrollbar-thumb { background: var(--ad-scroll); border-radius: var(--ad-radius-sm); }
+  .st-pane { display: none; }
+  .st-pane.active { display: block; }
+  .st-foot { flex: none; border-top: 3px double var(--ad-line-strong); padding: 10px 18px;
+    display: flex; justify-content: space-between; align-items: center; background: var(--ad-box-bg); }
+  .st-foot .colophon { font-size: 9.5px; color: var(--ad-ink-dim); }
+  /* 设置卡片与控件（PC/移动共用） */
+  .st-card { background: var(--ad-input-bg); border: 1px solid var(--ad-line-strong);
+    padding: 12px 14px; margin-bottom: 12px; }
+  .st-card-head { display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--ad-line); padding-bottom: 6px; margin-bottom: 10px; }
+  .st-card-title { font-size: 12.5px; font-weight: 700; color: var(--ad-ink-strong); }
+  .st-card-title::before { content: '◆ '; font-size: 8px; color: var(--ad-accent); }
+  .st-label { display: block; font-size: 11px; font-weight: 600; color: var(--ad-ink-strong); margin-bottom: 3px; }
+  .st-desc { font-size: 10px; color: var(--ad-ink-dim); line-height: 1.4; }
+  .st-field { margin-bottom: 10px; }
+  .st-field:last-child { margin-bottom: 0; }
+  .st-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .st-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .st-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .st-hr { border: none; border-top: 1px dashed var(--ad-line); margin: 10px 0; }
+  .st-switch { position: relative; width: 36px; height: 19px; background: var(--ad-input-bg);
+    border: 1.5px solid var(--ad-line-strong); border-radius: 12px; transition: all .2s; flex-shrink: none;
+    display: inline-block; }
+  .st-switch::after { content: ''; position: absolute; top: 1.5px; left: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--ad-ink-dim); transition: all .2s; }
+  .st-switch-hidden { display: none !important; }
+  input:checked + .st-switch { background: var(--ad-accent); border-color: var(--ad-accent); }
+  input:checked + .st-switch::after { left: 18px; background: #fff; }
+  .st-switch-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .st-stepper { display: inline-flex; align-items: center; border: 1px solid var(--ad-line-strong);
+    background: var(--ad-box-bg); overflow: hidden; height: 26px; }
+  .st-stepper button { background: var(--ad-input-bg); border: none; color: var(--ad-ink);
+    width: 24px; height: 100%; font-size: 13px; font-weight: bold; cursor: pointer; }
+  .st-stepper button:hover { background: var(--ad-accent); color: #fff; }
+  .st-stepper input { width: 48px; height: 100%; border: none; border-left: 1px solid var(--ad-line);
+    border-right: 1px solid var(--ad-line); text-align: center; background: transparent;
+    color: var(--ad-ink-strong); font-size: 11.5px; font-weight: 700; outline: none; }
+  .st-input, .st-select, .st-textarea { width: 100%; background: var(--ad-box-bg); border: 1px solid var(--ad-line-strong);
+    color: var(--ad-ink-strong); font-family: inherit; font-size: 11.5px; padding: 6px 9px; outline: none; }
+  .st-input:focus, .st-select:focus, .st-textarea:focus { border-color: var(--ad-accent); }
+  .st-textarea { resize: vertical; min-height: 52px; line-height: 1.5; }
+  .st-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .st-chip { background: var(--ad-input-bg); border: 1px solid var(--ad-line-strong);
+    font-size: 10px; padding: 2px 6px; color: var(--ad-ink); }
+  /* 移动端面板内切设置视图（#ad-panel 内，零弹窗） */
+  #panel-view-news { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  #panel-view-settings { flex: 1; display: none; flex-direction: column; overflow: hidden; min-height: 0; }
+  .mv-tabs { flex: none; display: flex; border-bottom: 2px double var(--ad-line-strong); }
+  .mv-tab { flex: 1; padding: 7px 2px 6px; border: none; border-right: 1px solid var(--ad-line);
+    background: none; cursor: pointer; font-family: inherit; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.5px; color: var(--ad-ink-dim); white-space: nowrap; transition: all .15s; }
+  .mv-tab:last-child { border-right: none; }
+  .mv-tab.active { background: var(--ad-accent); color: #fff; }
+  .mv-body { flex: 1; overflow-y: auto; padding: 12px 14px 20px; }
+  .mv-body::-webkit-scrollbar { width: 4px; }
+  .mv-body::-webkit-scrollbar-thumb { background: var(--ad-scroll); }
+  .mv-pane { display: none; }
+  .mv-pane.active { display: block; }
+  .mv-foot { flex: none; border-top: 3px double var(--ad-line-strong); padding: 8px 12px;
+    display: flex; justify-content: space-between; align-items: center; }
+  /* 窄屏移动端兼容：面板满宽 */
+  @media (max-width: 480px) {
+    #ad-panel { width: 100vw; right: -105vw; }
+    #ad-panel.open { right: 0; }
+  }
   .ad-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
     background: var(--ad-box-bg); border: 1px solid var(--ad-accent-dim); color: var(--ad-accent-bright);
     border-radius: var(--ad-radius); padding: 8px 18px; font-size: 12px; letter-spacing: 1px; z-index: 100000;
@@ -2178,6 +2268,12 @@
 
   let els = {};
   let currentTheme = 'paper';   // paper（方案 A 报纸基因 · 默认） | slate
+
+  // 设备检测（V0.3.7 设置 UI 双路分流）：严格按 UA 标识，不用屏幕宽度
+  function isMobileDevice() {
+    const ua = navigator.userAgent || navigator.vendor || '';
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
+  }
 
   function applyTheme(theme) {
     currentTheme = theme === 'paper' ? 'paper' : 'slate';
@@ -2221,7 +2317,7 @@
         </div>
         <div class="ad-head-main">
           <span class="ad-head-info"><span id="ad-mast-date-slate">—</span> · <span class="stage" id="ad-mast-stage-slate">—</span></span>
-          <span class="ad-head-title">悉尼星期增刊 · GAZETTE</span>
+          <span class="ad-head-title" id="ad-head-title">悉尼星期增刊 · GAZETTE</span>
         </div>
         <span class="ad-head-btns">
           <button id="ad-btn-report" title="世界推演：查看最新世界状态 / 手动触发（S7）">📡</button>
@@ -2235,13 +2331,16 @@
           <span class="stage" id="ad-mast-stage">—</span>
         </div>
       </div>
+      <div id="panel-view-news">
       <div class="ad-tabs" id="ad-tabs">
         <button class="ad-tab" data-tab="paper" title="《悉尼宪报》派系公开征兆（灰卡揭幕体系）">📰 报纸</button>
         <button class="ad-tab" data-tab="events" title="进行中的事件链（本地骰每楼推进）">⚡ 事件链</button>
         <button class="ad-tab" data-tab="winds" title="风声与舆论（安静超时按概率消散）">📣 风声</button>
       </div>
       <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>
-      <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达</div>`);
+      <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达</div>
+      </div>
+      <div id="panel-view-settings"></div>`);
     UI_DOC.body.appendChild(panel);
 
     // 模态容器（设置/卡片/注入预览共用）
@@ -2250,6 +2349,8 @@
 
     els = { rail, panel, dot: rail.querySelector('#ad-rail-dot'), ticker: rail.querySelector('#ad-ticker'),
       wireBody: panel.querySelector('#ad-wire-body'), tabs: panel.querySelector('#ad-tabs'),
+      headTitle: panel.querySelector('#ad-head-title'),
+      viewNews: panel.querySelector('#panel-view-news'), viewSettings: panel.querySelector('#panel-view-settings'),
       mastDate: panel.querySelector('#ad-mast-date'), mastStage: panel.querySelector('#ad-mast-stage'),
       mastDateSlate: panel.querySelector('#ad-mast-date-slate'), mastStageSlate: panel.querySelector('#ad-mast-stage-slate'),
       modal, modalBox: modal.querySelector('#ad-modal-box') };
@@ -2276,7 +2377,11 @@
       else { toast('尚无世界状态——等待首次推演（📡 手动或心跳触发）'); }
     });
     panel.querySelector('#ad-btn-roster').addEventListener('click', openRosterModal);
-    panel.querySelector('#ad-btn-settings').addEventListener('click', openSettingsModal);
+    // 设置入口双路分流（V0.3.7）：UA 判移动端 → 面板内切简版设置（零弹窗）；PC → 960px 工作台弹窗
+    panel.querySelector('#ad-btn-settings').addEventListener('click', () => {
+      if (isMobileDevice()) toggleMobileSettings();
+      else openSettingsModal();
+    });
     // 栏目切换：activeTab 持久化（localStorage），即时重渲染
     if (els.tabs) els.tabs.addEventListener('click', e => {
       const btn = e.target.closest('.ad-tab');
@@ -2297,6 +2402,7 @@
     const willOpen = open !== undefined ? open : !els.panel.classList.contains('open');
     els.panel.classList.toggle('open', willOpen);
     if (willOpen) els.dot.classList.remove('on');
+    if (!willOpen && mobileSettingsActive) closeMobileSettings();   // 面板收起时退出设置视图（回报纸态）
     const p = loadUiPrefs(); p.panelOpen = willOpen; saveUiPrefs(p);
     if (willOpen && !silent) renderWire();
   }
@@ -2491,7 +2597,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   function closeModal() { els.modal.classList.remove('open'); }
-  function openModal(html) { els.modalBox.innerHTML = html; els.modal.classList.add('open'); }
+  function openModal(html) { els.modalBox.classList.remove('st-expanded'); els.modalBox.innerHTML = html; els.modal.classList.add('open'); }
 
   // —— 设置弹窗（可重渲染：世界书同步的增删/选书操作不丢其他输入）———————————
 
@@ -2510,8 +2616,10 @@
   }
 
   // 把表单输入收进 SETTINGS（不持久化——供 sync 操作重渲前保存现场）
-  function collectFormToSettings() {
-    els.modalBox.querySelectorAll('[data-k]').forEach(input => {
+  // root 参数（V0.3.7）：从指定容器收 [data-k]——PC 弹窗传 els.modalBox，移动端视图传面板容器；
+  // 只收当前活跃容器，防止另一视图的陈旧输入覆盖刚改的值
+  function collectFormToSettings(root) {
+    (root || els.modalBox).querySelectorAll('[data-k]').forEach(input => {
       const path = input.getAttribute('data-k').split('.');
       let obj = SETTINGS;
       for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
@@ -2623,75 +2731,173 @@
       <div class="ad-btnrow" style="margin-top:2px"><button data-sync-add="${slot}">＋ 添加世界书来源</button></div>`;
   }
 
+  // —— 设置工作台（V0.3.7 PC 960px 宽屏：左侧栏目导读 + 右侧社论卡片，8 栏目）———
+  // 复用 data-k → collectFormToSettings 自动对接；sync/prompt 操作重渲不丢其他输入
+
+  // 控件微模板（data-k 对接 SETTINGS；st-* 样式全走主题变量）
+  const stInput = (k, val, ph, type = 'text', extra = '') =>
+    `<input type="${type}" class="st-input" data-k="${k}" value="${esc(val)}" placeholder="${esc(ph || '')}" ${extra}>`;
+  const stNum = (k, val, step, min, max) =>
+    `<input type="number" class="st-input" data-k="${k}" value="${val}" step="${step}"${min != null ? ` min="${min}"` : ''}${max != null ? ` max="${max}"` : ''}>`;
+  const stArea = (k, val, rows, ph) =>
+    `<textarea class="st-textarea" data-k="${k}" rows="${rows}" placeholder="${esc(ph || '')}">${esc(val || '')}</textarea>`;
+  const stSwitch = (k, on) =>
+    `<label class="st-switch-label"><input type="checkbox" class="st-switch-hidden" data-k="${k}" ${on ? 'checked' : ''}><span class="st-switch"></span></label>`;
+  const stStepper = (k, val, step, min, max) =>
+    `<span class="st-stepper"><button type="button" data-step-k="${k}" data-step="-1">−</button>${stNum(k, val, step, min, max)}<button type="button" data-step-k="${k}" data-step="1">＋</button></span>`;
+  const stRow = (label, desc, control) =>
+    `<div class="st-row"><div><span class="st-label">${label}</span>${desc ? `<div class="st-desc">${desc}</div>` : ''}</div><div>${control}</div></div>`;
+
+  function stepSyncValue(root, key, delta) {
+    const input = root.querySelector(`[data-k="${key}"]`);
+    if (!input) return;
+    const cur = parseFloat(input.value) || 0;
+    const min = input.min !== '' && input.min != null ? parseFloat(input.min) : -Infinity;
+    const max = input.max !== '' && input.max != null ? parseFloat(input.max) : Infinity;
+    input.value = Math.max(min, Math.min(max, cur + delta));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   function renderSettingsModal() {
     const s = SETTINGS;
-    const ep = (slot, title) => `
-      <div class="ad-sec-title">${title}</div>
-      <div class="ad-form-row"><label>Base URL</label><input type="text" data-k="${slot}.baseUrl" value="${esc(s[slot].baseUrl)}" placeholder="https://…/v1"></div>
-      <div class="ad-form-row"><label>API Key</label><input type="text" data-k="${slot}.apiKey" value="${esc(s[slot].apiKey)}" placeholder="sk-…"></div>
-      <div class="ad-form-row"><label>Model</label><input type="text" data-k="${slot}.model" value="${esc(s[slot].model)}" placeholder="模型名"></div>
-      <div class="ad-form-row"><label>温度</label><input type="number" step="0.1" min="0" max="2" data-k="${slot}.temperature" value="${s[slot].temperature}"></div>
-      <div class="ad-form-row"><label>maxTokens</label><input type="number" step="100" min="256" data-k="${slot}.maxTokens" value="${s[slot].maxTokens}"></div>`;
+    if (!editSync) editSync = { world: JSON.parse(JSON.stringify(SETTINGS.worldSync || [])) };   // 防御：直渲（不经 openSettingsModal）也有现场
     syncSectionHtml.bookNames = (IS_LIVE && typeof getWorldbookNames === 'function') ? getWorldbookNames() : [];
+    const navItems = [
+      ['l-api', '📡 电传通讯', '01'], ['l-rhythm', '⚙ 推演律动', '02'], ['l-combat', '🎲 街头遭遇', '03'],
+      ['l-incidents', '⚡ 区域突发', '04'], ['l-dossier', '📜 阵营与铁律', '05'], ['l-sync', '📖 档案库同步', '06'],
+      ['l-prompt', '✍ 导演社论母版', '07'], ['l-diag', '🐞 诊断与回溯', '08'],
+    ];
     openModal(`
-      <h3>⚙ 副导演 · 设置</h3>
-      <div class="ad-form-row"><label>皮肤</label><select id="ad-set-theme">
-        <option value="paper">paper · 1920s 阿卡姆大报（方案 A · 默认）</option>
-        <option value="slate">slate · 深色档案（MMS 基因）</option>
-      </select></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">功能开关</label><div style="display:flex;flex-direction:column;gap:4px">
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledDirector" ${s.enabledDirector ? 'checked' : ''}> 世界推演（心跳/强制触发 + 副导演词条注入）</label>
-      </div></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">🎲 随机遭遇</label><div style="display:flex;flex-direction:column;gap:4px">
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatEnabled" ${s.randomCombatEnabled ? 'checked' : ''}> 每楼掷骰，命中即在用户本楼输入末尾追加"强制开战"指令</label>
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatOncePerCycle" ${s.randomCombatOncePerCycle ? 'checked' : ''}> 防连战锁：每个推演周期（两次推演之间）最多一场随机战斗</label>
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatCooldown" ${s.randomCombatCooldown ? 'checked' : ''}> 战斗结束冷却：任意战斗（含剧情战）结束后
-          <input type="number" step="1" min="0" data-k="randomCombatCooldownFloors" value="${s.randomCombatCooldownFloors}" style="width:52px"> 楼内不掷随机（只拦随机掷骰，不影响剧情开战）</label>
-        <div style="display:flex;align-items:center;gap:6px">
-          <input type="number" step="1" min="0" max="100" data-k="randomCombatChance" value="${s.randomCombatChance}" style="width:64px">
-          <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">% / 楼 · 基线兜底值（世界状态 spots/districts 命中时被覆盖）· 安全区与战斗进行中不掷骰</span>
+      <div class="st-head">
+        <div class="st-ears"><span>EDITION · ASSISTANT DIRECTOR</span><span style="color:var(--ad-accent);font-style:italic">THE DIRECTOR'S DESK</span><span>PRICE TWO PENCE</span></div>
+        <div class="st-head-row">
+          <div class="st-title">⚙ 导演编务处<span class="sub">EDITORIAL PREFERENCES · V${SCRIPT_VERSION}</span></div>
+          <button id="ad-set-close" class="ad-row-btn">✕ 关闭</button>
         </div>
-      </div></div>
-      <div class="ad-form-row"><label>推演心跳</label><input type="number" step="1" min="1" data-k="directorEveryX" value="${s.directorEveryX}">
-        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">每 N 楼常规推演一次；战斗结果/跨日/阶段变化强制推</span></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">敌方阵营参考</label>
-        <textarea data-k="enemyPool" rows="3" placeholder="手输敌方阵营参考，逗号/换行分隔（仅供推演参考，具体敌人由正文AI自选）&#10;例：萨里山剃刀帮，黑法老兄弟会，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
-        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不注入</span></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">主角核心白名单</label>
-        <textarea data-k="coreTeam" rows="2" placeholder="手输绝不背叛的核心队友，逗号/换行分隔&#10;例：弗兰克，林有声">${esc(s.coreTeam || '')}</textarea>
-        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则任何人都可能是间谍</span></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">附加铁律</label>
-        <textarea data-k="extraRules" rows="3" placeholder="手输给副导演的最高优先级注意事项（多行），拼到推演输入文末，压过默认规则&#10;例：灰瘟与邪教无任何关系，禁止关联；主角团是身经百战的强者，算计他们必须有成本与风险">${esc(s.extraRules || '')}</textarea>
-        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">世界观纠偏/尺度约束</span></div>
-      <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="directorFloors" value="${s.directorFloors}">
-        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
-      <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
-        <input type="checkbox" data-k="debug" ${s.debug ? 'checked' : ''}> 记录 LLM 请求/响应（控制台 + 日志查看）</label></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">⚡ 区域突发事件</label><div style="display:flex;flex-direction:column;gap:4px;width:100%">
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="regionalIncidentEnabled" ${s.regionalIncidentEnabled ? 'checked' : ''}> 本地掷骰触发区域事件（类型掷骰本地定，事件内容由推演按世界观生成）</label>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <label style="width:auto;color:var(--ad-ink-dim)">触发
-            <input type="number" step="0.5" min="0" max="100" data-k="regionalIncidentChance" value="${s.regionalIncidentChance}" style="width:56px">% / 楼 · 持续
-            <input type="number" step="1" min="1" data-k="regionalIncidentDuration" value="${s.regionalIncidentDuration}" style="width:48px"> 楼 · 冷却
-            <input type="number" step="1" min="0" data-k="regionalIncidentCooldown" value="${s.regionalIncidentCooldown}" style="width:48px"> 楼</label>
+      </div>
+      <div class="st-body">
+        <aside class="st-nav">
+          <div>
+            <div class="st-nav-label">CONTENTS · 编务栏目</div>
+            <ul class="st-nav-items">
+              ${navItems.map(([id, label, idx], i) => `<li class="st-nav-btn${i === 0 ? ' active' : ''}" data-stab="${id}"><span>${label}</span><span class="idx">${idx}</span></li>`).join('')}
+            </ul>
+          </div>
+          <div style="padding:10px 14px;border-top:1px solid var(--ad-line);font-size:9.5px;color:var(--ad-ink-dim)">S7/S9 世界引擎全景管理</div>
+        </aside>
+        <section class="st-stage">
+          <div class="st-pane active" id="l-api">
+            <div class="st-card">
+              <div class="st-card-head"><span class="st-card-title">电报线路端点（副导演 API）</span></div>
+              <div class="st-field"><span class="st-label">Base URL（服务地址）</span>${stInput('director.baseUrl', s.director.baseUrl, 'https://…/v1')}</div>
+              <div class="st-field"><span class="st-label">API Key（通信密钥）</span>${stInput('director.apiKey', s.director.apiKey, 'sk-…')}</div>
+              <div class="st-grid2">
+                <div class="st-field"><span class="st-label">Model（推演模型）</span>${stInput('director.model', s.director.model, '模型名')}</div>
+                <div class="st-field"><span class="st-label">温度（Temperature）</span>${stNum('director.temperature', s.director.temperature, 0.1, 0, 2)}</div>
+              </div>
+            </div>
+            <div class="st-card">
+              <div class="st-card-head"><span class="st-card-title">Token 限额与回溯楼层</span></div>
+              <div class="st-grid2">
+                ${stRow('MaxTokens（单次输出上限）', '', stStepper('director.maxTokens', s.director.maxTokens, 200, 256))}
+                ${stRow('副导演可见楼层', '0=全部历史；仅 AI 楼层', stStepper('directorFloors', s.directorFloors, 5, 0))}
+              </div>
+            </div>
+          </div>
+          <div class="st-pane" id="l-rhythm">
+            <div class="st-card">${stRow('<span style="font-size:13px">世界推演引擎总开关</span>', '推演 $ad_world 并写入词条；关→词条下灯', stSwitch('enabledDirector', s.enabledDirector))}</div>
+            <div class="st-card">
+              <div class="st-card-head"><span class="st-card-title">常规心跳与触发节奏</span></div>
+              ${stRow('常态推演心跳（楼数）', '每隔 N 楼自动增量修订世界状态；战斗结算/跨日/阶段变化强制推', stStepper('directorEveryX', s.directorEveryX, 1, 1))}
+            </div>
+          </div>
+          <div class="st-pane" id="l-combat">
+            <div class="st-card">
+              ${stRow('<span style="font-size:13px">每楼随机遭遇掷骰</span>', '用户发送输入时本地掷骰，命中即追加开战指令', stSwitch('randomCombatEnabled', s.randomCombatEnabled))}
+              <hr class="st-hr">
+              <div class="st-grid2">
+                ${stRow('基准遇敌率（%）', '兜底值，世界状态 spots/districts 命中时被覆盖', stStepper('randomCombatChance', s.randomCombatChance, 1, 0, 100))}
+                ${stRow('防连战锁', '每推演周期最多一场随机战斗', stSwitch('randomCombatOncePerCycle', s.randomCombatOncePerCycle))}
+              </div>
+              <hr class="st-hr">
+              ${stRow('战斗结束冷却', `任意战斗（含剧情战）结束后 N 楼内不掷随机（只拦随机掷骰）`, `<div style="display:flex;align-items:center;gap:8px">${stSwitch('randomCombatCooldown', s.randomCombatCooldown)}${stStepper('randomCombatCooldownFloors', s.randomCombatCooldownFloors, 1, 0)}<span class="st-desc">楼</span></div>`)}
+            </div>
+          </div>
+          <div class="st-pane" id="l-incidents">
+            <div class="st-card">
+              <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件总控（S9）</span></div>
+              ${stRow('本地事件掷骰总开关', '每楼掷骰定类型，推演 LLM 按世界观生成具体内容', stSwitch('regionalIncidentEnabled', s.regionalIncidentEnabled))}
+              <hr class="st-hr">
+              <div class="st-grid3">
+                <div class="st-field"><span class="st-label">触发概率（%/楼）</span>${stNum('regionalIncidentChance', s.regionalIncidentChance, 0.5, 0, 100)}</div>
+                <div class="st-field"><span class="st-label">持续楼数</span>${stNum('regionalIncidentDuration', s.regionalIncidentDuration, 1, 1)}</div>
+                <div class="st-field"><span class="st-label">冷却楼数</span>${stNum('regionalIncidentCooldown', s.regionalIncidentCooldown, 1, 0)}</div>
+              </div>
+              <div class="st-field"><span class="st-label">事件类型与权重表</span>
+                ${stArea('regionalIncidentTypes', s.regionalIncidentTypes, 7, '每行：标签 | 引导描述 | 权重（留空用默认城市级表；权重 0 或非法行跳过）')}
+                <div class="st-desc" style="margin-top:3px">默认表：治安恶化/火灾/意外事故/失踪案件/恶性凶案/骚乱集会/疫病苗头/物资波动——灾变类按战役自行加行（如"邪教活动 | 隐秘集会与献祭迹象 | 12"）</div>
+              </div>
+            </div>
+          </div>
+          <div class="st-pane" id="l-dossier">
+            <div class="st-card"><span class="st-label">主角核心白名单（绝不背叛、绝不可能是间谍）</span>
+              ${stArea('coreTeam', s.coreTeam, 2, '逗号/换行分隔；留空则任何人都可能是间谍')}</div>
+            <div class="st-card"><span class="st-label">敌方阵营候选池（推演参考，具体敌人正文 AI 自选）</span>
+              ${stArea('enemyPool', s.enemyPool, 2, '逗号/换行分隔；留空则不注入')}</div>
+            <div class="st-card"><span class="st-label">最高附加铁律（拼到推演输入文末，压过默认规则）</span>
+              ${stArea('extraRules', s.extraRules, 3, '例：灰瘟与邪教无任何关系，禁止关联')}</div>
+          </div>
+          <div class="st-pane" id="l-sync">
+            ${syncSectionHtml('world', '世界书同步（→ 推演输入）')}
+          </div>
+          <div class="st-pane" id="l-prompt">
+            ${promptSectionHtml('director', '导演社论母版（推演 system 提示词）', DirectorPrompt)}
+          </div>
+          <div class="st-pane" id="l-diag">
+            <div class="st-card">
+              <div class="st-card-head"><span class="st-card-title">通讯诊断与档案回溯</span></div>
+              <div class="ad-btnrow" style="margin-top:0">
+                <button id="ad-debug-open" class="ad-row-btn">🐞 LLM 调试日志（最近 20 次）</button>
+                <button id="ad-history-open" class="ad-row-btn">🕘 历史记录（世界演变流水）</button>
+              </div>
+            </div>
+            <div class="st-card">${stRow('调试模式', '记录 LLM 请求/响应（控制台 + 日志查看）', stSwitch('debug', s.debug))}</div>
+            <div class="st-card">${stRow('皮肤', 'paper · 1920s 阿卡姆大报 / slate · 深色档案（MMS 基因）',
+              `<select id="ad-set-theme" class="st-select" style="max-width:280px">
+                <option value="paper">paper · 1920s 阿卡姆大报（默认）</option>
+                <option value="slate">slate · 深色档案（MMS 基因）</option>
+              </select>`)}</div>
+          </div>
+        </section>
+      </div>
+      <div class="st-foot">
+        <span class="colophon">PC 宽屏工作台 · 全部设置项 change 即时持久化</span>
+        <div style="display:flex;gap:8px">
+          <button id="ad-set-save" class="ad-row-btn" style="border-color:var(--ad-accent-dim);color:var(--ad-accent)">✓ 保存生效</button>
+          <button id="ad-set-close2" class="ad-row-btn">关闭</button>
         </div>
-        <textarea data-k="regionalIncidentTypes" rows="6" placeholder="类型表，每行：标签 | 引导描述 | 权重（权重 0 或非法行跳过；留空用默认表）&#10;例：邪教活动 | 隐秘集会与献祭迹象 | 12">${esc(s.regionalIncidentTypes || '')}</textarea>
-        <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">默认表：治安恶化/火灾/意外事故/失踪案件/恶性凶案/骚乱集会/疫病苗头/物资波动（轻量城市级）——灾变类按战役自行加行；留空即用默认表</span>
-      </div></div>
-      <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button><button id="ad-history-open">🕘 历史记录</button></div>
-      ${syncSectionHtml('world', '世界书同步（→ 推演输入）')}
-      ${promptSectionHtml('director', '副导演 · 提示词', DirectorPrompt)}
-      ${ep('director', '副导演 API（世界推演：派系/事件/风声/遇敌概率）')}
-      <div class="ad-btnrow">
-        <button class="primary" id="ad-set-save">保存</button>
-        <button id="ad-set-close">关闭</button>
       </div>`);
+    els.modalBox.classList.add('st-expanded');
     els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
 
+    // 栏目导航切换
+    els.modalBox.querySelectorAll('.st-nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        els.modalBox.querySelectorAll('.st-nav-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        els.modalBox.querySelectorAll('.st-pane').forEach(p => p.classList.remove('active'));
+        const pane = els.modalBox.querySelector(`#${btn.getAttribute('data-stab')}`);
+        if (pane) pane.classList.add('active');
+      });
+    });
+    // 步进器（± 按钮改值并触发 change 持久化）
+    els.modalBox.querySelectorAll('[data-step-k]').forEach(btn => {
+      btn.addEventListener('click', () => stepSyncValue(els.modalBox, btn.getAttribute('data-step-k'), Number(btn.getAttribute('data-step'))));
+    });
     // 全部设置项 change 即时持久化（不依赖"保存"按钮——名单/端点/楼数改完即生效）
     els.modalBox.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener('change', () => {
-        collectFormToSettings();
+        collectFormToSettings(els.modalBox);
         saveSettings(SETTINGS);
         // 推演开关切换即时生效：关→词条下灯；开→强制重写重新上灯
         if (el.getAttribute('data-k') === 'enabledDirector') applySwitches();
@@ -2701,14 +2907,14 @@
     const bindSyncOps = () => {
       els.modalBox.querySelectorAll('[data-sync-add]').forEach(btn => {
         btn.addEventListener('click', () => {
-          collectFormToSettings();
+          collectFormToSettings(els.modalBox);
           editSync[btn.getAttribute('data-sync-add')].push({ book: '', entries: [] });
           renderSettingsModal();
         });
       });
       els.modalBox.querySelectorAll('[data-sync-book]').forEach(sel => {
         sel.addEventListener('change', () => {
-          collectFormToSettings();
+          collectFormToSettings(els.modalBox);
           const [slot, i] = sel.getAttribute('data-sync-book').split(':');
           editSync[slot][+i].book = sel.value;
           editSync[slot][+i].entries = [];
@@ -2718,14 +2924,14 @@
       });
       els.modalBox.querySelectorAll('[data-sync-pick]').forEach(btn => {
         btn.addEventListener('click', () => {
-          collectFormToSettings();
+          collectFormToSettings(els.modalBox);
           const [slot, i] = btn.getAttribute('data-sync-pick').split(':');
           openSyncPicker(slot, +i);
         });
       });
       els.modalBox.querySelectorAll('[data-sync-del]').forEach(btn => {
         btn.addEventListener('click', () => {
-          collectFormToSettings();
+          collectFormToSettings(els.modalBox);
           const [slot, i] = btn.getAttribute('data-sync-del').split(':');
           editSync[slot].splice(+i, 1);
           persistSyncNow();   // 删除即时保持
@@ -2737,17 +2943,17 @@
     bindPromptOps({ director: DirectorPrompt });
 
     els.modalBox.querySelector('#ad-debug-open').addEventListener('click', () => {
-      collectFormToSettings();   // 先收表单（含调试开关），再打开日志
+      collectFormToSettings(els.modalBox);   // 先收表单（含调试开关），再打开日志
       openDebugModal();
     });
 
     els.modalBox.querySelector('#ad-history-open').addEventListener('click', () => {
-      collectFormToSettings();
+      collectFormToSettings(els.modalBox);
       openHistoryModal();
     });
 
-    els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
-      collectFormToSettings();
+    const saveAndClose = () => {
+      collectFormToSettings(els.modalBox);
       persistSyncNow();
       applySwitches();   // 开关状态兜底生效（表单与即时监听一致时幂等）
       if (SETTINGS.enabledDirector) scheduleDispatch('settings-saved');
@@ -2756,8 +2962,183 @@
       applyTheme(theme);
       toast('设置已保存');
       closeModal();
-    });
+    };
+    els.modalBox.querySelector('#ad-set-save').addEventListener('click', saveAndClose);
+    els.modalBox.querySelector('#ad-set-close2').addEventListener('click', closeModal);
     els.modalBox.querySelector('#ad-set-close').addEventListener('click', closeModal);
+  }
+
+  // —— 移动端面板内切设置视图（V0.3.7：#ad-panel 原位切换，零弹窗；4-Tab 卡片）———
+
+  let mobileSettingsActive = false;
+  let mobileTab = 'm-wire';
+  let mobileStageBackup = '';   // 进入设置视图前的报头阶段文本（返回时还原）
+
+  function stSwitchRow(label, desc, k, on) {
+    return `<div class="st-row" style="margin-bottom:8px"><div><span class="st-label">${label}</span>${desc ? `<div class="st-desc">${desc}</div>` : ''}</div>${stSwitch(k, on)}</div>`;
+  }
+
+  function renderMobileSettings() {
+    const s = SETTINGS;
+    const root = els.viewSettings;
+    const promptData = DirectorPrompt.load();
+    const promptActive = promptData.presets.find(p => p.id === promptData.active) || promptData.presets[0];
+    const promptOptions = promptData.presets.map(p =>
+      `<option value="${esc(p.id)}" ${p.id === promptData.active ? 'selected' : ''}>${esc(p.name)}${p.locked ? ' 🔒' : ''}</option>`).join('');
+    const syncChips = (SETTINGS.worldSync || []).map(src =>
+      `<span class="st-chip">${esc(src.book)}（${src.entries.length} 词条）</span>`).join('')
+      || '<span class="st-desc">未配置——世界书同步的编辑请使用 PC 端设置。</span>';
+    const tabs = [
+      ['m-wire', '📡 电传步调'], ['m-combat', '🎲 遭遇突发'], ['m-dossier', '📜 人事档案'], ['m-codex', '✍ 母版日志'],
+    ];
+    root.innerHTML = `
+      <div class="mv-tabs">
+        ${tabs.map(([id, label]) => `<button class="mv-tab${id === mobileTab ? ' active' : ''}" data-mtab="${id}">${label}</button>`).join('')}
+      </div>
+      <div class="mv-body">
+        <div class="mv-pane${mobileTab === 'm-wire' ? ' active' : ''}" id="m-wire">
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">副导演 API 线路</span></div>
+            <div class="st-field"><span class="st-label">Base URL</span>${stInput('director.baseUrl', s.director.baseUrl, 'https://…/v1')}</div>
+            <div class="st-field"><span class="st-label">API Key</span>${stInput('director.apiKey', s.director.apiKey, 'sk-…')}</div>
+            <div class="st-field"><span class="st-label">Model 名</span>${stInput('director.model', s.director.model, '模型名')}</div>
+            <div class="st-grid2">
+              <div class="st-field"><span class="st-label">温度</span>${stNum('director.temperature', s.director.temperature, 0.1, 0, 2)}</div>
+              <div class="st-field"><span class="st-label">MaxTokens</span>${stNum('director.maxTokens', s.director.maxTokens, 100, 256)}</div>
+            </div>
+          </div>
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">世界推演调度</span></div>
+            ${stSwitchRow('世界推演总开关', '推演 $ad_world 并写入词条', 'enabledDirector', s.enabledDirector)}
+            <hr class="st-hr">
+            ${stRow('推演心跳间隔（楼）', '常态每隔 N 楼常规推演一次', stStepper('directorEveryX', s.directorEveryX, 1, 1))}
+          </div>
+        </div>
+        <div class="mv-pane${mobileTab === 'm-combat' ? ' active' : ''}" id="m-combat">
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">街头随机遭遇</span></div>
+            ${stSwitchRow('每楼随机遭遇掷骰', '命中即追加强制开战指令', 'randomCombatEnabled', s.randomCombatEnabled)}
+            ${stRow('基准遇敌率（%）', '兜底值，命中 spots 时被覆盖', stStepper('randomCombatChance', s.randomCombatChance, 1, 0, 100))}
+            <hr class="st-hr">
+            ${stSwitchRow('防连战锁', '每推演周期最多一场', 'randomCombatOncePerCycle', s.randomCombatOncePerCycle)}
+            ${stSwitchRow('战斗结束冷却', `结束后 ${s.randomCombatCooldownFloors} 楼内不掷随机`, 'randomCombatCooldown', s.randomCombatCooldown)}
+            ${stRow('冷却楼数', '', stStepper('randomCombatCooldownFloors', s.randomCombatCooldownFloors, 1, 0))}
+          </div>
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件</span></div>
+            ${stSwitchRow('本地事件掷骰', '类型掷骰本地定，内容推演生成', 'regionalIncidentEnabled', s.regionalIncidentEnabled)}
+            <div class="st-grid3">
+              <div class="st-field"><span class="st-label">概率(%/楼)</span>${stNum('regionalIncidentChance', s.regionalIncidentChance, 0.5, 0, 100)}</div>
+              <div class="st-field"><span class="st-label">持续楼数</span>${stNum('regionalIncidentDuration', s.regionalIncidentDuration, 1, 1)}</div>
+              <div class="st-field"><span class="st-label">冷却楼数</span>${stNum('regionalIncidentCooldown', s.regionalIncidentCooldown, 1, 0)}</div>
+            </div>
+            <div class="st-field"><span class="st-label">类型与权重表</span>
+              ${stArea('regionalIncidentTypes', s.regionalIncidentTypes, 4, '每行：标签 | 引导 | 权重（留空用默认表）')}</div>
+          </div>
+        </div>
+        <div class="mv-pane${mobileTab === 'm-dossier' ? ' active' : ''}" id="m-dossier">
+          <div class="st-card"><span class="st-label">主角核心白名单（绝不背叛）</span>${stArea('coreTeam', s.coreTeam, 2, '逗号/换行分隔')}</div>
+          <div class="st-card"><span class="st-label">敌方阵营候选池（推演参考）</span>${stArea('enemyPool', s.enemyPool, 2, '逗号/换行分隔')}</div>
+          <div class="st-card"><span class="st-label">附加最高铁律（推演文末，最高优先级）</span>${stArea('extraRules', s.extraRules, 3, '世界观纠偏/尺度约束')}</div>
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">世界书同步词条</span></div>
+            <div class="st-chips">${syncChips}</div>
+          </div>
+        </div>
+        <div class="mv-pane${mobileTab === 'm-codex' ? ' active' : ''}" id="m-codex">
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">副导演提示词预设</span>${promptActive && promptActive.locked ? '<span class="st-desc" style="color:var(--ad-accent);font-weight:bold">🔒 官方内置</span>' : ''}</div>
+            <select id="ad-m-prompt-sel" class="st-select" style="margin-bottom:6px">${promptOptions}</select>
+            <button id="ad-m-prompt-add" class="ad-row-btn" style="width:100%">＋ 复制新建预设</button>
+          </div>
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">通讯诊断与记录</span></div>
+            <div style="display:flex;gap:6px">
+              <button id="ad-m-debug" class="ad-row-btn" style="flex:1">🐞 LLM 日志</button>
+              <button id="ad-m-history" class="ad-row-btn" style="flex:1">🕘 历史记录</button>
+            </div>
+            <hr class="st-hr">
+            ${stSwitchRow('调试模式', '记录 LLM 请求/响应', 'debug', s.debug)}
+          </div>
+        </div>
+      </div>
+      <div class="mv-foot">
+        <button id="ad-m-back" class="ad-row-btn">← 返回增刊</button>
+        <button id="ad-m-save" class="ad-row-btn" style="border-color:var(--ad-accent-dim);color:var(--ad-accent)">✓ 保存生效</button>
+      </div>`;
+
+    // tab 切换
+    root.querySelectorAll('[data-mtab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        mobileTab = btn.getAttribute('data-mtab');
+        root.querySelectorAll('.mv-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        root.querySelectorAll('.mv-pane').forEach(p => p.classList.remove('active'));
+        const pane = root.querySelector(`#${mobileTab}`);
+        if (pane) pane.classList.add('active');
+      });
+    });
+    // 步进器
+    root.querySelectorAll('[data-step-k]').forEach(btn => {
+      btn.addEventListener('click', () => stepSyncValue(root, btn.getAttribute('data-step-k'), Number(btn.getAttribute('data-step'))));
+    });
+    // 表单即时持久化（只收移动端容器——PC 弹窗未打开，无陈旧覆盖风险）
+    root.querySelectorAll('[data-k]').forEach(input => {
+      input.addEventListener('change', () => {
+        collectFormToSettings(root);
+        saveSettings(SETTINGS);
+        if (input.getAttribute('data-k') === 'enabledDirector') applySwitches();
+      });
+    });
+    // 提示词预设（复用 store；sel/add 即时生效）
+    const promptSel = root.querySelector('#ad-m-prompt-sel');
+    if (promptSel) promptSel.addEventListener('change', () => {
+      DirectorPrompt.select(promptSel.value);
+      renderMobileSettings();
+    });
+    const promptAdd = root.querySelector('#ad-m-prompt-add');
+    if (promptAdd) promptAdd.addEventListener('click', () => {
+      const name = prompt('新提示词预设名称：', '');
+      if (!name) return;
+      DirectorPrompt.add(name);
+      renderMobileSettings();
+    });
+    const mDebug = root.querySelector('#ad-m-debug');
+    if (mDebug) mDebug.addEventListener('click', () => { collectFormToSettings(root); openDebugModal(); });
+    const mHistory = root.querySelector('#ad-m-history');
+    if (mHistory) mHistory.addEventListener('click', () => { collectFormToSettings(root); openHistoryModal(); });
+    root.querySelector('#ad-m-back').addEventListener('click', closeMobileSettings);
+    root.querySelector('#ad-m-save').addEventListener('click', () => {
+      collectFormToSettings(root);
+      saveSettings(SETTINGS);
+      applySwitches();
+      if (SETTINGS.enabledDirector) scheduleDispatch('mobile-settings-saved');
+      toast('设置已保存');
+      closeMobileSettings();
+    });
+  }
+
+  function toggleMobileSettings() {
+    if (mobileSettingsActive) closeMobileSettings();
+    else {
+      mobileSettingsActive = true;
+      renderMobileSettings();
+      els.viewNews.style.display = 'none';
+      els.viewSettings.style.display = 'flex';
+      if (els.headTitle) els.headTitle.textContent = '⚙ 设定增刊 · PREFERENCES';
+      const stage = els.mastStageSlate || els.mastStage;
+      if (stage) { mobileStageBackup = stage.textContent; stage.textContent = '设置中'; }
+      log('移动端设置视图（面板内切，零弹窗）');
+    }
+  }
+  function closeMobileSettings() {
+    mobileSettingsActive = false;
+    els.viewSettings.style.display = 'none';
+    els.viewNews.style.display = 'flex';
+    if (els.headTitle) els.headTitle.textContent = '悉尼星期增刊 · GAZETTE';
+    const stage = els.mastStageSlate || els.mastStage;
+    if (stage && mobileStageBackup) stage.textContent = mobileStageBackup;
+    mobileStageBackup = '';
   }
 
   // —— LLM 调试日志弹窗（最近 20 次请求/响应；debug 开关开启时记录）—————————
@@ -3023,6 +3404,8 @@
     getHistory, pushHistory, clearHistory, diffWorld, openHistoryModal,
     parseIncidentTypes, weightedPickIncident, rollRegionalIncident,
     buildIncidentDirective, buildIncidentOngoing, mergeIncident, DEFAULT_INCIDENT_TYPES_TEXT,
+    // 设置 UI 双路分流（V0.3.7）
+    isMobileDevice, toggleMobileSettings, closeMobileSettings, renderSettingsModal,
     EV_STAGES, STAGE_SCORE, clamp,
     // LLM 客户端与推演层
     callLLM, extractJson,
