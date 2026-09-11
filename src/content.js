@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.5
+// @version      0.3.6
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.5';
+  const SCRIPT_VERSION = '0.3.6';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -67,6 +67,21 @@
   const WIND_BASE = 10;        // 消散概率基线（%）
   const WIND_LINEAR = 15;      // 每楼线性递增（%）
 
+  // —— 区域突发事件（S9，仿世界引擎 REGIONAL_INCIDENT；类型本地掷骰 + 内容 LLM 生成）———
+  // 默认类型表（设置内 textarea 可编辑）：每行"标签 | 引导描述 | 权重"——
+  // 轻量中性城市级事件（灾变级默认不提供，按战役自行加行）；引导只给灵感方向，
+  // 事件具体内容（标题/范围/影响/风声/涉及派系）由推演 LLM 按当前世界观生成。
+  const DEFAULT_INCIDENT_TYPES_TEXT = [
+    '治安恶化 | 街面盗抢、斗殴、破坏等治安事件明显增多，警方或自治力量加强巡逻 | 18',
+    '火灾 | 某处发生区域性火灾，波及建筑、仓储、船只或设施，引发救援与围观 | 14',
+    '意外事故 | 坍塌、车祸、海难、机械故障等突发事故，造成伤亡或阻断通行 | 12',
+    '失踪案件 | 数人接连失踪，亲友报案，邻里不安，流言四起 | 12',
+    '恶性凶案 | 一宗足以引发区域恐慌的凶案，现场或手法异于常案 | 10',
+    '骚乱集会 | 人群聚集事件：抗议、械斗、踩踏、骚乱，军警介入 | 10',
+    '疫病苗头 | 原因不明的发热或皮疹病例出现，药房相关药品被抢购 | 9',
+    '物资波动 | 某类生活或工业物资突然紧缺或价格异动，囤积与抢购出现 | 8',
+  ].join('\n');
+
   // ═════════════════════════════════════════════════════════════════════
   // 1. 设置管理（localStorage，AiRadio 模式）
   // ═════════════════════════════════════════════════════════════════════
@@ -89,6 +104,11 @@
       randomCombatOncePerCycle: true, // 防连战锁：每个推演周期（两次推演之间）最多一场随机战斗
       randomCombatCooldown: true,     // 战斗结束冷却开关：任意战斗（含剧情战）结束后 N 楼内不掷随机——只拦本插件掷骰
       randomCombatCooldownFloors: 3,  // 冷却楼数（战斗结束楼起算）
+      regionalIncidentEnabled: true, // 区域突发事件总开关：本地掷骰定类型，LLM 按世界观生成事件内容
+      regionalIncidentChance: 1,     // 触发概率（百分比/楼）
+      regionalIncidentDuration: 5,   // 事件持续楼数（期间推演延续余波）
+      regionalIncidentCooldown: 5,   // 消散后冷却楼数
+      regionalIncidentTypes: '',     // 类型表（空串=用默认表；每行"标签 | 引导 | 权重"）
       debug: false,           // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
@@ -131,6 +151,11 @@
       randomCombatOncePerCycle: saved.randomCombatOncePerCycle !== undefined ? saved.randomCombatOncePerCycle !== false : true,
       randomCombatCooldown: saved.randomCombatCooldown !== undefined ? saved.randomCombatCooldown !== false : true,
       randomCombatCooldownFloors: Number.isFinite(saved.randomCombatCooldownFloors) && saved.randomCombatCooldownFloors >= 0 ? saved.randomCombatCooldownFloors : 3,
+      regionalIncidentEnabled: saved.regionalIncidentEnabled !== undefined ? saved.regionalIncidentEnabled !== false : true,
+      regionalIncidentChance: Number.isFinite(saved.regionalIncidentChance) ? saved.regionalIncidentChance : 1,
+      regionalIncidentDuration: Number.isFinite(saved.regionalIncidentDuration) && saved.regionalIncidentDuration >= 1 ? saved.regionalIncidentDuration : 5,
+      regionalIncidentCooldown: Number.isFinite(saved.regionalIncidentCooldown) && saved.regionalIncidentCooldown >= 0 ? saved.regionalIncidentCooldown : 5,
+      regionalIncidentTypes: typeof saved.regionalIncidentTypes === 'string' ? saved.regionalIncidentTypes : '',
       debug: saved.debug === true,
     };
   }
@@ -623,6 +648,7 @@
     randomCombatFired: false, // 防连战锁：本推演周期内已触发过随机战斗（推演成功解锁）
     combatLastSeen: false,    // 上楼检测时是否处于战斗中（true→false 跳变 = 战斗结束）
     combatEndFloorId: -1,     // 最近一次战斗结束的楼层号（其后 N 楼为随机遭遇冷却窗口）
+    pendingIncident: null,    // 区域突发事件挂起（{ type, guide }——掷中待生成/失败重试，推演成功回执后清除）
     tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
     pendingTimer: null,
   };
@@ -637,6 +663,7 @@
     State.randomCombatFired = s.randomCombatFired === true;
     State.combatLastSeen = s.combatLastSeen === true;
     State.combatEndFloorId = Number.isFinite(s.combatEndFloorId) ? s.combatEndFloorId : -1;
+    State.pendingIncident = (s.pendingIncident && s.pendingIncident.type) ? s.pendingIncident : null;
     State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
   }
   function persistRuntimeState() {
@@ -648,6 +675,7 @@
       randomCombatFired: State.randomCombatFired,
       combatLastSeen: State.combatLastSeen,
       combatEndFloorId: State.combatEndFloorId,
+      pendingIncident: State.pendingIncident || null,
       tickerHeads: State.tickerHeads,
       savedAt: Date.now(),
     });
@@ -677,6 +705,7 @@
     State.randomCombatFired = false;
     State.combatLastSeen = false;
     State.combatEndFloorId = -1;
+    State.pendingIncident = null;
     State.tickerHeads = [];
     Trigger.lastDateKey = '';               // 换聊天：触发基线重建（首次 dispatch 记基线不触发）
     Trigger.lastStage = '';
@@ -805,8 +834,148 @@
     return false;
   }
 
+  // —— 区域突发事件（S9，仿世界引擎 REGIONAL_INCIDENT；单位=楼）—————————————
+  // 类型本地掷骰（权重轮盘）→ 触发强制推演（指令段指定类型，内容 LLM 按世界观生成）
+  // → 回执校验写入 world.incident（全局单例）→ 活跃期推演延续余波 → 到期消散 → 冷却。
+  // 挂起重试：pendingIncident 存在（生成中/生成失败）时跳过掷骰直接触发，推演自动并入指令。
+
+  // 类型表解析：每行"标签 | 引导 | 权重"；权重非法/0 跳过；空文本回落默认表
+  function parseIncidentTypes(text) {
+    const raw = String(text || '').trim();
+    const lines = (raw ? raw : DEFAULT_INCIDENT_TYPES_TEXT).split('\n');
+    const out = [];
+    for (const line of lines) {
+      const segs = line.split('|').map(s => s.trim());
+      if (segs.length < 3) continue;
+      const weight = Number(segs[2]);
+      if (!Number.isFinite(weight) || weight <= 0 || !segs[0]) continue;
+      out.push({ type: segs[0], guide: segs[1] || '', weight });
+    }
+    return out;
+  }
+
+  // 权重轮盘（世界引擎 weightedPick 同款）
+  function weightedPickIncident(types, rand) {
+    if (!types || !types.length) return null;
+    const total = types.reduce((s, t) => s + t.weight, 0);
+    if (total <= 0) return null;
+    let roll = rand() * total;
+    for (const t of types) {
+      roll -= t.weight;
+      if (roll < 0) return t;
+    }
+    return types[types.length - 1];
+  }
+
+  function incidentLabel(type) {
+    const found = parseIncidentTypes(SETTINGS.regionalIncidentTypes).find(t => t.type === type);
+    return found ? found.type : type;
+  }
+
+  // 掷中（或重试）→ 强制推演（fire-and-forget；busy 时 pendingIncident 已置位，下次推演并入）
+  function triggerIncidentEvolve(pick) {
+    State.pendingIncident = { type: pick.type, guide: pick.guide || '' };
+    persistRuntimeState();
+    log(`区域突发事件掷中：${pick.type}——触发强制推演`);
+    generateDirectorEvolve('regional-incident').catch(e => logWarn('区域突发事件推演异常', e));
+  }
+
+  // 每楼状态机（挂 dispatchNow，本地骰之前跑——幂等守卫读 lastDiceFloorId，更新留给 runLocalDice）
+  function rollRegionalIncident() {
+    const world = readChatVar(CV.world);
+    if (!world || !Array.isArray(world.events)) return false;
+    const floorId = currentFloorId();
+    if (floorId < 0 || floorId <= State.lastDiceFloorId) return false;
+    const inc = (world.incident && typeof world.incident === 'object') ? world.incident : null;
+    let changed = false;
+    if (inc && inc.active) {
+      inc.duration = Math.max(0, (inc.duration || 0) - 1);
+      if (inc.duration <= 0) {
+        const title = inc.title || '未命名区域事件';
+        Object.assign(inc, { active: false, title: '', type: '', zone: '', impact: '', duration: 0 });
+        inc.cooldown = Math.max(0, Number(SETTINGS.regionalIncidentCooldown) || 0);
+        pushHistory('incident', { phase: '消散', title });
+        toast(`区域事件已平息：${title}`);
+        log(`区域突发事件消散：${title}（冷却 ${inc.cooldown} 楼）`);
+      }
+      changed = true;
+    } else if (inc && (inc.cooldown || 0) > 0) {
+      inc.cooldown -= 1;
+      changed = true;
+    } else if (!SETTINGS.regionalIncidentEnabled) {
+      return false;   // 总开关：掷骰与重试静默（活跃事件的状态机照常跑——否则关开关会永久悬挂）
+    } else if (State.pendingIncident) {
+      // 挂起/重试优先：跳过掷骰，直接触发强制推演（同类型）
+      triggerIncidentEvolve(State.pendingIncident);
+    } else {
+      const chance = clamp(0, 100, Number(SETTINGS.regionalIncidentChance) || 0);
+      if (chance > 0 && Math.random() * 100 < chance) {
+        const picked = weightedPickIncident(parseIncidentTypes(SETTINGS.regionalIncidentTypes), Math.random);
+        if (picked) triggerIncidentEvolve(picked);
+      }
+    }
+    if (changed) writeChatVar(CV.world, world);
+    return changed;
+  }
+
+  // 强制指令段（掷中类型 → LLM 按世界观具象化；世界引擎 buildRegionalIncidentPrompt 铁律精华）
+  function buildIncidentDirective(pending) {
+    return `【本地骰子强制指令：本轮必须生成区域突发事件】
+本地骰子已判定触发区域突发事件，并指定类型：
+类型：${pending.type}
+类型说明：${pending.guide || '（无引导——按类型字面义生成）'}
+你必须根据当前世界状态，生成一个符合该类型的区域级突发事件（标题/范围/影响按当前世界观具象化），并织入世界状态：
+1. 事件影响一个明确的区域、街区、设施、道路或水域；
+2. 不是小插曲、路人噪音或单人偶发事故；
+3. 必须产生至少一条该事件的风声（winds）；
+4. 必须造成至少一种外溢影响：events（织入一个新事件，stage 从萌芽起）、encounter（该区遇敌概率上调）、或 factions 变动；
+5. 与玩家当前行为没有直接因果，不得写成已有仇敌、已有势力、已有事件链的阴谋结果；
+6. 不得凭空毁灭核心舞台或核心资产；若事件不在玩家所在区域，只作为远方消息与风声传播，不打断玩家行动；
+7. 禁止低价值事件（路人吵架、小偷小摸、醉汉闹事、普通邻里纠纷类）。
+额外返回字段（必须）："incident": { "title": "事件标题", "zone": "影响区域", "impact": "一句话区域后果" }。`;
+  }
+
+  // 持续中指令（活跃期每次推演注入：延续余波、禁止新开——防事件堆叠）
+  function buildIncidentOngoing(inc) {
+    return `【区域突发事件持续中（剩余 ${inc.duration || 1} 楼）】
+标题：${inc.title || '未命名'}${inc.type ? `（${inc.type}）` : ''}｜范围：${inc.zone || '未知'}｜影响：${inc.impact || ''}
+该事件仍处活跃期：本轮推演延续其余波（风声/事件推进/encounter/派系反应），不得写成已平息，也不得在 incident 字段生成新事件。`;
+  }
+
+  // 回执合并（generateDirectorEvolve 成功路径，writeChatVar 之前调用；对齐世界引擎 mergeRegionalIncident）
+  function mergeIncident(world, parsed) {
+    if (!State.pendingIncident) {
+      // 本地未掷中：丢弃 LLM 自发返回（防自发电）
+      if (parsed && parsed.incident) delete parsed.incident;
+      return;
+    }
+    const pending = State.pendingIncident;
+    const receipt = (parsed && parsed.incident && typeof parsed.incident === 'object') ? parsed.incident : null;
+    if (receipt && (receipt.title || receipt.zone || receipt.impact)) {
+      world.incident = {
+        active: true, type: pending.type,
+        title: String(receipt.title || '未命名区域事件'),
+        zone: String(receipt.zone || '未知区域'),
+        impact: String(receipt.impact || '区域秩序受到冲击。'),
+        duration: Math.max(1, Number(SETTINGS.regionalIncidentDuration) || 5),
+        cooldown: 0,
+      };
+      State.pendingIncident = null;
+      persistRuntimeState();
+      pushHistory('incident', { phase: '触发', type: pending.type, title: world.incident.title,
+        zone: world.incident.zone, impact: world.incident.impact });
+      toast(`⚡ 区域事件：${world.incident.title}（${world.incident.zone}）`);
+      log(`区域突发事件落地：${world.incident.title}（${pending.type}/${world.incident.zone}，持续 ${world.incident.duration} 楼）`);
+    } else {
+      // 无回执：pendingIncident 保留，下次推演优先重试同类型
+      toast('区域事件生成未返回，下次推演将重试');
+      logWarn('区域突发事件：推演未返回 incident 回执，保留 pending 下次重试');
+    }
+    if (parsed && parsed.incident) delete parsed.incident;   // 回执消费完毕，不进 world schema
+  }
+
   // —— 历史记录（V0.3.5，$ad_history 随聊天走）———————————————————————
-  // 三类：evolve（世界推演）/ combat（随机遭遇触发）/ system（楼层回滚、战斗结束）。
+  // 四类：evolve（世界推演）/ combat（随机遭遇触发）/ incident（区域突发事件）/ system（楼层回滚、战斗结束）。
   // 各类环形上限 50 条，最新在前。世界状态的演变过程从此前端可见。
 
   const HISTORY_LIMIT = 50;
@@ -817,11 +986,12 @@
       evolve: Array.isArray(h && h.evolve) ? h.evolve : [],
       combat: Array.isArray(h && h.combat) ? h.combat : [],
       system: Array.isArray(h && h.system) ? h.system : [],
+      incident: Array.isArray(h && h.incident) ? h.incident : [],
     };
   }
 
   function pushHistory(kind, entry) {
-    if (!['evolve', 'combat', 'system'].includes(kind)) return;
+    if (!['evolve', 'combat', 'system', 'incident'].includes(kind)) return;
     const h = getHistory();
     h[kind].unshift(Object.assign({ at: Date.now() }, entry));
     if (h[kind].length > HISTORY_LIMIT) h[kind].length = HISTORY_LIMIT;
@@ -901,6 +1071,7 @@
     }
     maybeRollbackWorld();   // S8：楼层回退检测（删楼/回退编辑 → 回滚到上一推演点）
     trackCombatEnd();       // V0.3.4：战斗结束检测（冷却窗口起点）
+    rollRegionalIncident(); // S9：区域突发事件状态机（活跃/消散/冷却/重试/掷骰——先于本地骰，幂等守卫共享）
     runLocalDice();   // 本地骰（事件链/风声）——在构建注入前推进
     const world = readChatVar(CV.world) || null;
 
@@ -1338,6 +1509,11 @@
       extraRules: String(SETTINGS.extraRules || '').trim(),
       knownFactions: roster.factions, roster,
       lastWorld: readChatVar(CV.world) || null,   // 上次世界状态（含本地骰推进结果）——增量修订式推演
+      pendingIncident: State.pendingIncident || null,   // S9：掷中待生成/失败重试的区域事件（指令段）
+      activeIncident: (() => {
+        const w = readChatVar(CV.world);
+        return (w && w.incident && w.incident.active) ? w.incident : null;   // 活跃期（Ongoing 指令段）
+      })(),
     };
   }
 
@@ -1385,6 +1561,9 @@
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
       // ⑨ 上次世界状态——增量修订的基线（含程序本地骰已推进的事件进度）
       `【上次世界状态（增量修订基线：延续未完结事件/未消散风声/三态）】\n${ctx.lastWorld ? JSON.stringify(ctx.lastWorld, null, 1) : '（首次推演——从零建立）'}`,
+      // ⑨b 区域突发事件指令段（S9）：掷中/重试 → 强制生成指令；活跃期 → 延续余波指令（互斥）
+      ...(ctx.pendingIncident ? [buildIncidentDirective(ctx.pendingIncident)]
+        : (ctx.activeIncident ? [buildIncidentOngoing(ctx.activeIncident)] : [])),
       // ⑩ 附加铁律（用户手输，最高优先级）——放文末：末尾注意力区块，压过前文的默认规则
       ...(ctx.extraRules ? [`【附加铁律（用户指定，优先级高于本文所有默认规则）】\n${ctx.extraRules}`] : []),
     ].join('\n\n');
@@ -1526,6 +1705,12 @@
     ].filter(Boolean).join('');
     // 段落 = [标签名, 列表行]；标签内两空格缩进 "- " 列表，段间空行
     const sections = [];
+    const inc = (world.incident && world.incident.active) ? world.incident : null;
+    if (inc) {
+      sections.push(['区域动态', [
+        `  - ⚠ ${inc.title || '未命名区域事件'}${inc.type ? `（${inc.type}）` : ''}·范围：${inc.zone || '未知'}·剩余 ${inc.duration || 1} 楼——${inc.impact || ''}`,
+      ]]);
+    }
     const events = (world.events || []).filter(ev => ev && ev.stage !== '平息');
     if (events.length) {
       sections.push(['进行中的事件（程序每楼掷骰推进，阶段与进度可能已变化）', events.map(ev =>
@@ -1619,6 +1804,10 @@
       const prevWorld = readChatVar(CV.world);
       if (prevWorld && Array.isArray(prevWorld.factions)) writeChatVar(CV.worldCheckpoint, prevWorld);
       world.floorId = currentFloorId();   // 回滚检测锚点（-1=拿不到楼号 → 永不触发回滚，安全）
+      // S9：活跃区域事件从旧世界继承（validateWorld 构造的是全新对象——不继承会丢事件），
+      // 随后 mergeIncident 决定覆盖（本次掷中回执）或保留
+      if (prevWorld && prevWorld.incident) world.incident = prevWorld.incident;
+      mergeIncident(world, parsed);
       pushHistory('evolve', { reason, round: world.round, digest: world.digest || '',
         factions: world.factions.length, events: world.events.length, winds: world.winds.length,
         changes: diffWorld(prevWorld, world) });
@@ -2161,6 +2350,10 @@
           && eventZones(ev, world).some(z => zoneHit(z, State.lastLocationText)));
         const parts = [];
         if (stationed.length) parts.push(`${stationed.map(f => `${f.name}${f.morale ? '（' + f.morale + '）' : ''}`).join('、')}在此活动`);
+        const incActive = (world.incident && world.incident.active) ? world.incident : null;
+        if (incActive && incActive.zone && zoneHit(incActive.zone, State.lastLocationText)) {
+          parts.push(`【⚠ 区域事件：${incActive.title || '未命名'}】${incActive.impact || ''}`);
+        }
         if (hot.length) parts.push(`【⚠ ${hot[0].name}已到爆发阶段——冲突一触即发】`);
         if (profile.why) parts.push(profile.why);
         else if (profile.heatWhy && (profile.heat !== 0 || profile.tension !== 0)) parts.push(profile.heatWhy);
@@ -2474,6 +2667,17 @@
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="debug" ${s.debug ? 'checked' : ''}> 记录 LLM 请求/响应（控制台 + 日志查看）</label></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">⚡ 区域突发事件</label><div style="display:flex;flex-direction:column;gap:4px;width:100%">
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="regionalIncidentEnabled" ${s.regionalIncidentEnabled ? 'checked' : ''}> 本地掷骰触发区域事件（类型掷骰本地定，事件内容由推演按世界观生成）</label>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <label style="width:auto;color:var(--ad-ink-dim)">触发
+            <input type="number" step="0.5" min="0" max="100" data-k="regionalIncidentChance" value="${s.regionalIncidentChance}" style="width:56px">% / 楼 · 持续
+            <input type="number" step="1" min="1" data-k="regionalIncidentDuration" value="${s.regionalIncidentDuration}" style="width:48px"> 楼 · 冷却
+            <input type="number" step="1" min="0" data-k="regionalIncidentCooldown" value="${s.regionalIncidentCooldown}" style="width:48px"> 楼</label>
+        </div>
+        <textarea data-k="regionalIncidentTypes" rows="6" placeholder="类型表，每行：标签 | 引导描述 | 权重（权重 0 或非法行跳过；留空用默认表）&#10;例：邪教活动 | 隐秘集会与献祭迹象 | 12">${esc(s.regionalIncidentTypes || '')}</textarea>
+        <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">默认表：治安恶化/火灾/意外事故/失踪案件/恶性凶案/骚乱集会/疫病苗头/物资波动（轻量城市级）——灾变类按战役自行加行；留空即用默认表</span>
+      </div></div>
       <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button><button id="ad-history-open">🕘 历史记录</button></div>
       ${syncSectionHtml('world', '世界书同步（→ 推演输入）')}
       ${promptSectionHtml('director', '副导演 · 提示词', DirectorPrompt)}
@@ -2567,6 +2771,7 @@
     const tabs = [
       ['evolve', `📡 推演（${h.evolve.length}）`],
       ['combat', `🎲 随机遭遇（${h.combat.length}）`],
+      ['incident', `🎯 突发事件（${h.incident.length}）`],
       ['system', `⚙ 系统事件（${h.system.length}）`],
     ];
     const timeStr = at => new Date(at || Date.now()).toLocaleString();
@@ -2587,6 +2792,15 @@
           <span class="place">🎲 ${esc(String(e.location || '').slice(0, 24) || '未知地点')}</span>
           <span class="meta">${timeStr(e.at)} · ${e.chance ?? '?'}%（${esc(e.via || '')}${e.heat ? ' · heat' + e.heat : ''}${e.tension ? ' · 张力' + e.tension : ''}）</span>
         </div>`).join('') || '<div class="dim" style="padding:8px 2px">尚无随机遭遇记录。</div>';
+    } else if (historyTab === 'incident') {
+      list = h.incident.map(e => `
+        <div class="ad-card-item" style="cursor:default;align-items:flex-start;flex-direction:column;gap:2px">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <span class="place">${e.phase === '消散' ? '🌫 消散' : '⚡ 触发'} ${esc(e.title || '')}</span>
+            <span class="meta">${timeStr(e.at)}${e.phase !== '消散' && e.type ? ' · ' + esc(e.type) : ''}${e.zone ? ' · ' + esc(e.zone) : ''}</span>
+          </div>
+          ${e.impact ? `<div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">${esc(e.impact)}</div>` : ''}
+        </div>`).join('') || '<div class="dim" style="padding:8px 2px">尚无突发事件记录。</div>';
     } else {
       list = h.system.map(e => `
         <div class="ad-card-item" style="cursor:default">
@@ -2686,10 +2900,23 @@
     ].join('');
     const forb = ((world.resistance && world.resistance.forbidden) || [])
       .map(x => `<div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">· ${esc(x.truth)}【途径：${esc(x.path)}】</div>`).join('');
+    const inc = (world.incident && world.incident.active) ? world.incident : null;
+    const incRows = inc
+      ? `<div class="ad-sec-title">区域突发事件（剩余 ${inc.duration || 1} 楼）</div>
+        <div class="ad-card-item" style="cursor:default;align-items:flex-start;flex-direction:column;gap:2px;border-color:var(--ad-accent-dim)">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <span class="place">⚠ ${esc(inc.title || '未命名')}</span>
+            <span class="meta">${esc(inc.type || '')} · ${esc(inc.zone || '')}</span>
+          </div>
+          <div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">${esc(inc.impact || '')}</div>
+        </div>`
+      : (world.incident && (world.incident.cooldown || 0) > 0
+        ? `<div class="ad-sec-title">区域突发事件</div><div class="dim">已消散（冷却剩余 ${world.incident.cooldown} 楼）</div>` : '');
     openModal(`
       <h3>🌍 世界状态 · 第 ${world.round || 1} 轮${world.digest ? ` · ${esc(world.digest)}` : ''}</h3>
       <div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-bottom:8px">
         生成于 ${new Date(world.generatedAt || Date.now()).toLocaleString()}（触发：${esc(world.reason || '—')}）</div>
+      ${incRows}
       <div class="ad-sec-title">事件链（本地骰每楼推进）</div>${evRows}
       <div class="ad-sec-title">风声（安静超时按概率消散）</div>${windRows}
       <div class="ad-sec-title">派系动向（暗线三态）</div>${facRows}
@@ -2792,8 +3019,10 @@
     // 本地骰（S7）与 checkpoint 回滚（S8）与战斗冷却（V0.3.4）
     rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension, maybeRollbackWorld,
     trackCombatEnd, combatCooldownActive,
-    // 历史记录（V0.3.5）
+    // 历史记录（V0.3.5）与区域突发事件（S9）
     getHistory, pushHistory, clearHistory, diffWorld, openHistoryModal,
+    parseIncidentTypes, weightedPickIncident, rollRegionalIncident,
+    buildIncidentDirective, buildIncidentOngoing, mergeIncident, DEFAULT_INCIDENT_TYPES_TEXT,
     EV_STAGES, STAGE_SCORE, clamp,
     // LLM 客户端与推演层
     callLLM, extractJson,

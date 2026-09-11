@@ -273,7 +273,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.5（历史记录模块）', json.content.includes("@version      0.3.5"));
+  assert('版本 v0.3.6（区域突发事件）', json.content.includes("@version      0.3.6"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -494,9 +494,11 @@ async function runAll() {
   MOCK.reset();
   assert('运行时状态持久化 $ad_state（含 wbLast.director 上次纯内容）', (() => { AD.persistRuntimeState(); return MOCK.chat.$ad_state && typeof MOCK.chat.$ad_state.wbLast === 'object' && typeof MOCK.chat.$ad_state.wbLast.director === 'string' && typeof MOCK.chat.$ad_state.lastLocationText === 'string' && typeof MOCK.chat.$ad_state.randomCombatFired === 'boolean'; })());
   const s = AD.loadSettings();
-  assert('设置默认结构（单副导演端点 + 推演开关 + 心跳 + 防连战锁 + 战斗冷却）', s.enabledDirector === true && s.director && s.directorEveryX === 3
+  assert('设置默认结构（单端点 + 推演开关 + 心跳 + 防连战锁 + 战斗冷却 + 区域突发事件）', s.enabledDirector === true && s.director && s.directorEveryX === 3
     && s.randomCombatEnabled === true && s.randomCombatOncePerCycle === true
-    && s.randomCombatCooldown === true && s.randomCombatCooldownFloors === 3 && s.directorFloors === 20);
+    && s.randomCombatCooldown === true && s.randomCombatCooldownFloors === 3 && s.directorFloors === 20
+    && s.regionalIncidentEnabled === true && s.regionalIncidentChance === 1
+    && s.regionalIncidentDuration === 5 && s.regionalIncidentCooldown === 5 && s.regionalIncidentTypes === '');
   s.director.baseUrl = 'https://api.example.com/v1'; s.enabledDirector = false;
   AD.saveSettings(s);
   assert('设置保存到 localStorage 并读回', AD.loadSettings().director.baseUrl === 'https://api.example.com/v1'
@@ -1384,11 +1386,12 @@ async function runAll() {
       && AD.getHistory().system[0].note === '批量测试54');
     // 弹窗渲染：三 tab + 条目 + 清空
     AD.openHistoryModal();
-    assert('H3 历史弹窗渲染（三 tab 带 counts + 推演/遭遇空态提示）', (() => {
+    assert('H3 历史弹窗渲染（四 tab 带 counts + 推演/遭遇空态提示）', (() => {
       const box = document.getElementById('ad-modal-box');
       const tabs = [...box.querySelectorAll('[data-htab]')];
-      return tabs.length === 3 && tabs[0].textContent.includes('推演（0）')
-        && tabs[1].textContent.includes('随机遭遇（1）') && tabs[2].textContent.includes('系统事件（50）')
+      return tabs.length === 4 && tabs[0].textContent.includes('推演（0）')
+        && tabs[1].textContent.includes('随机遭遇（1）') && tabs[2].textContent.includes('突发事件（0）')
+        && tabs[3].textContent.includes('系统事件（50）')
         && box.textContent.includes('尚无推演记录');
     })());
     document.querySelector('#ad-modal-box [data-htab="combat"]').click();
@@ -1397,8 +1400,163 @@ async function runAll() {
       return box.textContent.includes('100%') && box.textContent.includes('绿顶酒馆');
     })());
     AD.clearHistory();
-    assert('H4 清空历史（三类全空）', AD.getHistory().evolve.length === 0
-      && AD.getHistory().combat.length === 0 && AD.getHistory().system.length === 0);
+    assert('H4 清空历史（四类全空）', AD.getHistory().evolve.length === 0
+      && AD.getHistory().combat.length === 0 && AD.getHistory().system.length === 0
+      && AD.getHistory().incident.length === 0);
+    MOCK.reset();
+  }
+
+  /* ——— S9：区域突发事件（类型表/轮盘/状态机/回执合并/指令注入/总开关）——— */
+  head('S9 区域突发事件');
+  {
+    // 纯函数：类型表解析
+    const types1 = AD.parseIncidentTypes('治安恶化 | 引导A | 18\n火灾 | 引导B | 14\n\n坏事 | 引导C | abc\n零权 | 引导D | 0');
+    assert('I1 类型表解析（合法行/空行跳过/非法权重跳过/权重0禁用）', types1.length === 2
+      && types1[0].type === '治安恶化' && types1[0].weight === 18 && types1[1].type === '火灾');
+    assert('I2 空文本回落默认表（8 类轻量中性，无灾变类）', AD.parseIncidentTypes('').length === 8
+      && AD.parseIncidentTypes('').some(t => t.type === '火灾')
+      && !AD.parseIncidentTypes('').some(t => /雪灾|地震|饥荒|叛乱/.test(t.type)));
+    const picked1 = AD.weightedPickIncident(types1, () => 0);
+    const picked2 = AD.weightedPickIncident(types1, () => 0.99);
+    assert('I3 权重轮盘（roll 极小取首项 / 极大取尾项）', picked1.type === '治安恶化' && picked2.type === '火灾');
+
+    // mock LLM + 状态机端到端
+    let s9Responder = null, s9LastPrompt = '';
+    window.fetch = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      s9LastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
+      const content = s9Responder ? s9Responder() : '{}';
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+    };
+    const s9 = AD.loadSettings();
+    s9.director = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s9.regionalIncidentEnabled = true; s9.regionalIncidentChance = 100;   // 概率 100% 必中
+    s9.regionalIncidentDuration = 2; s9.regionalIncidentCooldown = 2;
+    s9.directorEveryX = 99;   // 心跳永不触发（防 addFloor 累积计数干扰断言）
+    AD.saveSettings(s9);
+    MOCK.reset(); AD.loadRuntimeState();
+    AD.Trigger.busy = false; AD.Trigger.lastDateKey = ''; AD.Trigger.lastStage = '';
+    AD.Trigger.lastCombatResult = ''; AD.Trigger.lastFloorId = -1; AD.Trigger.floorsSinceEvolve = 0;
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=0
+    window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+
+    // 掷中触发强制推演 + 回执合并
+    s9Responder = () => JSON.stringify({
+      digest: '事件世界', factions: WORLD.factions, events: WORLD.events, winds: WORLD.winds,
+      encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [],
+      incident: { title: '码头大火', zone: '达令港', impact: '三号仓着火，货运中断' },
+    });
+    const rr = Math.random;
+    Math.random = () => 0;   // 概率骰 + 轮盘骰全命中首项（治安恶化）
+    AD.rollRegionalIncident();
+    Math.random = rr;
+    assert('I4 掷中触发强制推演（pendingIncident 置位，轮盘首项）', AD.state.pendingIncident !== null
+      && AD.state.pendingIncident.type === '治安恶化');
+    assert('I5 回执合并：world.incident 落地（type=本地指定，title/zone/impact/duration=LLM+设置）+ pending 清除', await waitFor(() => {
+      const w = MOCK.chat['$ad_world'];
+      return w && w.incident && w.incident.active === true && w.incident.type === '治安恶化'
+        && w.incident.title === '码头大火' && w.incident.zone === '达令港'
+        && w.incident.duration === 2 && AD.state.pendingIncident === null;
+    }, 8000));
+    assert('I6 指令段注入推演输入（强制指令 + 类型标签 + 引导 + 回执 schema）', s9LastPrompt.includes('本轮必须生成区域突发事件')
+      && s9LastPrompt.includes('治安恶化') && s9LastPrompt.includes('街面盗抢') && s9LastPrompt.includes('"incident"'));
+    assert('I7 历史入档（incident 类：触发 + 标题/类型/zone）', (() => {
+      const rec = AD.getHistory().incident.find(e => e.phase === '触发');
+      return rec && rec.title === '码头大火' && rec.type === '治安恶化' && rec.zone === '达令港';
+    })());
+    AD.state.wbLast.director = '';
+    AD.dispatchNow('s9-inject');
+    assert('I8 注入词条区域动态段（标题/范围/剩余楼数/影响）', await waitFor(() => {
+      const c = WB_MOCK.entry('副导演') || '';
+      return c.includes('区域动态') && c.includes('码头大火') && c.includes('达令港');
+    }, 4000));
+
+    // Ongoing：活跃期推演注入延续指令 + incident 跨推演继承
+    s9Responder = () => JSON.stringify({ digest: 'x', factions: WORLD.factions, events: WORLD.events,
+      winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [] });
+    await AD.generateDirectorEvolve('manual');
+    assert('I9 活跃期推演注入 Ongoing 指令（延续余波/禁新开）+ incident 跨推演继承', (() => {
+      const w = MOCK.chat['$ad_world'];
+      return s9LastPrompt.includes('区域突发事件持续中') && s9LastPrompt.includes('码头大火')
+        && s9LastPrompt.includes('不得在 incident 字段生成新事件')
+        && w && w.incident && w.incident.active === true && w.incident.title === '码头大火';
+    })());
+
+    // 持续期递减 → 消散 → 冷却递减
+    // 注：I8 的 dispatchNow 已消费首楼掷骰（lastDiceFloorId -1→0），incident duration 已 2→1
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } }); AD.dispatchNow('s9-d1');   // duration 1→0 → 消散，cooldown=2
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } }); AD.dispatchNow('s9-d2');   // cooldown 2→1
+    assert('I10 持续期递减 → 归零消散（字段清空 + cooldown 递减 + 历史记消散）', (() => {
+      const w = MOCK.chat['$ad_world'];
+      return w.incident.active === false && w.incident.cooldown === 1
+        && AD.getHistory().incident.some(e => e.phase === '消散' && e.title === '码头大火');
+    })());
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } }); AD.dispatchNow('s9-c1');   // cooldown 1→0，当楼不掷
+    assert('I11 冷却递减（归零当楼不掷——概率 100 也未触发）', (() => {
+      const w = MOCK.chat['$ad_world'];
+      return w.incident.cooldown === 0 && AD.state.pendingIncident === null;
+    })());
+
+    // 冷却归零后恢复掷骰（新一轮触发）
+    s9Responder = () => JSON.stringify({ digest: 'y', factions: WORLD.factions, events: WORLD.events,
+      winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [],
+      incident: { title: '疫情', zone: '禧市', impact: '发热病例' } });
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+    Math.random = () => 0;
+    AD.rollRegionalIncident();
+    Math.random = rr;
+    const resumed = await waitFor(() => (MOCK.chat['$ad_world'] || {}).incident
+      && MOCK.chat['$ad_world'].incident.title === '疫情' && AD.state.pendingIncident === null, 8000);
+    assert('I12 冷却归零后恢复掷骰（新一轮触发并落地）', resumed);
+
+    // mergeIncident 单测：无回执保留 pending；未掷中丢弃自发
+    {
+      const wTest = JSON.parse(JSON.stringify(WORLD));
+      AD.state.pendingIncident = { type: '火灾', guide: '' };
+      AD.mergeIncident(wTest, {});   // 无回执
+      assert('I13 无回执：pending 保留（下次推演重试）', AD.state.pendingIncident !== null
+        && AD.state.pendingIncident.type === '火灾');
+      AD.state.pendingIncident = null;
+      AD.mergeIncident(wTest, { incident: { title: 'LLM自发', zone: 'x', impact: 'y' } });
+      assert('I14 防自发电：本地未掷中时 LLM 自发 incident 被丢弃', !wTest.incident || wTest.incident.active !== true);
+    }
+
+    // 重试优先：pending 存在时新楼跳过掷骰直接触发（概率未中也触发）
+    // 前置：真实流中 pending 存在 ⇒ 事件必已消散（掷骰只在非活跃非冷却时进入）——构造消散态
+    s9Responder = () => JSON.stringify({ digest: 'z', factions: WORLD.factions, events: WORLD.events,
+      winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [],
+      incident: { title: '重试事件', zone: '萨里山', impact: '重试成功' } });
+    {
+      const wNow = JSON.parse(JSON.stringify(MOCK.chat['$ad_world']));
+      wNow.incident = { active: false, title: '', type: '', zone: '', impact: '', duration: 0, cooldown: 0 };
+      window.insertOrAssignVariables({ $ad_world: wNow }, { type: 'chat' });
+    }
+    AD.state.pendingIncident = { type: '火灾', guide: '引导F' };
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+    Math.random = () => 0.999;   // 概率骰未中——重试优先应无视
+    AD.rollRegionalIncident();
+    Math.random = rr;
+    const retried = await waitFor(() => (MOCK.chat['$ad_world'] || {}).incident
+      && MOCK.chat['$ad_world'].incident.title === '重试事件' && AD.state.pendingIncident === null, 8000);
+    assert('I15 重试优先：pending 存在时跳过掷骰直接触发（概率未中也触发，同类型指令）', retried
+      && s9LastPrompt.includes('本轮必须生成区域突发事件') && s9LastPrompt.includes('火灾'));
+
+    // 总开关：掷骰静默但活跃事件状态机照常
+    const s9z = AD.loadSettings();
+    s9z.regionalIncidentEnabled = false; AD.saveSettings(s9z);
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+    Math.random = () => 0;
+    AD.rollRegionalIncident();
+    Math.random = rr;
+    assert('I16 总开关关：掷骰与重试静默，活跃事件状态机照常（duration 递减）', (() => {
+      const w = MOCK.chat['$ad_world'];
+      return AD.state.pendingIncident === null && w.incident.active === true && w.incident.duration === 1;
+    })());
+    // 清理
+    s9z.regionalIncidentEnabled = true; s9z.regionalIncidentChance = 1;
+    s9z.regionalIncidentDuration = 5; s9z.regionalIncidentCooldown = 5; s9z.directorEveryX = 3;
+    s9z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
+    AD.saveSettings(s9z);
     MOCK.reset();
   }
 
