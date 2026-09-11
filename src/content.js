@@ -80,6 +80,8 @@
       worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
       worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
       shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
+      randomCombatEnabled: true, // 随机遭遇开关：每楼本地掷骰，命中即在用户本楼输入末尾追加强制开战指令
+      randomCombatChance: 5,    // 随机遭遇概率（百分比/楼）
       debug: false,             // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
@@ -112,6 +114,8 @@
         worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
         worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
         shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
+        randomCombatEnabled: saved.randomCombatEnabled !== undefined ? saved.randomCombatEnabled !== false : true,
+        randomCombatChance: Number.isFinite(saved.randomCombatChance) ? saved.randomCombatChance : 5,
         debug: saved.debug === true,
       };
     } catch (e) { return defaultSettings(); }
@@ -413,6 +417,7 @@
   // —— 事件封装 ——————————————————————————————————————————
 
   const EVT = {
+    started: 'GENERATION_STARTED',
     received: 'MESSAGE_RECEIVED',
     updated: 'MESSAGE_UPDATED',
     swiped: 'MESSAGE_SWIPED',
@@ -424,6 +429,44 @@
       else logWarn('未知事件名', name);
     } catch (e) { logWarn('bindEvent 失败', name, e); }
   }
+
+  // —— 随机遭遇掷骰（S6）—————————————————————————————————————
+  // 程序侧概率推进：正文 AI 自己掷不出真随机（注入文里写概率基本永远不触发），
+  // 故由本地在 GENERATION_STARTED（用户已发送、提示词未组装）时掷骰，
+  // 命中即把强制开战指令以用户身份追加进本楼输入末尾——随楼层生成自然持久化。
+
+  const RC_MARKER = '【🎲随机遭遇】';
+  const RC_DIRECTIVE = '本轮用户触发随机战斗，按【战斗轮规则】输出 Combat_block 块';
+
+  // 战斗进行中检测：最近一条可见 AI 楼含 <Combat_block> 即在战（RpgCombat 逐楼续写该块）
+  function combatInProgress() {
+    const chat = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext().chat : null;
+    if (!Array.isArray(chat)) return false;
+    for (let i = chat.length - 1; i >= 0; i--) {
+      const m = chat[i];
+      if (!m || m.is_user || m.is_system || m.is_hidden) continue;
+      return String(m.mes || '').includes('<Combat_block>');
+    }
+    return false;
+  }
+
+  function onGenerationStarted(type, _opts, dryRun) {
+    if (!SETTINGS.randomCombatEnabled) return;
+    if (dryRun || type === 'swipe' || type === 'regenerate') return;
+    const chat = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext().chat : null;
+    if (!Array.isArray(chat) || !chat.length) return;
+    const last = chat[chat.length - 1];
+    if (!last || last.is_user !== true) return;         // 只在用户刚发送的楼注入
+    const mes = String(last.mes || '');
+    if (mes.includes(RC_MARKER)) return;                // 防重复追加（含 swipe 后重跑）
+    if (State.lastMode === 'safe') return;              // 安全区豁免
+    if (combatInProgress()) return;                     // 战斗进行中不触发
+    if (Math.random() * 100 >= Number(SETTINGS.randomCombatChance) || 0) return;
+    last.mes = mes + '\n' + RC_MARKER + ' ' + RC_DIRECTIVE + '。';
+    toast('🎲 随机遭遇触发');
+    log(`随机遭遇命中（${SETTINGS.randomCombatChance}%/楼）——已注入用户本楼输入`);
+  }
+
 
   // ═════════════════════════════════════════════════════════════════════
   // 3. 楼层监听状态机
@@ -2312,6 +2355,13 @@
         <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledShadowline" ${s.enabledShadowline ? 'checked' : ''}> 暗线推演（报告 + 暗线词条注入）</label>
         <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledSituation" ${s.enabledSituation ? 'checked' : ''}> 态势配发（态势词条注入 + 即时产卡 + 预约引爆）</label>
       </div></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">🎲 随机遭遇</label><div style="display:flex;flex-direction:column;gap:4px">
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatEnabled" ${s.randomCombatEnabled ? 'checked' : ''}> 每楼掷骰，命中即在用户本楼输入末尾追加"强制开战"指令</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" step="1" min="0" max="100" data-k="randomCombatChance" value="${s.randomCombatChance}" style="width:64px">
+          <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">% / 楼 · 安全区与战斗进行中不掷骰</span>
+        </div>
+      </div></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">本轮敌人名单</label>
         <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 与暗线预约"规模"从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不校验 menu</span></div>
@@ -2679,6 +2729,7 @@
     buildUI();
     if (IS_LIVE) {
       loadRuntimeState();
+      bindEvent(EVT.started, onGenerationStarted);
       bindEvent(EVT.received, onFloorEvent);
       bindEvent(EVT.updated, onFloorEvent);
       bindEvent(EVT.swiped, onFloorEvent);
@@ -2717,6 +2768,8 @@
     validateReport, buildShadowlineInjection, checkAmbush,
     getRoster, saveRoster, addRosterFaction, tombstoneFaction, restoreFaction, openRosterModal,
     Trigger, statDateKey, statStage, statCity, openReportModal,
+    // S6：随机遭遇掷骰
+    onGenerationStarted, combatInProgress, RC_MARKER, RC_DIRECTIVE,
     DebugLog, openDebugModal, persistSyncNow,
     // 提示词预设（默认构造 + 两个 store 实例）
     DEFAULT_SHADOWLINE_SYS, DEFAULT_SITUATION_SYS, ShadowlinePrompt, SituationPrompt, getCoreTeam,

@@ -90,6 +90,7 @@ const MOCK = (function () {
   const realId = id => (id < 0 ? floorCount + id : id);
 
   window.tavern_events = {
+    GENERATION_STARTED: 'GENERATION_STARTED',
     MESSAGE_RECEIVED: 'MESSAGE_RECEIVED',
     MESSAGE_UPDATED: 'MESSAGE_UPDATED',
     MESSAGE_SWIPED: 'MESSAGE_SWIPED',
@@ -117,8 +118,8 @@ const MOCK = (function () {
     if (o.type === 'chat') store.chat = clone(vars) || {};
   };
   window.eventOn = function (name, cb) { listeners.push({ name, cb }); };
-  window.eventEmit = function (name) {
-    for (const l of listeners) if (l.name === name) try { l.cb(); } catch (e) { console.error(e); }
+  window.eventEmit = function (name, ...args) {
+    for (const l of listeners) if (l.name === name) try { l.cb(...args); } catch (e) { console.error(e); }
   };
 
   return {
@@ -1191,6 +1192,84 @@ async function runAll() {
   }
 
   /* ——— jsonc 导入容错 ——— */
+  /* ——— S6：随机遭遇掷骰（GENERATION_STARTED → 用户楼输入注入） ——— */
+  head('S6 随机遭遇掷骰（用户楼输入注入）');
+  {
+    const stChat = SillyTavern.getContext().chat;   // 与 ST_MOCK.chat 同引用
+    const BASE_LEN = stChat.length;
+    const realRandom = Math.random;
+    const s6 = AD.settings();                       // SETTINGS 同引用，就地改即时生效
+    const restore = () => {
+      while (stChat.length > BASE_LEN) stChat.pop();
+      Math.random = realRandom;
+      s6.randomCombatEnabled = true; s6.randomCombatChance = 5;
+      AD.state.lastMode = 'card';
+    };
+    const setupUserFloor = mes => { restore(); stChat.push({ mes, is_user: true, is_system: false }); };
+    const lastMes = () => String(stChat[stChat.length - 1].mes || '');
+
+    setupUserFloor('我们进酒馆喝一杯。');
+    Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('掷骰命中 → 用户楼末尾追加标记与指令（原文保留）',
+      lastMes().includes('我们进酒馆喝一杯。') && lastMes().includes(AD.RC_MARKER) && lastMes().includes(AD.RC_DIRECTIVE));
+
+    setupUserFloor('再去码头看看。');
+    Math.random = () => 0.999;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('掷骰未命中 → 原文不变', lastMes() === '再去码头看看。');
+
+    setupUserFloor('边界甲');
+    s6.randomCombatChance = 5; Math.random = () => 0.049;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('5% 边界：random=0.049 命中', lastMes().includes(AD.RC_MARKER));
+    setupUserFloor('边界乙');
+    Math.random = () => 0.051;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('5% 边界：random=0.051 不命中', !lastMes().includes(AD.RC_MARKER));
+    setupUserFloor('边界丙');
+    s6.randomCombatChance = 0; Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('概率 0 → 永不触发', !lastMes().includes(AD.RC_MARKER));
+    restore();
+
+    setupUserFloor('开关关');
+    s6.randomCombatEnabled = false; Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('开关关闭 → 不注入', !lastMes().includes(AD.RC_MARKER));
+    s6.randomCombatEnabled = true;
+    for (const [t, d] of [['swipe', false], ['regenerate', false], ['normal', true]]) {
+      setupUserFloor(`模式${t}`);
+      MOCK.eventEmit('GENERATION_STARTED', t, {}, d);
+      assert(`GENERATION_STARTED(${t}${d ? ' · dryRun' : ''}) → 不注入`, !lastMes().includes(AD.RC_MARKER));
+    }
+
+    setupUserFloor('已有标记的楼\n' + AD.RC_MARKER + ' ' + AD.RC_DIRECTIVE + '。');
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('已含标记 → 不重复追加', lastMes().split(AD.RC_MARKER).length === 2);
+
+    setupUserFloor('安全区');
+    AD.state.lastMode = 'safe';
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('安全区豁免（lastMode=safe）→ 跳过掷骰', !lastMes().includes(AD.RC_MARKER));
+
+    restore();
+    stChat.push({ mes: '<Combat_block>\n战斗数据栏: 我方/敌方列表……\n</Combat_block>', is_user: false, is_system: false });
+    assert('combatInProgress：最近可见 AI 楼含 Combat_block', AD.combatInProgress() === true);
+    stChat.push({ mes: '继续战斗', is_user: true, is_system: false });
+    Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('战斗进行中 → 跳过掷骰', !lastMes().includes(AD.RC_MARKER));
+
+    restore();
+    assert('combatInProgress：无战斗楼时为 false', AD.combatInProgress() === false);
+    stChat.push({ mes: 'AI 叙事楼（末楼非用户楼兜底）', is_user: false, is_system: false });
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('末楼为 AI 楼 → 不注入', !stChat[stChat.length - 1].mes.includes(AD.RC_MARKER));
+
+    restore();
+  }
+
   head('jsonc 导入容错');
   const jsoncSample = `[
   { "place": "绿顶酒馆",   // 行注释：应被剥除
