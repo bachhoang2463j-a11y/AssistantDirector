@@ -521,3 +521,27 @@
 **测试要点**：V1-V5——灰卡遮名/未接触不出占位卡、正文提及即署名+unveil 类+revealed 入册、单调锁（揭幕仅首拍、无提及派系仍灰卡）、预输入署名+占位卡+无新面孔（插件自建有）、墓碑除名报纸全清。T12 预期改灰卡且只查 .ad-item 情报卡区域（顶部当前态势简报合法显示驻防派系名——玩家在场看得见驻军）。
 
 **验收依据**：IAB harness 171/171；真机验证留给用户（灰卡→正文提及→揭幕闪动的实际观感、按钮位置）。
+
+## 2026-09-11 ｜ S6 随机遭遇掷骰（GENERATION_STARTED 注入用户楼输入）（业务提交 `d8e9589`）
+
+**变更行为**：① 新增设置项 `randomCombatEnabled`/`randomCombatChance`（默认 5%/楼）+ 设置弹窗"🎲 随机遭遇"块；② `onGenerationStarted` 监听 `GENERATION_STARTED`（用户已发送、提示词未组装的窗口期）本地掷骰，命中即把强制开战指令（`【🎲随机遭遇】本轮用户触发随机战斗，按【战斗轮规则】输出 Combat_block 块`）以用户身份追加进本楼输入末尾——随楼层生成自然持久化，swipe 重roll 时指令仍在（防重复标记避免二次追加）；③ 豁免：战斗进行中（最近可见 AI 楼含 `<Combat_block>`）/ swipe / regenerate / dryRun / 末楼非用户楼；④ 测试钩子暴露 + harness mock（eventEmit 透传参数、GENERATION_STARTED 事件）。@version 0.2.3；harness 186/186。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`
+
+**决策依据**：用户实测"态势注入基本没用——不自己开战正文 AI 永不主动触发战斗"。根因：注入文是条件式判定（"若冲突升级→开战"），AI 倾向判不满足；正文 AI 自掷不出真随机（注入概率基本永不触发）。方案取 World 插件同款：程序侧本地掷骰 + 强制指令。注入通道经用户拍板选"字面写入用户楼输入"（非系统注入）——GENERATION_STARTED 早于提示词组装（World 插件注入自检实证），酒馆组装 prompt 时读 chat 数组，同代生效。
+
+**测试要点**：S6 组 15 项——命中/未命中/概率边界（0.049/0.051）/概率 0/开关关/swipe/regenerate/dryRun/防重复/安全区/战斗中/末楼非用户楼。真机排障一例：用户"调到 100 也没注入"实为 localStorage 旧格式存档致概率回落 5%（改动从未保存）——已验证全链路（事件→掷骰→chat 修改）真机可用，事件回调为异步派发（同步检查会误判失败）。
+
+**验收依据**：IAB harness 186/186；真机用户实测注入成功（"这下正文永远不进战的问题解决了"）。
+
+## 2026-09-11 ｜ S7 V0.3.0 世界引擎化重构——单一副导演 API + 世界状态 + 本地骰 + 动态遇敌概率（业务提交 `4ebc462`）
+
+**变更行为**：① **双位合并**：态势位/暗线位双 LLM 端点 → 单一 `director`（迁移取暗线位高智力值），双开关 → `enabledDirector`，双 worldSync → 单套并集迁移，双提示词预设 → `DirectorPrompt`，新增 `directorEveryX`（心跳楼数，默认3）与 `randomCombatOncePerCycle`（防连战锁，默认开）；② **世界状态 `$ad_world`**（取代 $ad_report，旧数据不迁移冷启动）：factions（暗线三态 surface/truth/接触/圈套/间谍全保留 + stance/relations/zone/morale）+ events（五阶段×stageRound1-9×level×涉及派系/zone）+ winds（传播等级×quietRounds）+ encounter（heat/spots/districts）+ resistance + roster_ops；③ **推演链**：`generateDirectorEvolve`（增量修订式——上次世界状态全量入输入，含本地骰推进结果）、`validateWorld` 宽容清洗（中文键容错/墓碑过滤/事件 stage·stageRound·type 继承兜底/风声 quietRounds 继承——防每次推演重置永不衰减/encounter clamp）、触发矩阵改心跳+强制推（combat-result/newday/stage-change 优先，city-change 与 floor-cap 废除）；④ **本地骰（每楼零 LLM）**：`rollEvents`（进度+阶段基准+level 修正 → 阈值骰 → 推进/受挫/保持，≥9 晋级；conflict 到"爆发"注入"⚠ 临近冲突"提醒行——取代预约引爆）、`rollWinds`（grace 3 楼后 10%+15%/楼 递增消散）、`runLocalDice`（lastDiceFloorId 幂等守卫，swipe 不重复推进）；⑤ **遇敌概率算法**（S6 消费）：`spots（地标级）> districts（大区级）> 玩家设置` 三级兜底 + `clamp(-40,40, heat + eventTension)` 冷热加法修正（eventTension=本地点 conflict 事件阶段分：萌芽0/发酵+2/逼近+6/爆发+12/平息-3，跨地点事件不计）；spots/districts 均对整段地点串匹配（地标键在四级地点下取到"区"，整串才能兜住）；chance=0 显式安全区不叠修正；⑥ **防连战锁**：命中上锁（randomCombatFired 持久化）→ 推演成功解锁（每周期最多一场）；⑦ **注入合并**：单词条 `副导演`（`<当前态势>` 信号级驻守提醒无敌人菜单 + `<内部导演备忘>` 世界动态：事件/风声/派系三态/禁泄/阻力），V0.2.x 旧双词条升级下灯不删；⑧ **拆除**（净减约 330 行）：卡片池/matchCard/parseMenu/computeScale/即时产卡链/预约埋雷/卡片弹窗/jsonc 导入；⑨ **报纸**：事件卡（阶段徽标+进度）/风声卡/派系灰卡揭幕体系全保留；lead 改驻守信号；🌍 世界状态查看器（round/digest/事件/风声/派系/遇敌档案/JSON/重推）取代 🗂 卡片弹窗。@version 0.3.0；harness 147/147（重构后）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策依据**：用户架构决策（架构技能摊牌确认方案 B 自研精简世界引擎）——态势/暗线双位合并为单一副导演 API；敌人安排与开战方式移交正文 AI（智力最高信息最全），程序只做概率掷骰提醒；世界状态仿世界引擎（Disnight, MIT，仅作设计参考不直接采用——它不感知 stat_data/RpgCombat/名册墓碑，报纸灰卡揭幕无法挂靠其 schema，双注入 token 翻倍）。遇敌概率算法经用户两轮修订：小区域→大区域→玩家设置三级兜底（基础值=玩家设置，不由 LLM 输出）+ 冷热基线独立做加法；防连战锁为用户提出（防无逻辑连战）。本地骰每楼微演进 + API 每 3 楼宏演进是 World 插件核心模式（间隔内剧情变化由 eventTension 即时响应，弥补 heat 3 轮滞后）。
+
+**测试要点**：harness 全面重构（186→147 项）——新增 S7 信号级态势文本（驻守信号/临近冲突/跨区不提醒）、本地骰（D1-D7：推进/受挫/晋级/平息不掷/幂等/新楼恢复）、遇敌概率档案（P1-P7：三级兜底/heat/eventTension/安全区/clamp 边界/无世界回落）、validateWorld（V0a-e：中文键/墓碑/事件风声继承/clamp）、推演端到端（T1-T14：存档/锁解锁/名册/词条/请求结构顺序/心跳/强制推三路/端点未配置/开关）、旧词条升级下灯（B7）；S6 扩动态概率与防连战锁用例。修复过程三教训：① 测试等待条件过弱（词条已存在时 waitFor 立即返回读到旧内容——改等新内容标志）；② 心跳测试只调 2 次 floorStep 而计数器被双重重置（第 3 楼从未发生）；③ B2 手动清 wbLast 绕过了 merge3 导致用户注丢失（删清空让合并正常走）。
+
+**验收依据**：IAB harness 147/147；真机验证留给用户（3楼心跳/爆发事件提醒行/遇敌概率随地点冷热浮动/防连战锁一周期一场/报纸事件风声卡/swipe 后事件不重复推进）。
