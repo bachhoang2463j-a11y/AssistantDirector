@@ -569,3 +569,15 @@
 **测试要点**：Z4 复合zone（A至B）/Z4b（A与B）/Z5 括号注记分段/Z6 多字尾/Z7 压缩通道/Z8 两字段误报防护（'悉尼'不匹配'悉尼港码头区'）/Z9 描述性段含地点段——全部取自真机首推的实证写法；lead 断言改 '遇敌几率 41%'（25+heat10+tension6）+ 驻守 + districts why；安全区变体（chance=0 显示"安全区"+理由不显示几率）。
 
 **验收依据**：IAB harness 159/159（一次 IAB 后台节流假死，reload 后正常）；真机验证留给用户（首推后各地点驻守信号恢复、洗衣房 100% 必遇战、回酒店安全区免掷）。
+
+## 2026-09-12 ｜ V0.3.3 S8 checkpoint 完整回滚 + 文档全面更新（业务提交 `d3a9c4e`；文档 `fad90a2`）
+
+**变更行为**：① **S8 checkpoint 完整回滚**：推演写入新世界前快照旧世界到 `$ad_world_checkpoint`，新世界记 `floorId` 锚点（currentFloorId 取不到记 -1 永不触发回滚）；每楼 dispatchNow 开头 `maybeRollbackWorld` 检测楼层回退（`world.floorId > 当前楼层` = 删楼/回退编辑）→ 回滚到上一推演点——本地骰的推进随之丢弃（事件链不会因删楼而越推越快）、`lastDiceFloorId` 重置为当前楼层（回滚后不立即补掷）、防连战锁随周期重置、词条/报纸随 dispatch 重算自然同步；单级回滚（checkpoint.floorId 重置为当前楼层，继续删楼不再回退——更深快照不存在）；无更早快照（首推后即删楼）时回到未推演状态；swipe 不回滚（楼层号不变，3 楼心跳内重推覆盖）。② **文档全面更新**（`fad90a2`）：README 重写至 V0.3.2（架构图/三件套闭环/原则/S0-S8 路线图/变更记录）；SPEC 正文重写 §4.2（世界状态模型：schema/本地骰/概率算法/zoneHit/S6+防连战锁语义）、§4.3（推演触发/输入/校验/人格）、§4.5（单词条注入协议+信号级语义）、§4.7（单端点）、§8（S0-S8 状态表）。@version 0.3.3；harness 166/166×2（连跑两轮稳定）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`README.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策依据**：路线图第 1 项（用户确认开工）——swipe 重roll 与删楼会污染世界状态（本地骰推进与 LLM 推演结果均无法撤销），玩久了世界"越来越快"；采世界引擎 saveCheckpoint/restoreCheckpoint 模式的单级简化版。防连战锁语义随用户提问厘清并写入 SPEC §4.2：锁只约束随机注入一路，剧情开战不触发锁——战斗进行中掷骰本身被 combatInProgress 拦截，锁是"刚打完随机战、正文收尾但新推演未到"间隙的防护。
+
+**测试要点**：K1-K5——推演快照（checkpoint=旧 round/digest）+ 锚点（floorId=当前楼层）、楼层回退回滚（round/digest 还原/骰子基线重置/锁重置/词条同步）、单级回滚（锚点重置后不再重复回退）、无快照回退（清空回未推演态）。排障两教训：① mock `replaceVariables` 重新赋值致 MOCK.chat 引用脱钩（S8 经 MOCK.chat 读不到写入、K2 对 undefined 取属性崩掉 runAll——改原地清空）；② mock `eventEmit` 包装只转发事件名漏掉参数——S6 的 swipe/regenerate/dryRun 守卫全部失效走真随机概率路径（~14%/轮 假失败率、失败用例漂移、hook console 时"全绿"纯属时序运气）——该 bug 自 S6 诞生即潜伏，本轮连跑两轮全绿确认修复。
+
+**验收依据**：IAB harness 166/166 连跑两轮全绿；真机验证留给用户（删楼后报纸世界状态回退 + toast"↩ 楼层回退"提示）。
