@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.4
+// @version      0.3.5
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.4';
+  const SCRIPT_VERSION = '0.3.5';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -53,6 +53,7 @@
   const CV = {
     world: '$ad_world',             // S7：世界状态（派系暗线/事件链/风声/encounter，取代 $ad_report）
     worldCheckpoint: '$ad_world_checkpoint',   // S8：上一推演点的世界快照（楼层回退时回滚）
+    history: '$ad_history',         // V0.3.5：历史记录（推演/随机遭遇/系统事件，随聊天走）
     state: '$ad_state',    // 运行时状态（上次注入文本/骰子楼层/防连战锁等）
     roster: '$ad_roster',  // 名册+墓碑
   };
@@ -562,6 +563,8 @@
       if (floorId >= 0) {
         State.combatEndFloorId = floorId;
         persistRuntimeState();
+        pushHistory('system', { type: 'combat-end', floorId,
+          note: `战斗结束（楼层 ${floorId}）——随机遭遇冷却 ${SETTINGS.randomCombatCooldown ? SETTINGS.randomCombatCooldownFloors + ' 楼' : '已关闭'}` });
         log(`战斗结束检测（楼层 ${floorId}）——随机遭遇冷却 ${SETTINGS.randomCombatCooldown ? SETTINGS.randomCombatCooldownFloors + ' 楼' : '已关闭'}`);
       }
     }
@@ -600,6 +603,8 @@
     if (Math.random() * 100 >= profile.chance) return;
     last.mes = mes + '\n' + RC_MARKER + ' ' + RC_DIRECTIVE + '。';
     if (SETTINGS.randomCombatOncePerCycle && world) { State.randomCombatFired = true; persistRuntimeState(); }
+    pushHistory('combat', { chance: profile.chance, via: profile.via,
+      heat: profile.heat, tension: profile.tension, location: locationText, floorId: currentFloorId() });
     toast(`🎲 随机遭遇触发（${profile.chance}% · ${profile.via}）`);
     log(`随机遭遇命中（${profile.chance}%/楼 · 来源 ${profile.via} · heat ${profile.heat} · tension ${profile.tension}）——已注入用户本楼输入`);
   }
@@ -800,6 +805,52 @@
     return false;
   }
 
+  // —— 历史记录（V0.3.5，$ad_history 随聊天走）———————————————————————
+  // 三类：evolve（世界推演）/ combat（随机遭遇触发）/ system（楼层回滚、战斗结束）。
+  // 各类环形上限 50 条，最新在前。世界状态的演变过程从此前端可见。
+
+  const HISTORY_LIMIT = 50;
+
+  function getHistory() {
+    const h = readChatVar(CV.history);
+    return {
+      evolve: Array.isArray(h && h.evolve) ? h.evolve : [],
+      combat: Array.isArray(h && h.combat) ? h.combat : [],
+      system: Array.isArray(h && h.system) ? h.system : [],
+    };
+  }
+
+  function pushHistory(kind, entry) {
+    if (!['evolve', 'combat', 'system'].includes(kind)) return;
+    const h = getHistory();
+    h[kind].unshift(Object.assign({ at: Date.now() }, entry));
+    if (h[kind].length > HISTORY_LIMIT) h[kind].length = HISTORY_LIMIT;
+    writeChatVar(CV.history, h);
+  }
+
+  function clearHistory() { writeChatVar(CV.history, null); }
+
+  // 推演变化摘要：新旧世界的派系/事件/风声集合 diff（一句话可读）
+  function diffWorld(prev, next) {
+    if (!prev || !Array.isArray(prev.factions)) return '首次推演——世界从零建立';
+    const names = list => new Set((list || []).map(x => x && x.name).filter(Boolean));
+    const windKeys = list => new Set((list || []).map(w => w && w.content).filter(Boolean));
+    const diff = (a, b, label) => {
+      const added = [...b].filter(x => !a.has(x));
+      const removed = [...a].filter(x => !b.has(x));
+      const parts = [];
+      if (added.length) parts.push(`${label}+${added.length}${added.length <= 3 ? '（' + added.join('、') + '）' : ''}`);
+      if (removed.length) parts.push(`${label}-${removed.length}${removed.length <= 3 ? '（' + removed.join('、') + '）' : ''}`);
+      return parts;
+    };
+    const parts = [
+      ...diff(names(prev.factions), names(next.factions), '派系'),
+      ...diff(names(prev.events), names(next.events), '事件'),
+      ...diff(windKeys(prev.winds), windKeys(next.winds), '风声'),
+    ];
+    return parts.length ? parts.join('，') : '构成无变化（内容修订）';
+  }
+
   // —— checkpoint 完整回滚（S8，仿世界引擎存档点）—————————————————————
   // 推演写入新世界前把旧世界快照到 $ad_world_checkpoint，并在新世界记 floorId 锚点
   // （该状态对应的楼层号）。每楼 dispatch 检测：楼层回退（删楼/回退编辑——当前楼层号
@@ -826,6 +877,9 @@
     Trigger.floorsSinceEvolve = 0;
     State.lastDiceFloorId = floorId;   // 回滚后本地骰以新楼层为基线（不立即补掷）
     if (State.randomCombatFired) { State.randomCombatFired = false; persistRuntimeState(); }   // 推演周期随回滚重置
+    pushHistory('system', { type: 'rollback', from: world.floorId, to: floorId,
+      toRound: checkpoint ? (checkpoint.round || '?') : 0,
+      note: checkpoint ? `世界状态回滚到上一推演点（round ${checkpoint.round || '?'}）` : '无更早快照，回到未推演状态' });
     return true;
   }
 
@@ -1565,6 +1619,9 @@
       const prevWorld = readChatVar(CV.world);
       if (prevWorld && Array.isArray(prevWorld.factions)) writeChatVar(CV.worldCheckpoint, prevWorld);
       world.floorId = currentFloorId();   // 回滚检测锚点（-1=拿不到楼号 → 永不触发回滚，安全）
+      pushHistory('evolve', { reason, round: world.round, digest: world.digest || '',
+        factions: world.factions.length, events: world.events.length, winds: world.winds.length,
+        changes: diffWorld(prevWorld, world) });
       // 存档 + 分发
       writeChatVar(CV.world, world);
       // 名册自动注册（新派系轻量登场；墓碑派系绝不回册——即使模型违反铁律输出）
@@ -2417,7 +2474,7 @@
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="debug" ${s.debug ? 'checked' : ''}> 记录 LLM 请求/响应（控制台 + 日志查看）</label></div>
-      <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button></div>
+      <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button><button id="ad-history-open">🕘 历史记录</button></div>
       ${syncSectionHtml('world', '世界书同步（→ 推演输入）')}
       ${promptSectionHtml('director', '副导演 · 提示词', DirectorPrompt)}
       ${ep('director', '副导演 API（世界推演：派系/事件/风声/遇敌概率）')}
@@ -2480,6 +2537,11 @@
       openDebugModal();
     });
 
+    els.modalBox.querySelector('#ad-history-open').addEventListener('click', () => {
+      collectFormToSettings();
+      openHistoryModal();
+    });
+
     els.modalBox.querySelector('#ad-set-save').addEventListener('click', () => {
       collectFormToSettings();
       persistSyncNow();
@@ -2495,6 +2557,68 @@
   }
 
   // —— LLM 调试日志弹窗（最近 20 次请求/响应；debug 开关开启时记录）—————————
+
+  // —— 历史记录弹窗（V0.3.5：推演/随机遭遇/系统事件 三 tab；MMS 历史模块同构）—————
+
+  let historyTab = 'evolve';   // 当前查看的 tab（evolve | combat | system）
+
+  function renderHistoryModal() {
+    const h = getHistory();
+    const tabs = [
+      ['evolve', `📡 推演（${h.evolve.length}）`],
+      ['combat', `🎲 随机遭遇（${h.combat.length}）`],
+      ['system', `⚙ 系统事件（${h.system.length}）`],
+    ];
+    const timeStr = at => new Date(at || Date.now()).toLocaleString();
+    let list = '';
+    if (historyTab === 'evolve') {
+      list = h.evolve.map(e => `
+        <div class="ad-card-item" style="cursor:default;align-items:flex-start;flex-direction:column;gap:2px">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <span class="place">第 ${e.round || '?'} 轮 · ${esc(e.reason || '')}</span>
+            <span class="meta">${timeStr(e.at)} · 派系${e.factions ?? '?'} 事件${e.events ?? '?'} 风声${e.winds ?? '?'}</span>
+          </div>
+          <div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">${esc(e.digest || '')}</div>
+          <div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">变化：${esc(e.changes || '')}</div>
+        </div>`).join('') || '<div class="dim" style="padding:8px 2px">尚无推演记录。</div>';
+    } else if (historyTab === 'combat') {
+      list = h.combat.map(e => `
+        <div class="ad-card-item" style="cursor:default">
+          <span class="place">🎲 ${esc(String(e.location || '').slice(0, 24) || '未知地点')}</span>
+          <span class="meta">${timeStr(e.at)} · ${e.chance ?? '?'}%（${esc(e.via || '')}${e.heat ? ' · heat' + e.heat : ''}${e.tension ? ' · 张力' + e.tension : ''}）</span>
+        </div>`).join('') || '<div class="dim" style="padding:8px 2px">尚无随机遭遇记录。</div>';
+    } else {
+      list = h.system.map(e => `
+        <div class="ad-card-item" style="cursor:default">
+          <span class="place">${e.type === 'rollback' ? '↩ 楼层回滚' : '⚔ 战斗结束'}</span>
+          <span class="meta">${timeStr(e.at)} · ${esc(e.note || '')}</span>
+        </div>`).join('') || '<div class="dim" style="padding:8px 2px">尚无系统事件记录。</div>';
+    }
+    openModal(`
+      <h3>🕘 历史记录</h3>
+      <div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-bottom:8px">
+        世界演变过程档案（各类环形保留最近 ${HISTORY_LIMIT} 条，存 $ad_history 随聊天走）。</div>
+      <div class="ad-tabs" style="margin-bottom:8px">
+        ${tabs.map(([k, label]) => `<button class="ad-tab${k === historyTab ? ' active' : ''}" data-htab="${k}">${label}</button>`).join('')}
+      </div>
+      <div style="max-height:52vh;overflow-y:auto">${list}</div>
+      <div class="ad-btnrow">
+        <button id="ad-history-clear">🗑 清空全部历史</button>
+        <button id="ad-history-back">返回设置</button>
+      </div>`);
+    els.modalBox.querySelectorAll('[data-htab]').forEach(btn => {
+      btn.addEventListener('click', () => { historyTab = btn.getAttribute('data-htab'); renderHistoryModal(); });
+    });
+    els.modalBox.querySelector('#ad-history-clear').addEventListener('click', () => {
+      if (!confirm('确定清空全部历史记录？')) return;
+      clearHistory();
+      toast('历史记录已清空');
+      renderHistoryModal();
+    });
+    els.modalBox.querySelector('#ad-history-back').addEventListener('click', renderSettingsModal);
+  }
+
+  function openHistoryModal() { historyTab = 'evolve'; renderHistoryModal(); }
 
   function openDebugModal() {
     const rows = DebugLog.slice().reverse().map((e, i) => `
@@ -2668,6 +2792,8 @@
     // 本地骰（S7）与 checkpoint 回滚（S8）与战斗冷却（V0.3.4）
     rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension, maybeRollbackWorld,
     trackCombatEnd, combatCooldownActive,
+    // 历史记录（V0.3.5）
+    getHistory, pushHistory, clearHistory, diffWorld, openHistoryModal,
     EV_STAGES, STAGE_SCORE, clamp,
     // LLM 客户端与推演层
     callLLM, extractJson,

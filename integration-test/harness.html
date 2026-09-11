@@ -273,7 +273,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.4（战斗结束冷却）', json.content.includes("@version      0.3.4"));
+  assert('版本 v0.3.5（历史记录模块）', json.content.includes("@version      0.3.5"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -1336,6 +1336,17 @@ async function runAll() {
     assert('K4 回滚后再 dispatch 不重复回滚（锚点已重置）', MOCK.chat['$ad_world'].round === 5
       && MOCK.chat['$ad_world'].digest === '旧世界·回滚锚');
 
+    // K6 历史记录端到端（V0.3.5）：本段累计的推演/回滚事件已入档（须在 K5 的 reset 前）
+    {
+      const hist = AD.getHistory();
+      const k1 = hist.evolve.find(e => e.reason === 's8');
+      assert('K6a 推演历史入档（reason/round/digest/变化摘要）', k1 && k1.round === 6 && k1.digest === '新世界'
+        && k1.changes.includes('首次推演') === false && k1.changes.includes('派系') === true);
+      const rb = hist.system.find(e => e.type === 'rollback');
+      assert('K6b 楼层回滚历史入档（from→to + 回滚目标轮次）', rb && rb.from === 10 && rb.to === 0
+        && String(rb.note).includes('round 5'));
+    }
+
     // 无更早快照的回退（首推后即删楼）→ 回到未推演状态
     MOCK.reset(); AD.loadRuntimeState();
     MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
@@ -1349,6 +1360,45 @@ async function runAll() {
     const s8z = AD.loadSettings();
     s8z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
     AD.saveSettings(s8z);
+    MOCK.reset();
+  }
+
+  /* ——— V0.3.5：历史记录模块（随机遭遇入档 / 环形截断 / 弹窗渲染）——— */
+  head('历史记录模块');
+  {
+    MOCK.reset(); AD.loadRuntimeState();
+    // 随机遭遇历史：S6 注入路径入档
+    const stChat = SillyTavern.getContext().chat;
+    window.insertOrAssignVariables({ $ad_world: Object.assign(JSON.parse(JSON.stringify(WORLD)),
+      { encounter: { heat: { value: 5, why: '' }, spots: [{ match: '绿顶酒馆', chance: 100, why: '' }], districts: [] } }) }, { type: 'chat' });
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+    stChat.push({ mes: '走进酒馆。', is_user: true, is_system: false });
+    Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    const hc = AD.getHistory().combat;
+    assert('H1 随机遭遇历史入档（几率/来源/heat/张力/地点）', hc.length === 1 && hc[0].chance === 100
+      && hc[0].via === 'spot' && hc[0].heat === 5 && hc[0].location.includes('绿顶酒馆'));
+    // 环形截断：各类上限 50
+    for (let i = 0; i < 55; i++) AD.pushHistory('system', { type: 'rollback', note: '批量测试' + i });
+    assert('H2 环形截断（各类上限 50，最新在前）', AD.getHistory().system.length === 50
+      && AD.getHistory().system[0].note === '批量测试54');
+    // 弹窗渲染：三 tab + 条目 + 清空
+    AD.openHistoryModal();
+    assert('H3 历史弹窗渲染（三 tab 带 counts + 推演/遭遇空态提示）', (() => {
+      const box = document.getElementById('ad-modal-box');
+      const tabs = [...box.querySelectorAll('[data-htab]')];
+      return tabs.length === 3 && tabs[0].textContent.includes('推演（0）')
+        && tabs[1].textContent.includes('随机遭遇（1）') && tabs[2].textContent.includes('系统事件（50）')
+        && box.textContent.includes('尚无推演记录');
+    })());
+    document.querySelector('#ad-modal-box [data-htab="combat"]').click();
+    assert('H3b tab 切换渲染（随机遭遇条目含地点与几率）', (() => {
+      const box = document.getElementById('ad-modal-box');
+      return box.textContent.includes('100%') && box.textContent.includes('绿顶酒馆');
+    })());
+    AD.clearHistory();
+    assert('H4 清空历史（三类全空）', AD.getHistory().evolve.length === 0
+      && AD.getHistory().combat.length === 0 && AD.getHistory().system.length === 0);
     MOCK.reset();
   }
 

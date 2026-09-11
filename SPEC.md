@@ -412,4 +412,4 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 强制推
 3. **忠实性**：暗线注入的每条真相可回溯到 causes 楼层出处（GM 面板审计接口）。
 4. **稳定度**：连续 50 楼监听无内存泄漏、注入不堆积（固定 id 替换式验证）；swipe 不误触发报告/产卡。
 5. **成本纪律**：每楼零 LLM 调用；态势位平均 ≤1 次/3 楼；暗线位天级 + 号外。
-6. **开发流程**：遵循 sillytavern-plugin-dev 分流——编码后提取 content 做 `node --check` → IAB mock 测试 → 用户导入真环境确认；布局动画类最终过真 Chrome（排障模式）。
+6. **开发流程**：遵循 sillytavern-plugin-dev 分流——编码后提取 content 做 `node --check` → IAB mock 测试 → 用户导入真环境确认；布局动画类最终过真 Chrome（排障模式）。> **V0.3.5 变更摘要**：**历史记录模块**（MMS 历史模块同构，入口在 ⚙ 设置 → 🕘 历史记录）——世界演变过程前端可见：三类分 tab（📡 推演：reason/round/digest/派系事件风声计数/**变化摘要**（diffWorld 集合 diff：派系±N/事件±N/风声±N）；🎲 随机遭遇：几率/来源/heat/张力/地点；⚙ 系统事件：楼层回滚/战斗结束），各环形上限 50 条，存 `$ad_history` 随聊天走，弹窗内可清空。
