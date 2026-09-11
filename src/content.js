@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.1
+// @version      0.3.2
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.1';
+  const SCRIPT_VERSION = '0.3.2';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -457,10 +457,29 @@
   const RC_DIRECTIVE = '本轮用户触发随机战斗，按【战斗轮规则】输出 Combat_block 块';
 
   const clamp = (min, max, v) => Math.max(min, Math.min(max, v));
-  // 区块匹配：norm 后互相包含（spot 对地标键 / district 对大区 / zone 对大区）
+  // 区块匹配：norm 后互相包含 + 压缩通道（两边去掉 ·/-/—/空白/括号后再互相包含——
+  // 容忍 LLM 写 spot 时不带分隔符，如"澳大利亚酒店总督套房" vs "澳大利亚酒店 - 总督套房"）
+  const ZONE_SQ_RE = /[·\-—–\s（）()]/g;
   function zoneMatch(pattern, text) {
     const p = norm(pattern), t = norm(text);
-    return !!(p && t && (t.includes(p) || p.includes(t)));
+    if (!p || !t) return false;
+    if (t.includes(p) || p.includes(t)) return true;
+    const ps = p.replace(ZONE_SQ_RE, ''), ts = t.replace(ZONE_SQ_RE, '');
+    return !!(ps && ts && (ts.includes(ps) || ps.includes(ts)));
+  }
+  // zoneHit（V0.3.2 三通道，对抗 LLM 真实写法）：①整串 zoneMatch ②复合 zone 按连接词
+  // （至/与/、/，/和）切段，每段再与地点的各分段（按 ·/-/— 切，≥3 字——"悉尼"这类两字
+  // 大区段不参与，防 p.includes(t) 误报）互相包含。真机实证案例：夏盖虫群 zone
+  // "悉尼港码头区至禧市排污管网"、凯特 zone "萨里山核心区（绿顶酒馆）"、蒂莉 zone
+  // "达令赫斯特区"——单串包含全部匹配不上，切段+分段后全部命中。
+  function zoneHit(pattern, text) {
+    if (!pattern || !text) return false;
+    if (zoneMatch(pattern, text)) return true;
+    const p0 = norm(pattern);
+    if (!p0) return false;
+    const segs = [p0].concat(p0.split(/[至与、，,和]/).map(s => s.trim())).filter(s => s && s.length >= 2);
+    const tSegs = norm(text).split(/[·\-—–]/).map(s => s.trim()).filter(s => s.length >= 3);
+    return segs.some(p => tSegs.some(t => zoneMatch(p, t)));
   }
 
   // 战斗进行中检测：最近一条可见 AI 楼含 <Combat_block> 即在战（RpgCombat 逐楼续写该块）
@@ -496,7 +515,7 @@
       const score = STAGE_SCORE[ev.stage];
       if (!score) continue;
       const zones = eventZones(ev, world);
-      if (zones.length && zones.some(z => zoneMatch(z, locationText))) sum += score;
+      if (zones.length && zones.some(z => zoneHit(z, locationText))) sum += score;
     }
     return sum;
   }
@@ -505,27 +524,27 @@
   //   最终概率 = clamp(0,100, 区域基值 + 冷热修正)；冷热修正 = clamp(-40,40, heat + eventTension)
   //   区域基值三级兜底：spots（地标级）> districts（大区级）> SETTINGS.randomCombatChance（玩家设置）
   //   显式安全标记：命中 spots/districts 且 chance===0 → 直接安全区，不叠修正
-  //   spots/districts 都对整段地点串匹配（双向包含）：地标键在四级地点（大区·区·地标·房间）
-  //   下会取到第二段"区"，对整串匹配才能兜住真实地标；spots 更具体、先查，精度由优先级保证
+  //   spots/districts 都对整段地点串匹配（zoneHit 三通道：LLM 写法鲁棒）；spots 更具体、先查，精度由优先级保证
   function encounterProfile(locationText) {
-    const base = { chance: clamp(0, 100, Number(SETTINGS.randomCombatChance) || 0), safe: false, via: 'settings', heat: 0, tension: 0 };
+    const base = { chance: clamp(0, 100, Number(SETTINGS.randomCombatChance) || 0), safe: false, via: 'settings', heat: 0, tension: 0, why: '', heatWhy: '' };
     const world = readChatVar(CV.world);
     if (!world || !world.encounter) return base;   // 无世界状态（未首推）：与 S6 原行为一致
     const enc = world.encounter;
+    const heatWhy = (enc.heat && enc.heat.why) ? String(enc.heat.why) : '';
     let hit = null, via = 'settings';
     for (const s of (enc.spots || [])) {
-      if (s && s.match && zoneMatch(s.match, locationText)) { hit = s; via = 'spot'; break; }
+      if (s && s.match && zoneHit(s.match, locationText)) { hit = s; via = 'spot'; break; }
     }
     if (!hit) for (const d of (enc.districts || [])) {
-      if (d && d.match && zoneMatch(d.match, locationText)) { hit = d; via = 'district'; break; }
+      if (d && d.match && zoneHit(d.match, locationText)) { hit = d; via = 'district'; break; }
     }
-    if (!hit) return base;   // spots/districts 均未命中：玩家设置兜底（不加修正——副导演没给过该地判断）
+    if (!hit) return Object.assign(base, { heatWhy });   // spots/districts 均未命中：玩家设置兜底（不加修正——副导演没给过该地判断）
     const chance = clamp(0, 100, Number(hit.chance) || 0);
-    if (chance === 0) return { chance: 0, safe: true, via, heat: 0, tension: 0 };   // 显式安全标记
+    if (chance === 0) return { chance: 0, safe: true, via, heat: 0, tension: 0, why: hit.why || '', heatWhy };   // 显式安全标记
     const heat = (enc.heat && Number.isFinite(+enc.heat.value)) ? clamp(-30, 30, +enc.heat.value) : 0;
     const tension = eventTension(world, locationText);
     const mod = clamp(-40, 40, heat + tension);
-    return { chance: clamp(0, 100, chance + mod), safe: false, via, heat, tension };
+    return { chance: clamp(0, 100, chance + mod), safe: false, via, heat, tension, why: hit.why || '', heatWhy };
   }
 
   function onGenerationStarted(type, _opts, dryRun) {
@@ -646,7 +665,7 @@
   function buildDirectorSituationText(locationText, world) {
     const lines = [SIT_OPEN, `  ${locationText}`];
     if (world && Array.isArray(world.factions)) {
-      const stationed = world.factions.filter(f => f && f.zone && zoneMatch(f.zone, locationText));
+      const stationed = world.factions.filter(f => f && f.zone && zoneHit(f.zone, locationText));
       if (stationed.length) {
         for (const f of stationed.slice(0, 3)) {
           lines.push(`  驻守信号：${f.name}（${f.zone}）${f.morale ? '，士气：' + f.morale : ''}${f.stance ? '，对我方：' + f.stance : ''}`);
@@ -656,7 +675,7 @@
       }
       const hot = (Array.isArray(world.events) ? world.events : [])
         .filter(ev => ev && ev.type === 'conflict' && ev.stage === '爆发'
-          && eventZones(ev, world).some(z => zoneMatch(z, locationText)));
+          && eventZones(ev, world).some(z => zoneHit(z, locationText)));
       for (const ev of hot) {
         lines.push(`  【⚠ 临近冲突】${ev.name}已推进到爆发阶段${ev.desc ? '——' + ev.desc : ''}——本楼冲突极易触发，戒备拉满。`);
       }
@@ -1994,25 +2013,29 @@
       b.classList.toggle('active', b.getAttribute('data-tab') === tab));
     let html = '';
 
-    // 首段 lead：驻守信号（世界状态 zone 命中当前地点的派系）——各 tab 共有
+    // 首段 lead（V0.3.2）：地点 + 遇敌几率 + 区域氛围——副导演不再安排具体敌人，
+    // 面板直接亮出当前生效的掷骰几率（spots/districts/设置兜底 + 冷热修正后的最终值）
+    // 与氛围依据（驻守派系/爆发事件警告/副导演给该地的理由）
     if (State.lastLocationText) {
       const locShort = shortLoc(State.lastLocationText);
       let leadTitle = '';
       let leadBody = '';
       if (world && Array.isArray(world.factions)) {
-        const stationed = world.factions.filter(f => f && f.zone && zoneMatch(f.zone, State.lastLocationText));
+        const profile = encounterProfile(State.lastLocationText);
+        leadTitle = profile.safe ? `${locShort || '当前地点'} · 安全区`
+          : `${locShort || '当前地点'} · 遇敌几率 ${profile.chance}%`;
+        const stationed = world.factions.filter(f => f && f.zone && zoneHit(f.zone, State.lastLocationText));
         const hot = (world.events || []).filter(ev => ev && ev.type === 'conflict' && ev.stage === '爆发'
-          && eventZones(ev, world).some(z => zoneMatch(z, State.lastLocationText)));
-        if (stationed.length) {
-          leadTitle = `${locShort || '当前地点'} · ${stationed[0].name}活动区`;
-          leadBody = `${stationed.map(f => `${f.name}${f.morale ? '（' + f.morale + '）' : ''}`).join('、')}在此活动。${hot.length ? `【⚠ ${hot[0].name}已到爆发阶段——冲突一触即发】` : '暂无爆发阶段冲突。'}`;
-        } else {
-          leadTitle = `${locShort || '当前地点'} · 无已知驻防`;
-          leadBody = '此地暂无已知派系活动记录。若冲突升级，敌方将按剧情合理性与世界书图鉴演化。';
-        }
+          && eventZones(ev, world).some(z => zoneHit(z, State.lastLocationText)));
+        const parts = [];
+        if (stationed.length) parts.push(`${stationed.map(f => `${f.name}${f.morale ? '（' + f.morale + '）' : ''}`).join('、')}在此活动`);
+        if (hot.length) parts.push(`【⚠ ${hot[0].name}已到爆发阶段——冲突一触即发】`);
+        if (profile.why) parts.push(profile.why);
+        else if (profile.heatWhy && (profile.heat !== 0 || profile.tension !== 0)) parts.push(profile.heatWhy);
+        leadBody = parts.join('。') || '暂无区域情报——若冲突升级，敌方按剧情合理性与世界书图鉴演化。';
       } else {
         leadTitle = `${locShort || '当前地点'} · 等待首推`;
-        leadBody = '尚无世界态势档案——📡 手动触发或等待心跳推演后，此处显示驻守信号与世界动态。';
+        leadBody = '尚无世界态势档案——📡 手动触发或等待心跳推演后，此处显示遇敌几率与区域氛围。';
       }
       html += `<div class="ad-nowline ad-lead-box" title="${esc(State.lastLocationText)}">
         <div class="ad-lead-stamp">PUBLIC RECORD</div>
@@ -2562,7 +2585,7 @@
   window.__AD__ = {
     version: SCRIPT_VERSION, IS_LIVE,
     // 引擎纯函数
-    norm, zoneMatch, landmarkKey, statDateKey, statStage, statCity,
+    norm, zoneMatch, zoneHit, landmarkKey, statDateKey, statStage, statCity,
     buildDirectorSituationText, buildDirectorInjection,
     shortLoc, renderTicker, renderWire, applyTheme,
     // 本地骰（S7）

@@ -269,7 +269,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.1（世界引擎化重构 + tab 栏）', json.content.includes("@version      0.3.1"));
+  assert('版本 v0.3.2（zoneHit 鲁棒匹配 + 态势简报几率化）', json.content.includes("@version      0.3.2"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -287,6 +287,14 @@ async function runAll() {
   assert('Z1 zoneMatch 双向包含（pattern⊂text）', AD.zoneMatch('萨里山', '📍 悉尼 · 萨里山 · 绿顶酒馆') === true);
   assert('Z2 zoneMatch 双向包含（text⊂pattern）', AD.zoneMatch('悉尼萨里山码头', '萨里山') === true);
   assert('Z3 zoneMatch 未命中 / 空串', AD.zoneMatch('墨尔本', '悉尼') === false && AD.zoneMatch('', '悉尼') === false);
+  // zoneHit 三通道（真机 V0.3.0 首推实证的 LLM 写法——单串包含全部失配，旧算法下 5 派系 zone 有 4 个漏报、安全区 spot 失效）
+  assert('Z4 zoneHit 复合 zone（A至B）切段命中（夏盖虫群实证写法）', AD.zoneHit('悉尼港码头区至禧市排污管网', '📍 悉尼 · 悉尼港码头区 · 集装箱堆场'));
+  assert('Z4b zoneHit 复合 zone（A与B）切段命中（伦道夫实证写法）', AD.zoneHit('达令港与伦道夫仓库', '📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区'));
+  assert('Z5 zoneHit 括号注记：zone 分段含地标（凯特实证写法）', AD.zoneHit('萨里山核心区（绿顶酒馆）', '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂'));
+  assert('Z6 zoneHit 多字尾：zone 含地点分段（蒂莉实证写法）', AD.zoneHit('达令赫斯特区', '📍 悉尼 · 达令赫斯特 · 妓院街'));
+  assert('Z7 zoneMatch 压缩通道：无分隔 spot ↔ 带 - 地标（安全区实证写法）', AD.zoneMatch('澳大利亚酒店总督套房', '📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅'));
+  assert('Z8 zoneHit 误报防护（两字大区段"悉尼"不参与分段匹配）', !AD.zoneHit('悉尼港码头区', '📍 悉尼 · 中央车站 · 大厅'));
+  assert('Z9 zoneHit 描述性 zone 段含地点段（飞行小队实证写法）', AD.zoneHit('牛津街以南至萨里山各交通隘口', '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂'));
   assert('L1 地标键：大区后首字段（含子标题）', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前') === '澳大利亚酒店 - 总督套房');
   assert('L2 地标键：房间级变化不改变键', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 玄关') === '澳大利亚酒店 - 总督套房');
   assert('L3 地标键：单段地点', AD.landmarkKey('📍 某独立地标') === '某独立地标');
@@ -507,9 +515,21 @@ async function runAll() {
   AD.togglePanel(true, true);
   assert('展开后未读熄灭', !document.getElementById('ad-rail-dot').classList.contains('on'));
   assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年') && document.getElementById('ad-mast-date').textContent.includes('6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
-  assert('lead 驻守信号（大区命中派系 + 士气）', (() => {
+  assert('lead 遇敌几率 + 区域氛围（几率显示 + 驻守派系 + 副导演理由）', (() => {
     const now = document.querySelector('#ad-wire .ad-nowline');
-    return now && now.textContent.includes('凯特·利') && now.textContent.includes('士气高涨');
+    return now && now.textContent.includes('遇敌几率 41%')   // districts 萨里山25 + heat10 + tension6
+      && now.textContent.includes('凯特·利') && now.textContent.includes('士气高涨')
+      && now.textContent.includes('帮派混战区');   // 命中 districts 的 why
+  })());
+  assert('lead 安全区变体（spots chance=0 → "安全区" + 理由，不显示几率）', (() => {
+    AD.state.lastLocationText = '📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅';
+    AD.renderWire();
+    const now = document.querySelector('#ad-wire .ad-nowline');
+    const ok = now && now.textContent.includes('安全区') && !now.textContent.includes('遇敌几率')
+      && now.textContent.includes('己方据点');
+    AD.state.lastLocationText = '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂';
+    AD.renderWire();
+    return ok;
   })());
   // 栏目导航（V0.3.1 tab 化）：报纸（默认/原版派系流）/ 事件链 / 风声 三栏分立
   assert('tab 栏渲染（📰报纸/⚡事件链/📣风声 三栏）', (() => {
