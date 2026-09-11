@@ -46,3 +46,4 @@
 | 2026-09-12 | docs：README/SPEC 正文章节全面更新至 V0.3.2 | 585 | `fad90a2` |
 | 2026-09-12 | feat：S8 V0.3.3 checkpoint 完整回滚（快照/锚点/单级回滚）+ 修 harness mock 两缺陷 harness 166/166×2 | 597 | `d3a9c4e` |
 | 2026-09-12 | feat：V0.3.4 战斗结束冷却（任意战斗后 N 楼不掷随机，可开关可调，只拦本插件掷骰）harness 170/170 | 611 | `95ea8d9` |
+| 2026-09-12 | feat：V0.3.5 历史记录模块（$ad_history 三类分档 + diffWorld 变化摘要 + 设置内 🕘 弹窗）harness 177/177 | 623 | `cde8ad5` |

@@ -593,3 +593,15 @@
 **测试要点**：CD1 跳变检测（手置 combatLastSeen 模拟上楼在战）；CD2 spots chance=100 也拦（证明是冷却拦截而非概率未中）；CD3 addFloor×3 推进楼层后解除并注入；CD4 关开关不拦（需先解除 CD3 注入上的防连战锁——两道闸独立性的反向验证）。SPEC §4.2 冷却语义同步。
 
 **验收依据**：IAB harness 170/170；真机验证留给用户（剧情战打完后 3 楼内无随机遭遇 toast，第 4 楼起恢复）。
+
+## 2026-09-12 ｜ V0.3.5 历史记录模块（推演/随机遭遇/系统事件 三 tab）（业务提交 `cde8ad5`）
+
+**变更行为**：用户指出"历史记录只存在后台，前端看不到"（每次推演覆盖 $ad_world，只留最近一轮+回滚快照）——① **历史存储 `$ad_history`**（随聊天走，换聊天隔离）：三类各环形上限 50 条（HISTORY_LIMIT），最新在前；② **四个写入点**：generateDirectorEvolve 成功（evolve：reason/round/digest/派系事件风声计数/**diffWorld 变化摘要**——新旧世界集合 diff"派系+1（新派系），派系-2（凯特、麦凯），事件-2，风声-1"式一句话）、S6 随机遭遇命中（combat：chance/via/heat/tension/地点/楼层）、maybeRollbackWorld（system：rollback from→to+目标轮次）、trackCombatEnd（system：战斗结束+冷却状态）；③ **🕘 历史记录弹窗**（入口：⚙ 设置 → 🕘 按钮，与 🐞 调试日志并排，MMS 历史模块同构）：三 tab（📡 推演(N)/🎲 随机遭遇(N)/⚙ 系统事件(N)，复用 .ad-tabs 样式）+ 条目列表 + 🗑 清空全部；④ diffWorld 纯函数（prev 缺失 → "首次推演——世界从零建立"；集合无变化 → "构成无变化（内容修订）"）。@version 0.3.5；harness 177/177（+7：K6a/K6b 端到端入档、H1 遭遇记录、H2 环形截断、H3/H3b 弹窗三 tab 渲染与切换、H4 清空）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策依据**：用户要求"像 MMS 在设置中加一个历史记录模块，分一下 tab"。三类划分对应插件的三个可观测行为轨（世界怎么变的/随机遭遇何时何几率触发/系统何时回滚与战斗结束）；入口放设置弹窗按钮（用户指定"像 MMS 在设置中"），打开独立弹窗避免撑爆设置面板。
+
+**测试要点**：K6 在 K5 的 MOCK.reset 前断言（reset 会清 $ad_history——首轮排障教训）；H2 用 55 条批量 push 验证截断与最新在前；H3 tab 标题含动态计数。修复：K6 断言从 S8 段尾移到 K4/K5 之间。
+
+**验收依据**：IAB harness 177/177；真机验证留给用户（设置 → 🕘 查看推演历史的变化摘要与随机遭遇记录）。
