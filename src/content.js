@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.2.3
-// @description  AIRP 世界模拟器：态势卡片配发（每楼注入）+ 暗线推演（S2/S3）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.2.9
+// @version      0.3.0
+// @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
 // @grant        none
@@ -13,9 +13,10 @@
  *  副导演 · 单 JSON 悬浮窗脚本插件（酒馆助手 / JS-Slash-Runner）
  *  模块分区见 SPEC §4.8：
  *    0 常量与配置 / 1 设置管理 / 2 酒馆环境适配 / 3 楼层监听状态机
- *    4 态势卡片引擎 / 5 LLM 客户端(S2) / 6 战略层(S3) / 7 态势位(S2)
- *    8 公开层 UI / 9 GM 面板 / 10 主流程编排
- *  S0~S1 范围：0/1/2/3/4/8/9/10；5/6/7 留桩。
+ *    4 世界态势引擎（本地骰）/ 5 LLM 客户端 / 6 世界推演层（单一副导演 API）
+ *    7 随机遭遇掷骰 / 8 公开层 UI / 9 GM 面板 / 10 主流程编排
+ *  V0.3.0（S7）：态势/暗线双位合并为单一副导演 API；敌人安排移交正文 AI，
+ *  程序只做概率掷骰提醒；世界状态仿世界引擎（派系关系/事件链/风声/encounter）。
  * ═══════════════════════════════════════════════════════════════════════════
  */
 (function () {
@@ -26,40 +27,43 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.2.3';
+  const SCRIPT_VERSION = '0.3.0';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
-  // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序
-  const WB_ENTRY_SITUATION = '副导演-态势';
-  const WB_ENTRY_SHADOWLINE = '副导演-暗线';
+  // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
+  // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
+  const WB_ENTRY_DIRECTOR = '副导演';
+  const WB_ENTRY_LEGACY = ['副导演-态势', '副导演-暗线'];   // V0.2.x 旧词条：仅 disable
   const WB_ORDER = 15;
   // 注入模板：XML 标签分段 + 两空格缩进列表——LLM 注意力分区友好，人工维护直观
   const MEMO_OPEN = '<内部导演备忘（禁止以任何形式向玩家展示）>';
   const MEMO_CLOSE = '</内部导演备忘>';
   const SIT_OPEN = '<当前态势（禁止以任何形式向玩家展示）>';
   const SIT_CLOSE = '</当前态势>';
+  // 信号级战斗提醒：敌方构成由正文 AI 自选（世界书图鉴），程序不再安排 menu
   const COMBAT_RULE_HINT =
-    '【若本楼冲突升级 → 开战】按【战斗轮规则】输出 <Combat_block>：' +
-    '我方/敌方各只写名字；敌方从上方词条中选（可加 *N 与 [变种]）。';
-  const DEFAULT_VERDICT =
-    '玩家行动在语义上构成对上述戒备的挑衅/侵入/暴露时开战或转入对峙；未构成则正常叙事。';
+    '【若本楼冲突升级 → 开战】按【战斗轮规则】输出 <Combat_block>：我方/敌方各只写名字；敌方从世界书图鉴中按剧情合理性选择（可加 *N 与 [变种]）。';
 
   // localStorage 键（设置与 UI 偏好，随浏览器走）
   const LS = {
     settings: 'ad_settings_v1',
     ui: 'ad_ui_v1',
-    promptShadowline: 'ad_prompt_shadowline_v1', // 暗线位提示词预设（默认项锁定，自定义存快照）
-    promptSituation: 'ad_prompt_situation_v1',   // 态势位提示词预设
+    promptDirector: 'ad_prompt_director_v1', // 副导演提示词预设（默认项锁定，自定义存快照）
   };
   // 聊天变量键（$ 前缀对 LLM 隐形，随聊天文件走）
   const CV = {
-    cards: '$ad_cards',   // 态势卡片池（数组）
-    state: '$ad_state',    // 运行时状态（弹药基准/上次注入文本等）
-    report: '$ad_report',  // S3：最新报告
-    roster: '$ad_roster',  // S4：名册+墓碑
-    pending: '$ad_pending' // S2/S5：待登记+预约
+    world: '$ad_world',    // S7：世界状态（派系暗线/事件链/风声/encounter，取代 $ad_report）
+    state: '$ad_state',    // 运行时状态（上次注入文本/骰子楼层/防连战锁等）
+    roster: '$ad_roster',  // 名册+墓碑
   };
 
   const ALERT_LEVELS = ['松懈', '常规', '警戒', '严密'];
+
+  // —— 事件链与风声（S7 本地骰参数，仿世界引擎；模块常量，暂不做设置项）———————
+  const EV_STAGES = ['萌芽', '发酵', '逼近', '爆发', '平息'];
+  const STAGE_SCORE = { '萌芽': 0, '发酵': 2, '逼近': 6, '爆发': 12, '平息': -3 };   // eventTension 阶段分
+  const WIND_GRACE = 3;        // 风声安静豁免楼数
+  const WIND_BASE = 10;        // 消散概率基线（%）
+  const WIND_LINEAR = 15;      // 每楼线性递增（%）
 
   // ═════════════════════════════════════════════════════════════════════
   // 1. 设置管理（localStorage，AiRadio 模式）
@@ -70,19 +74,18 @@
   }
   function defaultSettings() {
     return {
-      enabledShadowline: true, // 暗线开关：报告推演（触发矩阵/手动📡）+ 暗线词条注入
-      enabledSituation: true,  // 态势开关：态势词条注入 + 即时产卡 + 预约引爆（玩家自由决定开启）
-      shadowline: defaultEndpoint(), // 暗线位（次高智力，天级+事件）
-      situation: defaultEndpoint(),   // 态势位（快速小模型，随地点）
-      enemyPool: '',            // 本轮战役敌人名单（手输，逗号/换行分隔）——产卡 menu 与暗线 ambush 预约"规模"的选用来源
-      coreTeam: '',             // 主角核心白名单（手输，逗号/换行分隔）——这些人绝不背叛、绝不被指定为间谍
-      extraRules: '',           // 附加铁律（手输，多行文本）——拼到暗线输入文末，用户给副导演的最高优先级注意事项（如世界观纠偏、尺度约束）
-      worldSyncSituation: [],   // 态势位世界书同步：[{ book, entries }]——词条内容注入产卡输入
-      worldSyncShadowline: [],  // 暗线位世界书同步：[{ book, entries }]——词条内容注入报告输入
-      shadowlineFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
-      randomCombatEnabled: true, // 随机遭遇开关：每楼本地掷骰，命中即在用户本楼输入末尾追加强制开战指令
-      randomCombatChance: 5,    // 随机遭遇概率（百分比/楼）
-      debug: false,             // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
+      enabledDirector: true,  // 世界推演总开关：推演（心跳/强制/手动📡）+ 副导演词条注入
+      director: defaultEndpoint(), // 副导演 API（世界推演：派系/事件/风声/encounter）
+      directorEveryX: 3,      // 心跳：每 N 楼常规推演一次（可调）
+      enemyPool: '',          // 敌方阵营参考（手输，逗号/换行分隔）——推演输入的阵营名单
+      coreTeam: '',           // 主角核心白名单（手输）——这些人绝不背叛、绝不被指定为间谍
+      extraRules: '',         // 附加铁律（手输，多行）——拼到推演输入文末，最高优先级
+      worldSync: [],          // 世界书同步：[{ book, entries }]——词条内容注入推演输入
+      directorFloors: 20,     // 副导演可见 AI 楼层数（默认对齐 LWB 总结窗口；0=全部历史；排除玩家输入与隐藏楼层）
+      randomCombatEnabled: true,      // 随机遭遇开关：每楼本地掷骰，命中即在用户本楼输入末尾追加强制开战指令
+      randomCombatChance: 5,          // 遇敌概率基线（百分比/楼）——兜底值，世界状态命中 spots/districts 时被覆盖
+      randomCombatOncePerCycle: true, // 防连战锁：每个推演周期（两次推演之间）最多一场随机战斗
+      debug: false,           // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
   function normalizeSync(list) {
@@ -91,33 +94,45 @@
           .map(s => ({ book: s.book, entries: s.entries.map(String) }))
       : [];
   }
+  // V0.2.x → V0.3.0 设置迁移：双端点取暗线位（高智力）；双 worldSync 取并集；双开关并成推演开关
+  function migrateSettings(saved) {
+    const def = defaultSettings();
+    const legacyOn = saved.enabled !== false;
+    // 端点：优先旧暗线位，无则旧态势位
+    const ep = saved.director || saved.shadowline || saved.situation || null;
+    // worldSync 并集：按 book+词条 去重合并
+    const merged = [];
+    const seen = new Set();
+    for (const src of [normalizeSync(saved.worldSync), normalizeSync(saved.worldSyncShadowline), normalizeSync(saved.worldSyncSituation)]) {
+      for (const s of src) {
+        const key = s.book + '||' + s.entries.join(',');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(s);
+      }
+    }
+    return {
+      enabledDirector: saved.enabledDirector !== undefined ? saved.enabledDirector !== false
+        : (saved.enabledShadowline !== undefined ? saved.enabledShadowline !== false : legacyOn),
+      director: Object.assign(def.director, ep || {}),
+      directorEveryX: Number.isFinite(saved.directorEveryX) && saved.directorEveryX > 0 ? saved.directorEveryX : 3,
+      enemyPool: typeof saved.enemyPool === 'string' ? saved.enemyPool : '',
+      coreTeam: typeof saved.coreTeam === 'string' ? saved.coreTeam : '',
+      extraRules: typeof saved.extraRules === 'string' ? saved.extraRules : '',
+      worldSync: merged,
+      directorFloors: Number.isFinite(saved.directorFloors) ? saved.directorFloors
+        : (Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20),
+      randomCombatEnabled: saved.randomCombatEnabled !== undefined ? saved.randomCombatEnabled !== false : true,
+      randomCombatChance: Number.isFinite(saved.randomCombatChance) ? saved.randomCombatChance : 5,
+      randomCombatOncePerCycle: saved.randomCombatOncePerCycle !== undefined ? saved.randomCombatOncePerCycle !== false : true,
+      debug: saved.debug === true,
+    };
+  }
   function loadSettings() {
     try {
       const raw = localStorage.getItem(LS.settings);
       if (!raw) return defaultSettings();
-      const saved = JSON.parse(raw);
-      const def = defaultSettings();
-      // 迁移：旧单一 worldSync（无新键时）→ 复制到两套
-      const legacy = normalizeSync(saved.worldSync);
-      const hasSit = Array.isArray(saved.worldSyncSituation);
-      const migrate = legacy.length && !hasSit && !Array.isArray(saved.worldSyncShadowline);
-      // 旧总开关迁移：enabled:false → 双开关全关；未设置新键时随旧开关（默认双开）
-      const legacyOn = saved.enabled !== false;
-      return {
-        enabledShadowline: saved.enabledShadowline !== undefined ? saved.enabledShadowline !== false : legacyOn,
-        enabledSituation: saved.enabledSituation !== undefined ? saved.enabledSituation !== false : legacyOn,
-        shadowline: Object.assign(def.shadowline, saved.shadowline || {}),
-        situation: Object.assign(def.situation, saved.situation || {}),
-        enemyPool: typeof saved.enemyPool === 'string' ? saved.enemyPool : '',
-        coreTeam: typeof saved.coreTeam === 'string' ? saved.coreTeam : '',
-        extraRules: typeof saved.extraRules === 'string' ? saved.extraRules : '',
-        worldSyncSituation: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncSituation),
-        worldSyncShadowline: migrate ? JSON.parse(JSON.stringify(legacy)) : normalizeSync(saved.worldSyncShadowline),
-        shadowlineFloors: Number.isFinite(saved.shadowlineFloors) ? saved.shadowlineFloors : 20,
-        randomCombatEnabled: saved.randomCombatEnabled !== undefined ? saved.randomCombatEnabled !== false : true,
-        randomCombatChance: Number.isFinite(saved.randomCombatChance) ? saved.randomCombatChance : 5,
-        debug: saved.debug === true,
-      };
+      return migrateSettings(JSON.parse(raw));
     } catch (e) { return defaultSettings(); }
   }
   function saveSettings(s) {
@@ -335,7 +350,7 @@
     return name;
   }
 
-  const WB_SLOT = { [WB_ENTRY_SITUATION]: 'situation', [WB_ENTRY_SHADOWLINE]: 'shadowline' };
+  const WB_SLOT = { [WB_ENTRY_DIRECTOR]: 'director' };
 
   async function writeWbEntryNow(entryName, content) {
     const slot = WB_SLOT[entryName];
@@ -386,7 +401,7 @@
   // 禁用注入词条（不删除——换回有数据的聊天/重开总开关时恢复写入即回到注入）
   async function disableWbEntries(names) {
     if (!HAS_WB) return;
-    const list = Array.isArray(names) ? names : [WB_ENTRY_SITUATION, WB_ENTRY_SHADOWLINE];
+    const list = Array.isArray(names) ? names : [WB_ENTRY_DIRECTOR];
     const wbName = await resolveWbName();
     if (!wbName) return;
     let entries = [];
@@ -397,21 +412,21 @@
       es.map(e => e && list.includes(e.name) ? { ...e, enabled: false } : e)));
   }
 
-  // 重挂载/换聊天：按存档报告重建暗线词条（无报告则禁用，防上一聊天残留）
-  function syncShadowlineEntry() {
-    if (!SETTINGS.enabledShadowline) { disableWbEntries([WB_ENTRY_SHADOWLINE]); return; }
-    const report = readChatVar(CV.report);
-    if (report && Array.isArray(report.factions)) writeWbEntry(WB_ENTRY_SHADOWLINE, buildShadowlineInjection(report));
-    else disableWbEntries([WB_ENTRY_SHADOWLINE]);
+  // 重挂载/换聊天：按存档世界状态重建副导演词条（无状态则禁用，防上一聊天残留）；
+  // V0.2.x 旧双词条一并下灯（内容已废弃，留着会双份注入）
+  function syncDirectorEntry() {
+    disableWbEntries(WB_ENTRY_LEGACY);
+    if (!SETTINGS.enabledDirector) { disableWbEntries([WB_ENTRY_DIRECTOR]); return; }
+    const world = readChatVar(CV.world);
+    if (world && Array.isArray(world.factions)) writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorInjection(world, State.lastLocationText));
+    else disableWbEntries([WB_ENTRY_DIRECTOR]);
   }
 
   // 功能开关切换即时生效：关 → 词条下灯；开 → 强制一次重写重新上灯
   // （writeWbEntryNow 见词条 disabled 会原内容重开灯，merge3 基线不动——用户改动保留）
   function applySwitches() {
-    if (SETTINGS.enabledShadowline) syncShadowlineEntry();
-    else disableWbEntries([WB_ENTRY_SHADOWLINE]);
-    if (SETTINGS.enabledSituation) { State.forceSituationWrite = true; scheduleDispatch('switch-on'); }
-    else disableWbEntries([WB_ENTRY_SITUATION]);
+    if (SETTINGS.enabledDirector) { State.forceDirectorWrite = true; scheduleDispatch('switch-on'); }
+    else disableWbEntries([WB_ENTRY_DIRECTOR]);
   }
 
   // —— 事件封装 ——————————————————————————————————————————
@@ -434,9 +449,18 @@
   // 程序侧概率推进：正文 AI 自己掷不出真随机（注入文里写概率基本永远不触发），
   // 故由本地在 GENERATION_STARTED（用户已发送、提示词未组装）时掷骰，
   // 命中即把强制开战指令以用户身份追加进本楼输入末尾——随楼层生成自然持久化。
+  // V0.3.0：概率不再固定——按世界状态动态计算（spots>districts>玩家设置 三级兜底
+  // + heat/eventTension 冷热加法修正），另加防连战锁（每推演周期最多一场）。
 
   const RC_MARKER = '【🎲随机遭遇】';
   const RC_DIRECTIVE = '本轮用户触发随机战斗，按【战斗轮规则】输出 Combat_block 块';
+
+  const clamp = (min, max, v) => Math.max(min, Math.min(max, v));
+  // 区块匹配：norm 后互相包含（spot 对地标键 / district 对大区 / zone 对大区）
+  function zoneMatch(pattern, text) {
+    const p = norm(pattern), t = norm(text);
+    return !!(p && t && (t.includes(p) || p.includes(t)));
+  }
 
   // 战斗进行中检测：最近一条可见 AI 楼含 <Combat_block> 即在战（RpgCombat 逐楼续写该块）
   function combatInProgress() {
@@ -450,6 +474,59 @@
     return false;
   }
 
+  // 事件归属大区集合：事件自带 zone ∪ 其涉及派系的 zone
+  function eventZones(ev, world) {
+    const zones = [];
+    if (ev.zone) zones.push(ev.zone);
+    for (const name of (ev.factions || [])) {
+      const f = (world.factions || []).find(x => x && x.name === name);
+      if (f && f.zone) zones.push(f.zone);
+    }
+    return zones;
+  }
+
+  // eventTension（微观冷热）：当前地点命中的 conflict 类事件的阶段分之和——世界另一头的战争不抬高本地遇敌率
+  // 匹配目标用整段地点文本（zone 可能是大区也可能是次级区名，如"萨里山"⊂"悉尼 · 萨里山 · 绿顶酒馆"）
+  function eventTension(world, locationText) {
+    if (!world || !Array.isArray(world.events) || !locationText) return 0;
+    let sum = 0;
+    for (const ev of world.events) {
+      if (!ev || ev.type !== 'conflict') continue;
+      const score = STAGE_SCORE[ev.stage];
+      if (!score) continue;
+      const zones = eventZones(ev, world);
+      if (zones.length && zones.some(z => zoneMatch(z, locationText))) sum += score;
+    }
+    return sum;
+  }
+
+  // 遇敌概率档案（S7 算法）：
+  //   最终概率 = clamp(0,100, 区域基值 + 冷热修正)；冷热修正 = clamp(-40,40, heat + eventTension)
+  //   区域基值三级兜底：spots（地标级）> districts（大区级）> SETTINGS.randomCombatChance（玩家设置）
+  //   显式安全标记：命中 spots/districts 且 chance===0 → 直接安全区，不叠修正
+  //   spots/districts 都对整段地点串匹配（双向包含）：地标键在四级地点（大区·区·地标·房间）
+  //   下会取到第二段"区"，对整串匹配才能兜住真实地标；spots 更具体、先查，精度由优先级保证
+  function encounterProfile(locationText) {
+    const base = { chance: clamp(0, 100, Number(SETTINGS.randomCombatChance) || 0), safe: false, via: 'settings', heat: 0, tension: 0 };
+    const world = readChatVar(CV.world);
+    if (!world || !world.encounter) return base;   // 无世界状态（未首推）：与 S6 原行为一致
+    const enc = world.encounter;
+    let hit = null, via = 'settings';
+    for (const s of (enc.spots || [])) {
+      if (s && s.match && zoneMatch(s.match, locationText)) { hit = s; via = 'spot'; break; }
+    }
+    if (!hit) for (const d of (enc.districts || [])) {
+      if (d && d.match && zoneMatch(d.match, locationText)) { hit = d; via = 'district'; break; }
+    }
+    if (!hit) return base;   // spots/districts 均未命中：玩家设置兜底（不加修正——副导演没给过该地判断）
+    const chance = clamp(0, 100, Number(hit.chance) || 0);
+    if (chance === 0) return { chance: 0, safe: true, via, heat: 0, tension: 0 };   // 显式安全标记
+    const heat = (enc.heat && Number.isFinite(+enc.heat.value)) ? clamp(-30, 30, +enc.heat.value) : 0;
+    const tension = eventTension(world, locationText);
+    const mod = clamp(-40, 40, heat + tension);
+    return { chance: clamp(0, 100, chance + mod), safe: false, via, heat, tension };
+  }
+
   function onGenerationStarted(type, _opts, dryRun) {
     if (!SETTINGS.randomCombatEnabled) return;
     if (dryRun || type === 'swipe' || type === 'regenerate') return;
@@ -459,12 +536,20 @@
     if (!last || last.is_user !== true) return;         // 只在用户刚发送的楼注入
     const mes = String(last.mes || '');
     if (mes.includes(RC_MARKER)) return;                // 防重复追加（含 swipe 后重跑）
-    if (State.lastMode === 'safe') return;              // 安全区豁免
     if (combatInProgress()) return;                     // 战斗进行中不触发
-    if (Math.random() * 100 >= Number(SETTINGS.randomCombatChance) || 0) return;
+    // 动态概率：取最新状态栏地点（ GENERATION_STARTED 时最新 stat 快照即当前场景）
+    const stat = readLatestStatData();
+    const locationText = String((stat && stat['地点']) || State.lastLocationText || '').trim();
+    const profile = locationText ? encounterProfile(locationText) : { chance: Number(SETTINGS.randomCombatChance) || 0, safe: false, via: 'settings' };
+    if (profile.safe) return;                           // 副导演显式安全区（spots/districts chance=0）
+    // 防连战锁：本推演周期已触发过一场——锁到下一次推演成功（仅世界状态存在时生效）
+    const world = readChatVar(CV.world);
+    if (SETTINGS.randomCombatOncePerCycle && world && State.randomCombatFired) return;
+    if (Math.random() * 100 >= profile.chance) return;
     last.mes = mes + '\n' + RC_MARKER + ' ' + RC_DIRECTIVE + '。';
-    toast('🎲 随机遭遇触发');
-    log(`随机遭遇命中（${SETTINGS.randomCombatChance}%/楼）——已注入用户本楼输入`);
+    if (SETTINGS.randomCombatOncePerCycle && world) { State.randomCombatFired = true; persistRuntimeState(); }
+    toast(`🎲 随机遭遇触发（${profile.chance}% · ${profile.via}）`);
+    log(`随机遭遇命中（${profile.chance}%/楼 · 来源 ${profile.via} · heat ${profile.heat} · tension ${profile.tension}）——已注入用户本楼输入`);
   }
 
 
@@ -473,13 +558,12 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const State = {
-    wbLast: { situation: '', shadowline: '' },  // 上次注入词条的「纯脚本内容」——merge3 的 base（≠词条现状即用户改过）
-    forceSituationWrite: false, // 态势开关重开的一次性强写标记（不持久化——词条见 disabled 会重新上灯）
+    wbLast: { director: '' },  // 上次注入词条的「纯脚本内容」——merge3 的 base（≠词条现状即用户改过）
+    forceDirectorWrite: false, // 推演开关重开的一次性强写标记（不持久化——词条见 disabled 会重新上灯）
     lastLocationText: '',     // 当前地点原文
-    lastLandmarkKey: '',      // 当前地标键（大区后首字段）——没变不触发产卡
-    lastMode: '',             // 最近一次配发形态（card/safe/fallback/ambush）
-    ammoBaseline: 0,          // 弹药基准（历史最高，规模降档参照）
-    lastCardsRef: '',         // 卡片池指纹（检测外部改动）
+    lastLandmarkKey: '',      // 当前地标键（大区后首字段）
+    lastDiceFloorId: -1,      // 本地骰已推进到的楼层号（swipe/重roll 同楼不重复掷骰）
+    randomCombatFired: false, // 防连战锁：本推演周期内已触发过随机战斗（推演成功解锁）
     tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
     pendingTimer: null,
   };
@@ -487,11 +571,11 @@
   function loadRuntimeState() {
     const s = readChatVar(CV.state) || {};
     const wl = s.wbLast || {};
-    State.wbLast = { situation: wl.situation || '', shadowline: wl.shadowline || '' };
+    State.wbLast = { director: wl.director || '' };
     State.lastLocationText = s.lastLocationText || '';
     State.lastLandmarkKey = s.lastLandmarkKey || '';
-    State.lastMode = s.lastMode || '';
-    State.ammoBaseline = s.ammoBaseline || 0;
+    State.lastDiceFloorId = Number.isFinite(s.lastDiceFloorId) ? s.lastDiceFloorId : -1;
+    State.randomCombatFired = s.randomCombatFired === true;
     State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
   }
   function persistRuntimeState() {
@@ -499,8 +583,8 @@
       wbLast: State.wbLast,
       lastLocationText: State.lastLocationText,
       lastLandmarkKey: State.lastLandmarkKey,
-      lastMode: State.lastMode || '',
-      ammoBaseline: State.ammoBaseline,
+      lastDiceFloorId: State.lastDiceFloorId,
+      randomCombatFired: State.randomCombatFired,
       tickerHeads: State.tickerHeads,
       savedAt: Date.now(),
     });
@@ -517,33 +601,31 @@
   }
 
   function onFloorEvent() {
-    if (!SETTINGS.enabledSituation && !SETTINGS.enabledShadowline) return;
+    if (!SETTINGS.enabledDirector) return;   // 随机遭遇独立于此开关（挂 GENERATION_STARTED）
     scheduleDispatch('floor-event');
   }
   function onChatChanged() {
     // 换聊天：运行时状态重置（情报流也清空），注入词条按新聊天重写。
     // wbLast 必须清空——词条里还残留上一聊天的内容，带旧 base 会被误判成用户改动
-    State.wbLast = { situation: '', shadowline: '' };
+    State.wbLast = { director: '' };
     State.lastLocationText = '';
     State.lastLandmarkKey = '';
-    State.ammoBaseline = 0;
+    State.lastDiceFloorId = -1;
+    State.randomCombatFired = false;
     State.tickerHeads = [];
-    Instant.tried = Object.create(null);   // 换聊天：分兵/未命中产卡记录清零
-    Trigger.lastReportDate = '';           // 换聊天：触发基线重建（首次 dispatch 记基线不触发）
+    Trigger.lastDateKey = '';               // 换聊天：触发基线重建（首次 dispatch 记基线不触发）
     Trigger.lastStage = '';
-    Trigger.lastCity = '';
     Trigger.lastCombatResult = '';
     Trigger.lastFloorId = -1;
-    Trigger.floorsSinceReport = 0;
+    Trigger.floorsSinceEvolve = 0;
     wbNameCache = null;   // 换卡/换聊天：重探角色卡主世界书
-    if (!SETTINGS.enabledSituation && !SETTINGS.enabledShadowline) return;
-    if (SETTINGS.enabledShadowline) syncShadowlineEntry();   // 暗线词条按新聊天报告重建（无报告禁用）
-    else disableWbEntries([WB_ENTRY_SHADOWLINE]);
-    scheduleDispatch('chat-changed'); // 态势词条随 dispatch 重写（关→下灯）
+    if (!SETTINGS.enabledDirector) { disableWbEntries([WB_ENTRY_DIRECTOR]); return; }
+    syncDirectorEntry();   // 副导演词条按新聊天世界状态重建（无状态禁用）
+    scheduleDispatch('chat-changed');
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 4. 态势卡片引擎
+  // 4. 世界态势引擎（信号级提醒 + 本地骰；纯程序，零 LLM）
   // ═════════════════════════════════════════════════════════════════════
 
   // —— 地点文本归一化：剥 emoji / 变体符 / 零宽，压缩空白 ——————————
@@ -556,148 +638,116 @@
       .trim();
   }
 
-  // 三级匹配：① 归一化后与 place 全等 ② 与 alias 全等 ③ 双向包含
-  // 得分：全等 place=3.0 / 全等 alias=2.8 / 包含=名字长度占地点串比例（<2.0）
-  // 多卡命中取最高分——更长更具体的名字占比更高，天然择优。
-  function matchCard(locationText, cards) {
-    const L = norm(locationText);
-    if (!L) return null;
-    let best = null;
-    for (const card of (cards || [])) {
-      if (!card || !card.place) continue;
-      const names = [card.place].concat(card.aliases || []);
-      for (const raw of names) {
-        const n = norm(raw);
-        if (!n) continue;
-        let score = 0;
-        if (L === n) score = raw === card.place ? 3.0 : 2.8;
-        else if (L.includes(n) || n.includes(L)) {
-          score = Math.min(1.99, (n.length / Math.max(L.length, 1)) * 1.99);
+  // —— 信号级态势文本（V0.3.0：无敌人菜单——敌方构成由正文 AI 自选）—————————
+  // 驻守信号 = 世界状态里 zone 命中当前大区的派系（名称/士气/对我方立场）；
+  // 临近冲突 = conflict 类事件推进到"爆发"阶段且归属当前大区（取代旧预约引爆）。
+
+  function buildDirectorSituationText(locationText, world) {
+    const lines = [SIT_OPEN, `  ${locationText}`];
+    if (world && Array.isArray(world.factions)) {
+      const stationed = world.factions.filter(f => f && f.zone && zoneMatch(f.zone, locationText));
+      if (stationed.length) {
+        for (const f of stationed.slice(0, 3)) {
+          lines.push(`  驻守信号：${f.name}（${f.zone}）${f.morale ? '，士气：' + f.morale : ''}${f.stance ? '，对我方：' + f.stance : ''}`);
         }
-        if (score > 0 && (!best || score > best.score)) best = { card, score, matchedName: raw };
+      } else {
+        lines.push('  此地无已知派系驻防——敌方构成由你按世界书图鉴与剧情合理性决定。');
+      }
+      const hot = (Array.isArray(world.events) ? world.events : [])
+        .filter(ev => ev && ev.type === 'conflict' && ev.stage === '爆发'
+          && eventZones(ev, world).some(z => zoneMatch(z, locationText)));
+      for (const ev of hot) {
+        lines.push(`  【⚠ 临近冲突】${ev.name}已推进到爆发阶段${ev.desc ? '——' + ev.desc : ''}——本楼冲突极易触发，戒备拉满。`);
+      }
+    } else {
+      lines.push('  尚无世界态势档案——敌方构成由你按世界书图鉴与剧情合理性决定。');
+    }
+    lines.push(`  ${COMBAT_RULE_HINT}`);
+    lines.push(SIT_CLOSE);
+    return lines.join('\n');
+  }
+
+  // —— 本地骰（S7，仿世界引擎：每楼微演进，零 LLM）————————————————
+  // 事件链推进：stageRound/9 进度 + 阶段基准 + level 修正 → 1-100 阈值骰 →
+  //   推进（>阈值）/ 受挫（<阈值×40%，回退一格）/ 保持；stageRound≥9 晋级下一阶段。
+  // 风声衰减：安静楼数超 grace 后按线性递增概率消散，消散的下报纸架。
+  // 幂等守卫：floorId 未前进不掷（swipe/重roll 重触发 dispatchNow 不重复推进）。
+
+  function rollEvents(world, rand) {
+    let changed = false;
+    for (const ev of (world.events || [])) {
+      if (!ev || ev.stage === '平息') continue;
+      const si = EV_STAGES.indexOf(ev.stage);
+      if (si < 0 || si >= EV_STAGES.length - 1) continue;   // 非法阶段/已到最后阶段
+      const r = Math.min(1, (ev.stageRound || 1) / 9);
+      // conflict 越后期越难推进（萌芽85→逼近70），progress 反之（越干越顺）
+      const base = ev.type === 'progress' ? 75 + si * 5 : 85 - si * 5;
+      const levelAdj = (ev.type === 'progress' ? 1 : -1) * (((ev.level || 1) - 1) * 10);
+      const threshold = Math.round(base - 200 * r * (1 - r) + levelAdj);
+      const dice = Math.floor(rand() * 100) + 1;
+      if (dice > threshold) {
+        ev.stageRound = (ev.stageRound || 1) + 1;
+        if (ev.stageRound >= 9) { ev.stage = EV_STAGES[si + 1]; ev.stageRound = 1; }
+        changed = true;
+      } else if (dice < threshold * 0.4) {
+        ev.stageRound = Math.max(1, (ev.stageRound || 1) - 1);
+        changed = true;
       }
     }
-    return best;
+    return changed;
   }
 
-  // —— menu 解析："词条A*4~6/词条B*3~5/词条C" ————————————————
-
-  function parseMenu(menu) {
-    return String(menu || '')
-      .split(/[\/／]/)
-      .map(s => s.trim()).filter(Boolean)
-      .map(seg => {
-        let m = seg.match(/^(.+?)\s*[*×xX]\s*(\d+)\s*[~～\-—–]\s*(\d+)$/);
-        if (m) return { name: m[1].trim(), min: +m[2], max: +m[3] };
-        m = seg.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
-        if (m) return { name: m[1].trim(), min: +m[2], max: +m[2] };
-        return { name: seg, min: 0, max: 0 }; // 无数量标记：原样输出（仍受白名单约束的词条名）
-      });
-  }
-
-  // —— stat_data 解析（我方状态）———————————————————————————
-
-  // 属性串 "[❤️HP:100/100][🔮MP:110/110]…" → { cur, max } | null
-  function parseAttr(attrStr, key) {
-    const m = String(attrStr || '').match(new RegExp(key + '\\s*[:：]\\s*(\\d+)\\s*\\/\\s*(\\d+)'));
-    if (!m) return null;
-    return { cur: +m[1], max: +m[2] };
-  }
-  // 弹药串 "[🔩] [.45子弹：28][12号独头弹：0]" → 数字总和
-  function parseAmmoTotal(ammoStr) {
-    let sum = 0;
-    const re = /[【\[]([^\]】]+?)[:：]\s*(\d+)[\]】]/g;
-    let m;
-    while ((m = re.exec(String(ammoStr || '')))) sum += +m[2];
-    return sum;
-  }
-  // 角色列表归一（兼容 {角色:{…}} 包装与裸对象）
-  function charList(stat) {
-    return (stat['角色列表'] || [])
-      .map(x => (x && x['角色']) ? x['角色'] : x)
-      .filter(c => c && c['名字']);
-  }
-
-  // 规模随行重算：我方弱（有人倒地 / 弹药消耗过半）→ 取区间下限再-1（保底 1）；
-  // 正常 → 区间中值。弹药基准取历史最高（弹药会跨楼自然消耗，基准只升不降）。
-  function computeScale(entries, stat) {
-    const chars = charList(stat);
-    let downed = false;
-    for (const c of chars) {
-      const hp = parseAttr(c['属性'], 'HP');
-      if (hp && hp.max > 0 && hp.cur <= 0) { downed = true; break; }
+  function rollWinds(world, rand) {
+    const before = world.winds ? world.winds.length : 0;
+    const keep = [];
+    for (const w of (world.winds || [])) {
+      if (!w) continue;
+      w.quietRounds = (w.quietRounds || 0) + 1;
+      if (w.quietRounds <= WIND_GRACE) { keep.push(w); continue; }
+      const n = w.quietRounds - WIND_GRACE - 1;
+      const chance = Math.min(95, Math.max(5, WIND_BASE + WIND_LINEAR * n));
+      if (Math.floor(rand() * 100) + 1 <= chance) continue;   // 消散：不保留
+      keep.push(w);
     }
-    let ammoNow = 0;
-    for (const c of chars) ammoNow += parseAmmoTotal(c['弹药']);
-    State.ammoBaseline = Math.max(State.ammoBaseline || 0, ammoNow);
-    const lowAmmo = State.ammoBaseline > 0 && ammoNow < State.ammoBaseline * 0.5;
-    const penalized = downed || lowAmmo;
-    return entries.map(e => {
-      if (!e.max && !e.min) return Object.assign({}, e, { count: 0 });
-      const count = penalized ? Math.max(e.min - 1, 1) : Math.round((e.min + e.max) / 2);
-      return Object.assign({}, e, { count });
-    });
+    world.winds = keep;
+    return keep.length !== before;
   }
 
-  // —— 注入文本拼装（三种形态；XML 标签包裹 + 两空格缩进）———————————
-
-  // 命中卡片（menu 非空）：驻防 + 菜单（规模已随行重算）+ 反应 + 战斗轮提醒 + 判定标准
-  function buildSituationText(card, scaledEntries, locationText) {
-    const menuStr = scaledEntries
-      .map(e => e.count > 0 ? `${e.name}*${e.count}` : e.name)
-      .join('/');
-    const alert = ALERT_LEVELS.includes(card.alert) ? card.alert : '常规';
-    const verdict = card.verdict || DEFAULT_VERDICT;
-    return [
-      SIT_OPEN,
-      `  ${locationText}`,
-      `  驻守：${card.faction || '未知派系'}（${menuStr}），戒备等级：${alert}`,
-      `  反应模式：${card.reaction || '（未提供——按戒备等级常识演出）'}`,
-      `  ${COMBAT_RULE_HINT}`,
-      `  判定标准：${verdict}`,
-      SIT_CLOSE,
-    ].join('\n');
+  // 楼层号（拿不到则 -1——不掷骰，避免无锚点重复推进）
+  function currentFloorId() {
+    try {
+      const msgs = getChatMessages(-1);
+      const m = Array.isArray(msgs) ? msgs[0] : null;
+      if (m && m.message_id != null) return m.message_id;
+    } catch (e) { /* 忽略 */ }
+    return -1;
   }
 
-  // 绝对安全地点变体（命中卡片但 menu 为空，或卡片标记 safe）
-  function buildSafeText(locationText) {
-    return [
-      SIT_OPEN,
-      `  ${locationText}`,
-      '  当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭。',
-      '  若冲突升级，按【战斗轮规则】输出 <Combat_block>。',
-      SIT_CLOSE,
-    ].join('\n');
+  // 每楼本地骰入口：floorId 前进才掷；有实际变化才回写 $ad_world（幂等省写）
+  function runLocalDice() {
+    const world = readChatVar(CV.world);
+    if (!world || !Array.isArray(world.events) && !Array.isArray(world.winds)) return false;
+    const floorId = currentFloorId();
+    if (floorId < 0 || floorId <= State.lastDiceFloorId) return false;
+    State.lastDiceFloorId = floorId;
+    const evChanged = rollEvents(world, Math.random);
+    const windChanged = rollWinds(world, Math.random);
+    if (evChanged || windChanged) {
+      writeChatVar(CV.world, world);
+      log(`本地骰推进（楼层 ${floorId}）：${evChanged ? '事件链' : ''}${evChanged && windChanged ? '+' : ''}${windChanged ? '风声衰减' : ''}`);
+      return true;
+    }
+    return false;
   }
 
-  // 通用兜底（卡片池未命中）
-  function buildFallbackText(locationText) {
-    return [
-      SIT_OPEN,
-      `  ${locationText}`,
-      '  此地无驻防情报。若冲突升级，按【战斗轮规则】输出',
-      '  <Combat_block>：敌方名字从世界书图鉴中按剧情合理性选择。禁止自创敌方数值。',
-      SIT_CLOSE,
-    ].join('\n');
-  }
-
-  // —— 主配发流程（纯程序，零 LLM）—————————————————————————
-
-  function getCards() {
-    const v = readChatVar(CV.cards);
-    return Array.isArray(v) ? v : [];
-  }
-  function setCards(cards) {
-    writeChatVar(CV.cards, cards || []);
-    State.lastCardsRef = JSON.stringify(cards || []).length + ':' + (cards || []).length;
-  }
+  // —— 主配发流程（纯程序，零 LLM；每楼重算注入，幂等写入）———————————
 
   function dispatchNow(reason) {
-    if (!SETTINGS.enabledSituation && !SETTINGS.enabledShadowline) return;   // 双开关全关：完全静默
+    if (!SETTINGS.enabledDirector) return;   // 推演总开关关：完全静默（随机遭遇独立工作）
     const stat = readLatestStatData();
     if (!stat) {
       log('无 stat_data 可用（MMS 未运行或尚无楼层变量），跳过本轮配发');
-      disableWbEntries([WB_ENTRY_SITUATION]);   // 无数据聊天：禁用态势词条（暗线由 syncShadowlineEntry 管）
+      disableWbEntries([WB_ENTRY_DIRECTOR]);
       updatePanelStatus('等待状态栏数据…');
       return;
     }
@@ -706,110 +756,29 @@
       logWarn('stat_data 缺少地点字段，跳过');
       return;
     }
-    const sitOn = SETTINGS.enabledSituation;
-    // 预约引爆作用于态势注入与卡片戒备——归态势开关（暗线开关只管埋雷，不管引爆）
-    const ambushHit = sitOn ? checkAmbush(locationText, stat) : null;
-    const cards = getCards();
-    const hit = sitOn ? matchCard(locationText, cards) : null;
-
-    let text = '';
-    let mode = '';
-    if (!sitOn) {
-      mode = 'off';
-    } else if (hit) {
-      const entries = parseMenu(hit.card.menu);
-      const hasMenu = entries.length > 0 && entries.some(e => e.min || e.max);
-      if (hit.card.safe || !hasMenu) {
-        text = buildSafeText(locationText); mode = 'safe';
-      } else {
-        const scaled = computeScale(entries, stat);
-        text = buildSituationText(hit.card, scaled, locationText); mode = 'card';
-      }
-    } else {
-      text = buildFallbackText(locationText); mode = 'fallback';
-    }
+    runLocalDice();   // 本地骰（事件链/风声）——在构建注入前推进
+    const world = readChatVar(CV.world) || null;
 
     State.lastLocationText = locationText;
-    State.lastMode = mode;
-    // 地标键：大区后首字段（如"澳大利亚酒店 - 总统套房"）——地标没变（房间级小变化）不触发产卡
     const lKey = landmarkKey(locationText);
-    const keyChanged = lKey !== State.lastLandmarkKey;
     State.lastLandmarkKey = lKey;
-    let textFinal = text;
-    if (ambushHit && textFinal) {
-      // 主动接触态插到 </当前态势> 之前，保持 XML 包裹完整
-      const line = `  【⚠ 主动接触态】${ambushHit['派系']}正在主动接触（预约引爆：${ambushHit['规模'] || ''}）——本楼遇敌概率极高，戒备已置顶。`;
-      textFinal = textFinal.endsWith(SIT_CLOSE)
-        ? textFinal.slice(0, -SIT_CLOSE.length) + line + '\n' + SIT_CLOSE
-        : textFinal + '\n' + line;
-      mode = 'ambush';
-    }
-    if (!sitOn) {
-      disableWbEntries([WB_ENTRY_SITUATION]);   // 开关关闭：词条下灯（已禁用时幂等无调用）
-      log(`态势开关关闭，跳过注入（${reason}）`);
-    } else if (HAS_WB && (State.forceSituationWrite || textFinal !== State.wbLast.situation)) {
-      State.forceSituationWrite = false;   // 开关重开的一次性强写（词条见 disabled 会重新上灯）
-      writeWbEntry(WB_ENTRY_SITUATION, textFinal);   // 异步写词条（内部幂等 + merge3 用户改动兜底）
-      pushTickerHead(mode, (hit && hit.card.place) || locationText);
+
+    // 词条内容 = 信号级当前态势 + 世界动态（事件/风声/派系暗线三态）
+    const text = world
+      ? buildDirectorSituationText(locationText, world) + '\n\n' + buildDirectorInjection(world, locationText)
+      : buildDirectorSituationText(locationText, null);
+    if (HAS_WB && (State.forceDirectorWrite || text !== State.wbLast.director)) {
+      State.forceDirectorWrite = false;   // 开关重开的一次性强写（词条见 disabled 会重新上灯）
+      writeWbEntry(WB_ENTRY_DIRECTOR, text);   // 异步写词条（内部幂等 + merge3 用户改动兜底）
       if (els.dot) els.dot.classList.add('on');   // 更新提醒：展开后熄灭
-      log(`态势注入已更新（${mode}/${reason}）`, (hit && hit.card.place) || '→ 兜底');
+      log(`副导演注入已更新（${reason}）`);
     } else {
-      log(`态势无变化，保持注入（${mode}/${reason}）`);
+      log(`副导演注入无变化，保持（${reason}）`);
     }
     persistRuntimeState();
-    updatePanelStatus(null, { mode, locationText, card: hit ? hit.card : null, text });
+    updatePanelStatus(null, { locationText, world });
     updatePanelMeta(stat);
-    if (IS_LIVE) {
-      // S2：主地点未命中 && 地标键变化 → 产卡（地标没变不重复产）；分兵点位独立检查——归态势开关
-      if (sitOn) triggerInstant(mode === 'fallback' && keyChanged, lKey, stat);
-      if (SETTINGS.enabledShadowline) checkTriggers(stat);   // S3：触发矩阵（newday/号外/兜底）——归暗线开关
-    }
-  }
-
-  // 预约引爆：$ad_pending.ambush 每楼检查（时间+地点命中 → 卡片戒备置顶 + 注入主动接触态标注）
-  function checkAmbush(locationText, stat) {
-    const pending = readChatVar(CV.pending);
-    const list = pending && Array.isArray(pending.ambush) ? pending.ambush : [];
-    if (!list.length) return null;
-    const dateKey = statDateKey(stat);   // 如 "1925年 · 6月13日"
-    const datePart = dateKey.replace(/\s/g, '');
-    const remaining = [];
-    let fired = null;
-    for (const a of list) {
-      const cond = a['条件'] || {};
-      const timeStr = String(cond['时间'] || '').replace(/\s/g, '');
-      // 时间命中：预约时间片段（月/日）与当前日期有交集，或预约未写时间
-      const timeHit = !timeStr || (() => {
-        const frags = timeStr.match(/\d{1,2}月\d{1,2}日|\d{1,2}\/\d{1,2}/g) || [];
-        return !frags.length || frags.some(f => datePart.includes(f.replace(/\/|日/g, m => m === '/' ? '月' : '')));
-      })();
-      const placeList = Array.isArray(cond['地点∈']) ? cond['地点∈'] : [];
-      const cardsNow = getCards();
-      const curHit = matchCard(locationText, cardsNow);
-      // 地点命中：①预约地点直接包含于当前地点串；②两者命中同一张卡片（预约写"达令港仓库"，
-      // 当前地点是"达令港 · 伦道夫船运仓库"——借卡片别名/包含匹配对齐到同一驻防点）
-      const placeHit = !placeList.length || placeList.some(p => {
-        if (norm(locationText).includes(norm(p))) return true;
-        const aHit = matchCard(p, cardsNow);
-        return !!(aHit && curHit && aHit.card === curHit.card);
-      });
-      if (timeHit && placeHit) {
-        fired = a;
-        // 对应卡片戒备置顶
-        const cards = getCards();
-        for (const p of placeList) {
-          const hit = matchCard(p, cards);
-          if (hit) { hit.card.alert = a['引爆态'] === '严密' ? '严密' : (hit.card.alert || '警戒'); }
-        }
-        if (placeList.length) setCards(cards);
-      } else remaining.push(a);
-    }
-    if (fired) {
-      writeChatVar(CV.pending, { ambush: remaining, savedAt: Date.now() });
-      log('预约引爆：', fired['派系'], fired['条件']);
-      renderWire();
-    }
-    return fired;
+    if (IS_LIVE) checkTriggers(stat);   // S7：心跳 + 强制推触发矩阵
   }
 
   // ═════════════════════════════════════════════════════════════════════
@@ -899,26 +868,21 @@
     throw new Error('JSON 未闭合');
   }
 
-  // —— 敌人名单（用户手输，本轮战役权威选项来源）+ 地标键（产卡触发粒度）—————————
+  // —— 敌人名单（用户手输，推演输入的阵营参考）+ 地标键（spots 匹配粒度）—————————
 
-  // 敌人名单：手输文本（逗号/顿号/换行分隔）→ 数组；为空表示未配置（menu 校验降级为结构校验）
+  // 敌人名单：手输文本（逗号/顿号/换行分隔）→ 数组；为空表示未配置
   function getEnemyPool() {
     return String(SETTINGS.enemyPool || '')
       .split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
   }
-  // 主角核心白名单：手输文本 → 数组；注入暗线输入，这些人不可能是间谍
+  // 主角核心白名单：手输文本 → 数组；注入推演输入，这些人不可能是间谍
   function getCoreTeam() {
     return String(SETTINGS.coreTeam || '')
       .split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
   }
-  // menu 词条是否在用户手输名单内（相等或双向包含——用户可能写简写）
-  function inEnemyPool(name, pool) {
-    if (!pool || !pool.length) return true;   // 未配置名单：不校验（人类权威，卡片可在管理里人工审删）
-    return pool.some(p => p === name || p.includes(name) || name.includes(p));
-  }
 
   // 地标键：状态栏地点"大区 · 地标 …"中大区后的第一个字段（如"澳大利亚酒店 - 总统套房"）。
-  // 产卡触发粒度锚：地标键没变（客厅→玄关级小变化）不更新；变了（换酒店）才触发产卡。
+  // encounter.spots 的小区域匹配粒度锚。
   function landmarkKey(locationText) {
     const parts = norm(locationText).split(/[·]/).map(s => s.trim()).filter(Boolean);
     return parts.length >= 2 ? parts[1] : (parts[0] || '');
@@ -940,10 +904,10 @@
     });
   }
 
-  // —— 世界书同步（按位独立配置：'situation' 态势位产卡 / 'shadowline' 暗线位报告）—————
+  // —— 世界书同步（单一副导演位；V0.3.0 合并双位配置）——————————————
   // 信息完整性优先：不做长度截断——缺信息导致的瞎编比长输入的稀释更危险
-  async function getSyncedWorldbookText(slot) {
-    const sync = (slot === 'shadowline' ? SETTINGS.worldSyncShadowline : SETTINGS.worldSyncSituation) || [];
+  async function getSyncedWorldbookText() {
+    const sync = SETTINGS.worldSync || [];
     if (!sync.length) return '';
     const parts = [];
     for (const src of sync) {
@@ -962,10 +926,10 @@
   }
 
   // —— 副导演楼层上下文：最近 N 楼 AI 楼层原文（与正文 AI 视野一致，全量）—————————
-  // N = SETTINGS.shadowlineFloors（默认 20，对齐 LWB 总结窗口；0=全部历史）；
+  // N = SETTINGS.directorFloors（默认 20，对齐 LWB 总结窗口；0=全部历史）；
   // 楼层过滤三字段：is_user（玩家楼）/ is_system（/hide 隐藏楼——真机实证 0-11 楼即此标记）/ is_hidden
   function getShadowlineFloorContext() {
-    const limit = Number.isFinite(SETTINGS.shadowlineFloors) ? SETTINGS.shadowlineFloors : 20;
+    const limit = Number.isFinite(SETTINGS.directorFloors) ? SETTINGS.directorFloors : 20;
     let floors = null;
     try {
       // 优先：SillyTavern.getContext().chat（原生消息数组引用；真机 SillyTavern.chat 顶层不存在）
@@ -1041,30 +1005,19 @@
     } catch (e) { return ''; }
   }
 
-  // 最新楼正文（产卡语境输入；全量不截断）
-  function readLatestFloorTail() {
-    try {
-      const msgs = getChatMessages(-1);
-      const m = Array.isArray(msgs) ? msgs[0] : null;
-      if (!m || !m.message) return '';
-      return stripBlocks(m.message);
-    } catch (e) { return ''; }
-  }
-
   // ═════════════════════════════════════════════════════════════════════
-  // 6. 战略层（暗线人格）：触发矩阵 → 全量输入 → 报告 → 硬校验 → 三路分发
+  // 6. 世界推演层（单一副导演 API）：触发矩阵 → 全量输入 → 推演 → 宽容校验 → 三路分发
   // ═════════════════════════════════════════════════════════════════════
 
   const Trigger = {
-    busy: false,              // 报告生成中（并发触发直接跳过）
-    lastReportDate: '',       // 上次报告时的游戏内日期（跨日检测）
-    lastStage: '',            // 上次报告时的剧情阶段（变更→号外）
-    lastCity: '',             // 上次报告时的城市（跨城市→号外）
-    lastCombatResult: '',     // 上次看到的 $rpg_combat_result 指纹（变化→号外）
-    lastFloorId: -1,          // 上次配发的楼层号（同日楼层计数去重）
-    floorsSinceReport: 0,     // 同一游戏日内的楼层数（≥阈值→兜底）
+    busy: false,              // 推演生成中（并发触发直接跳过）
+    busyReason: '',
+    lastDateKey: '',          // 上次推演时的游戏内日期（跨日→强制推）
+    lastStage: '',            // 上次推演时的剧情阶段（变更→强制推）
+    lastCombatResult: '',     // 上次看到的 $rpg_combat_result 指纹（变化→强制推）
+    lastFloorId: -1,          // 上次配发的楼层号（心跳计数去重）
+    floorsSinceEvolve: 0,     // 上次推演以来的楼层数（≥directorEveryX → 心跳推演）
   };
-  const REPORT_FLOOR_CAP = 15;   // 同日兜底阈值（SPEC：15~20 取下限，宁可多推演）
 
   // —— 名册（$ad_roster：派系名册 + 墓碑；S5 才做 CRUD，S3 自动注册）—————
 
@@ -1099,8 +1052,8 @@
     return true;
   }
 
-  // 除名 = 墓碑：级联删该派系全部暗线（报告条目 + 提及它的阻力/预约整条删——交叉暗线，
-  // 其他派系自身条目不动），废弃名单写入战略层输入（【墓碑（禁止复活）】），暗线词条即时重写
+  // 除名 = 墓碑：级联删该派系全部暗线（世界状态条目 + 提及它的事件/风声/阻力整条删——
+  // 交叉暗线其他派系自身条目不动），废弃名单写入推演输入（【墓碑（禁止复活）】），词条即时重写
   function tombstoneFaction(name) {
     name = String(name || '').trim();
     if (!name) return false;
@@ -1115,29 +1068,32 @@
       const s = String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v)));
       return s.includes(name) || (core.length >= 2 && core !== name && s.includes(core));
     };
-    // 级联①：最新报告——该派系条目 + 提及它的阻力整条删
-    const report = readChatVar(CV.report);
-    if (report && Array.isArray(report.factions)) {
-      const before = report.factions.length;
-      report.factions = report.factions.filter(f => !(f && f.name === name));
-      const res = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
+    // 级联：世界状态——该派系条目 + 提及它的阻力整条删 + 事件中的该派系剔除（剔空删事件）+ 提及它的风声删
+    const world = readChatVar(CV.world);
+    if (world && Array.isArray(world.factions)) {
+      const before = world.factions.length;
+      world.factions = world.factions.filter(f => !(f && f.name === name));
+      const res = world.resistance && typeof world.resistance === 'object' ? world.resistance : {};
       if (Array.isArray(res.forbidden)) res.forbidden = res.forbidden.filter(x => x && !mentions(x.truth) && !mentions(x.path));
       if (Array.isArray(res.partial)) res.partial = res.partial.filter(x => !mentions(x));
       if (Array.isArray(res.friction)) res.friction = res.friction.filter(x => !mentions(x));
-      report.resistance = res;
-      if (Array.isArray(report['ambush预约'])) report['ambush预约'] = report['ambush预约'].filter(a => !(a && a['派系'] === name));
-      writeChatVar(CV.report, report);
-      writeWbEntry(WB_ENTRY_SHADOWLINE, buildShadowlineInjection(report));   // 暗线词条即时重写（无该派系版本）
-      renderWire();   // surface 报纸同步去该派系
-      log(`墓碑：${name} 已除名（报告 ${before}→${report.factions.length} 条，交叉暗线级联删除）`);
-    }
-    // 级联②：未引爆的预约（该派系的埋雷一并作废）
-    const pending = readChatVar(CV.pending);
-    if (pending && Array.isArray(pending.ambush) && pending.ambush.length) {
-      const kept = pending.ambush.filter(a => !(a && a['派系'] === name));
-      if (kept.length !== pending.ambush.length) {
-        writeChatVar(CV.pending, { ambush: kept, savedAt: Date.now() });
+      world.resistance = res;
+      if (Array.isArray(world.events)) {
+        world.events = world.events.map(ev => {
+          if (!ev) return ev;
+          if (mentions(ev.name) || mentions(ev.desc)) return null;   // 事件本身提及该派系：整条删
+          if (Array.isArray(ev.factions)) {
+            ev.factions = ev.factions.filter(f => f !== name && !mentions(f));
+            return ev.factions.length ? ev : null;   // 涉及派系剔空：删
+          }
+          return ev;
+        }).filter(Boolean);
       }
+      if (Array.isArray(world.winds)) world.winds = world.winds.filter(w => w && !mentions(w.content) && !mentions(w.source));
+      writeChatVar(CV.world, world);
+      writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorInjection(world, State.lastLocationText));   // 词条即时重写（无该派系版本）
+      renderWire();   // surface 报纸同步去该派系
+      log(`墓碑：${name} 已除名（世界派系 ${before}→${world.factions.length} 条，事件/风声/阻力级联删除）`);
     }
     return true;
   }
@@ -1182,6 +1138,7 @@
   }
 
   // —— 触发矩阵（每楼 dispatchNow 末尾检查；去抖=新楼才检查 + busy 锁）—————
+  // 心跳：每 directorEveryX 楼常规推演；强制推：战斗结果/跨日/阶段变化（高价值时机立即推）。
 
   function statDateKey(stat) {
     const parts = String(stat['日期和时间'] || '').replace(EMOJI_RE, '').split('·').map(s => s.trim());
@@ -1198,132 +1155,135 @@
 
   function checkTriggers(stat) {
     if (Trigger.busy) return;
-    let floorId = -1;
-    try {
-      const msgs = getChatMessages(-1);
-      const m = Array.isArray(msgs) ? msgs[0] : null;
-      if (m && m.message_id != null) floorId = m.message_id;
-    } catch (e) { /* 楼号拿不到就不计数 */ }
+    const firstRun = Trigger.lastFloorId === -1;
+    const floorId = currentFloorId();
     if (floorId > Trigger.lastFloorId) {
-      Trigger.floorsSinceReport++;
+      Trigger.floorsSinceEvolve++;
       Trigger.lastFloorId = floorId;
     }
     const dateKey = statDateKey(stat);
     const stage = statStage(stat);
-    const city = statCity(stat);
     const combat = JSON.stringify(readChatVar('$rpg_combat_result') || null);
+    const everyX = Number(SETTINGS.directorEveryX) > 0 ? Number(SETTINGS.directorEveryX) : 3;
     let reason = null;
-    if (!Trigger.lastReportDate) {
-      // 首次记录基线，不触发（避免安装即报告）
-    } else if (dateKey && dateKey !== Trigger.lastReportDate) reason = 'newday';
+    if (firstRun && !Trigger.lastDateKey) {
+      // 首次记录基线，不触发（避免安装即推演；换聊天后同样只记基线）
+    } else if (combat !== Trigger.lastCombatResult && combat !== 'null') reason = 'combat-result';
+    else if (dateKey && dateKey !== Trigger.lastDateKey) reason = 'newday';
     else if (stage && stage !== Trigger.lastStage) reason = 'stage-change';
-    else if (city && city !== Trigger.lastCity) reason = 'city-change';
-    else if (combat !== Trigger.lastCombatResult && combat !== 'null') reason = 'combat-result';
-    else if (Trigger.floorsSinceReport >= REPORT_FLOOR_CAP) reason = 'floor-cap';
-    Trigger.lastReportDate = dateKey || Trigger.lastReportDate;
+    else if (Trigger.floorsSinceEvolve >= everyX) reason = 'heartbeat';
+    Trigger.lastDateKey = dateKey || Trigger.lastDateKey;
     Trigger.lastStage = stage || Trigger.lastStage;
-    Trigger.lastCity = city || Trigger.lastCity;
     Trigger.lastCombatResult = combat;
-    if (reason) generateShadowlineReport(reason);
+    if (reason) generateDirectorEvolve(reason);
   }
 
-  // —— 报告输入组装（信息完整性优先：五个数据源全量）—————————————
+  // —— 推演输入组装（信息完整性优先：数据源全量）———————————————
 
-  async function buildShadowlineContext(stat) {
-    const [worldSync] = await Promise.all([getSyncedWorldbookText('shadowline')]);
+  async function buildDirectorContext(stat) {
+    const [worldSync] = await Promise.all([getSyncedWorldbookText()]);
     const roster = getRoster();
-    const lastReport = readChatVar(CV.report) || null;
     return {
       floorContext: getShadowlineFloorContext(),
       lwb: getLwbSummaryText(),
       worldSync,
       statData: stat,
-      enemyPool: getEnemyPool(),   // ambush 预约"规模"的选用源——与态势位产卡同一名单（单一事实源）
+      enemyPool: getEnemyPool(),   // 敌方阵营参考（正文 AI 自选具体敌人，名单仅供推演参考阵营构成）
       coreTeam: getCoreTeam(),
       extraRules: String(SETTINGS.extraRules || '').trim(),
       knownFactions: roster.factions, roster,
-      lastReportFactions: lastReport && Array.isArray(lastReport.factions)
-        ? lastReport.factions.map(f => ({ name: f.name, state: f.state, truth: f.truth })) : [],
+      lastWorld: readChatVar(CV.world) || null,   // 上次世界状态（含本地骰推进结果）——增量修订式推演
     };
   }
 
   // —— 默认提示词（预设系统的默认项指向此函数；自定义预设存其文本快照）—————
 
-  function DEFAULT_SHADOWLINE_SYS() {
+  function DEFAULT_DIRECTOR_SYS() {
     return [
-      '你是开放世界的架构师、顶级权谋小说作家——为正文AI制造巫师3级别的叙事波折，而不是记录世界。',
-      '任务：根据全部输入资料，输出一份 JSON 战略报告，推断各派系在玩家视线之外的动向。',
+      '你是开放世界的架构师、顶级权谋小说作家——为正文AI制造巫师3级别的叙事波折，而不是记录世界。你的产出是一份完整的世界状态 JSON（对【上次世界状态】做增量修订）。',
       '铁律：',
-      '0. 认知定位：你的全部输出是你的推断与提案，不是既定事实——正文AI把它们当参考素材而非指令。以这种心态写作：动机写"最可能的解释"，行动写"正在准备的方案"，禁止上帝视角的确定性断言。三态诚实：延续上次报告的三态，前文明确演出过才标"已渗透"，真相落地才标"已兑现"，拿不准一律"推断中"。',
-      '1. 反废话：严禁复述前文表层信息、玩家已知常识或主角团已推导的内容——你不是记录的庸才。除"从前文合理构思的报纸报道和街头传闻"可作事实引用外，其余全部写推断与设计；永远不顺水推舟写看似合理的废话。',
-      '2. factions：每派系一条，字段结构必须照此（键名用英文）：{"name":"派系名","surface":"公开征兆一句话（展示给玩家）","truth":"幕后真相：前文很可能未出现过的深层动机+由动机生长的具体行动（仅注入正文AI）","contact":"主角团已引起其注意时：派出接触的具体人物（姓名/代号+伪装身份+真实目的），否则空串","scheme":"遵从动机为主角团设下的圈套（诱饵+真实杀招），无则空串","mole":"安插在主角团身边或社会面的间谍（优先选最无害、揭示时戏剧反转最大的人选；【主角核心白名单】人物严禁入选），无则空串","causes":["楼23"],"state":"推断中|已渗透|已兑现"}。surface 与 truth 成对、同一动向两个层次；causes=楼层出处数组（引用真实楼层号）。',
-      '3. surface 必须是市民视角的公开信息——报纸社会新闻或街头传闻体（"城里发生了什么"），普通市民自然可见。严禁写成调查线索、内幕细节、人员调动内情或任何针对主角团的针对性情报——那些属于 truth/contact/mole 层。surface 须体现与其他派系的互动迹象，禁止静态环境描述。',
-      '4. 圈套纪律：恰好 floor(N/2)（N=报告派系总数，向下取整）个派系对主角团设圈套（scheme 非空）——这是下限也是上限，全员针对主角团=失败。其余派系的动向必须围绕自身利益运转（自己的敌人、生意、日程、地盘纠纷），与主角团无关或仅顺带相遇。圈套建在主角团推理的漏洞上，像最苛刻的编辑一样审视前文。',
-      '5. 尊重实力设定：主角团的前文战绩、背景靠山、警觉程度是硬约束——针对他们的算计必须匹配相应的谨慎、成本与失败风险；把强者当无防备的工具人是廉价的阴谋论。',
-      '6. 深层动机必须从派系既得利益与前文行为中合理生长——推断可以大胆，动机必须有根。',
-      '7. 墓碑名单中的派系禁止以任何形式复活或提及。',
-      '8. 措辞紧凑：truth/contact/scheme/mole 每项一句话以内，禁止铺陈细节与心理描写长篇。',
-      '9. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
-      '10. ambush预约：主动来袭埋雷，结构 {"派系":"…","条件":{"时间":"游戏内日期或区间","地点∈":["…"]},"规模":"词条*N/…","引爆态":"严密"}，时间用游戏内日期。规模词条只能从【可选敌人名单】中选用（名单为空时自行按剧情合理性命名）——引爆发敌须与战斗链路（图鉴/卡片菜单）对得上。',
-      '11. 只输出 JSON，禁止任何解释文字。顶层 schema：{"stage":"阶段判断","factions":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"roster_ops":[],"ambush预约":[…]}',
+      '0. 认知定位：你的全部输出是你的推断与提案，不是既定事实——正文AI把它们当参考素材而非指令。三态诚实：延续上次的三态，前文明确演出过才标"已渗透"，真相落地才标"已兑现"，拿不准一律"推断中"。',
+      '1. 反废话：严禁复述前文表层信息、玩家已知常识或主角团已推导的内容。除"从前文合理构思的报纸报道和街头传闻"可作事实引用外，其余全部写推断与设计；永远不顺水推舟写看似合理的废话。',
+      '2. factions：每派系一条（键名用英文）：{"name":"派系名","surface":"公开征兆一句话（市民视角，报纸社会新闻体，须体现与其他派系的互动迹象，禁止内幕细节）","truth":"幕后真相：前文很可能未出现过的深层动机+由动机生长的具体行动","contact":"主角团已引起其注意时：派出接触的具体人物（姓名/代号+伪装身份+真实目的），否则空串","scheme":"为主角团设下的圈套（诱饵+真实杀招），无则空串","mole":"安插的间谍（优先选最无害、揭示时戏剧反转最大的人选；【主角核心白名单】人物严禁入选），无则空串","causes":["楼23"],"state":"推断中|已渗透|已兑现","stance":"对我方的立场一句话","relations":"与其他派系的关系一句话","zone":"活动大区（如 萨里山）","morale":"士气一句话"}。',
+      '3. 圈套纪律：恰好 floor(N/2)（N=派系总数，向下取整）个派系对主角团设圈套（scheme 非空）——这是下限也是上限，全员针对主角团=失败。其余派系的动向必须围绕自身利益运转（自己的敌人、生意、日程、地盘纠纷），与主角团无关或仅顺带相遇。圈套建在主角团推理的漏洞上，像最苛刻的编辑一样审视前文。',
+      '4. 尊重实力设定：主角团的前文战绩、背景靠山、警觉程度是硬约束——针对他们的算计必须匹配相应的谨慎、成本与失败风险；把强者当无防备的工具人是廉价的阴谋论。',
+      '5. 深层动机必须从派系既得利益与前文行为中合理生长——推断可以大胆，动机必须有根。墓碑名单中的派系禁止以任何形式复活或提及。',
+      '6. 措辞紧凑：每项一句话以内，禁止铺陈细节与心理描写长篇。',
+      '7. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
+      '8. events 事件链：延续【上次世界状态】中未完结的事件（保留 name 与走向，除非剧情有明确理由改变——胜负、外力干预；已彻底了结的不再输出）；新事件在前文已有具体迹象时才创建（筹划/试探/矛盾初现即可萌芽，不要求证据充分）。结构：{"name":"事件名","type":"conflict|progress","stage":"萌芽|发酵|逼近|爆发|平息","stageRound":1-9,"level":1-4,"factions":["涉及派系名"],"zone":"无派系关联时填归属大区","desc":"一句话现状"}。程序会每楼掷骰推进 stageRound 与阶段，你只负责宏观修订与增删。',
+      '9. winds 风声：信息开始公开发布/被听闻/转述/小范围议论即可建立（报纸报道、街头传闻、渠道消息）；延续上次未消散的风声（内容可演进）。结构：{"content":"一句话风声","source":"来源（如 悉尼晨报/码头工人）","spread":"私下|流传|公开","level":1-3}。去重，禁止复述 surface 已写的内容。',
+      '10. encounter 遇敌概率：{"heat":{"value":-30~30的整数,"why":"剧情总体走向冲突为正、缓和为负，一句话"},"spots":[{"match":"地标名（如 伦道夫船运仓库）","chance":0-100,"why":"一句话"}],"districts":[{"match":"大区名（如 萨里山）","chance":0-100,"why":"一句话"}]}。spots 给剧情涉及的关键地标（民用/中立/己方据点 chance=0——0 是显式安全标记，程序见 0 直接免战）；districts 给主要大区的整体治安冷热。没把握的地方不给——程序会用玩家设置的基线概率兜底。',
+      '11. 只输出 JSON，禁止任何解释文字。顶层 schema：{"digest":"世界现状一句话摘要","factions":[…],"events":[…],"winds":[…],"resistance":{"forbidden":[…],"partial":[…],"friction":[…]},"encounter":{…},"roster_ops":[]}',
     ].join('\n');
   }
 
-  const ShadowlinePrompt = makePresetStore(LS.promptShadowline, DEFAULT_SHADOWLINE_SYS);
+  const DirectorPrompt = makePresetStore(LS.promptDirector, DEFAULT_DIRECTOR_SYS);
 
-  function buildShadowlineMessages(ctx) {
-    const sys = ShadowlinePrompt.currentSys();
+  function buildDirectorMessages(ctx) {
+    const sys = DirectorPrompt.currentSys();
     const user = [
-      // ① 世界书同步资料（按配置顺序）——暗线的世界知识基础
+      // ① 世界书同步资料（按配置顺序）——推演的世界知识基础
       `【世界书同步资料】\n${ctx.worldSync || '（无）'}`,
       // ② LWB 早期历史总结——对应已被隐藏（总结）的早期楼层的浓缩
       `【早期历史总结（LWB，对应已隐藏的早期楼层）】\n${ctx.lwb || '（无）'}`,
       // ③ 非隐藏楼层原文——与正文 AI 视野一致（仅 AI 楼层，━━ 分隔严格排版）
       `【非隐藏楼层原文（与正文 AI 视野一致）】\n${ctx.floorContext || '（无）'}`,
-      // ④ 以下为辅助信息——暗线只管非玩家阵营：仅时空锚点与敌方动向，玩家队伍数值/资产/内心一律不发
+      // ④ 以下为辅助信息——只管非玩家阵营：仅时空锚点与敌方动向，玩家队伍数值/资产/内心一律不发
       `【当前时空与敌方动向】\n${JSON.stringify({
         '日期和时间': ctx.statData['日期和时间'],
         '地点': ctx.statData['地点'],
         '敌方动向': (ctx.statData['人物'] && ctx.statData['人物']['敌人']) || [],
       }, null, 1)}`,
-      // ④b 可选敌人名单——预约"规模"的敌方词条只能从中选（否则引爆发敌与图鉴/卡片菜单脱节，Combat_block 链路对不上）
-      `【可选敌人名单（ambush 预约的"规模"只能从中选用）】\n${(ctx.enemyPool || []).join(' / ') || '（无——预约"规模"自行按剧情合理性命名）'}`,
+      `【敌方阵营参考（仅供推演参考，具体敌人由正文AI自选）】\n${(ctx.enemyPool || []).join(' / ') || '（无）'}`,
       `【主角核心白名单（绝不背叛、绝不可能是间谍）】\n${(ctx.coreTeam || []).join(' / ') || '（未设置——正文长期塑造的核心同伴也可能被指定为间谍，建议在设置中填写）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
-      `【上次报告的派系三态（延续用）】\n${ctx.lastReportFactions.length ? JSON.stringify(ctx.lastReportFactions, null, 1) : '（首次报告）'}`,
-      // ⑧ 附加铁律（用户手输，最高优先级）——放文末：末尾注意力区块，压过前文的默认规则
+      // ⑨ 上次世界状态——增量修订的基线（含程序本地骰已推进的事件进度）
+      `【上次世界状态（增量修订基线：延续未完结事件/未消散风声/三态）】\n${ctx.lastWorld ? JSON.stringify(ctx.lastWorld, null, 1) : '（首次推演——从零建立）'}`,
+      // ⑩ 附加铁律（用户手输，最高优先级）——放文末：末尾注意力区块，压过前文的默认规则
       ...(ctx.extraRules ? [`【附加铁律（用户指定，优先级高于本文所有默认规则）】\n${ctx.extraRules}`] : []),
     ].join('\n\n');
     return [{ role: 'system', content: sys }, { role: 'user', content: user }];
   }
 
-  // —— 报告硬校验（§4.3：不过即丢弃该条/重试，不阻塞其余产出）—————————
+  // —— 推演硬校验（宽容模式：只做结构整形与字段补默认，不丢弃、不重试）—————————
 
   const TRI_STATES = ['推断中', '已渗透', '已兑现'];
-  function validateReport(report, ctx) {
-    if (!report || typeof report !== 'object') return { report: null, errs: ['报告非对象'] };
-    // 零校验模式（用户指示：先跑通看效果，未要求前不加限制）——只做结构整形与字段补默认，
-    // 不丢弃任何条目、不触发重试，杜绝"生成了却静默丢弃"的 token 浪费
-    let factions = (report.factions || []).map((f, i) => {
+  const EV_TYPES = ['conflict', 'progress'];
+  const WIND_SPREADS = ['私下', '流传', '公开'];
+
+  function validateWorld(parsed, ctx) {
+    if (!parsed || typeof parsed !== 'object') return { world: null, errs: ['输出非对象'] };
+    const errs = [];
+    const pick = (o, ...keys) => {
+      if (!o || typeof o !== 'object') return undefined;
+      for (const k of keys) if (o[k] != null && o[k] !== '') return o[k];
+      return undefined;
+    };
+    const lastWorld = (ctx && ctx.lastWorld) || null;
+    const lastEvents = lastWorld && Array.isArray(lastWorld.events) ? lastWorld.events : [];
+    const lastWinds = lastWorld && Array.isArray(lastWorld.winds) ? lastWorld.winds : [];
+
+    // factions：沿用暗线三态宽容清洗 + 新增关系四字段
+    let factions = (parsed.factions || []).map((f, i) => {
       f = (f && typeof f === 'object') ? f : {};
-      // 键名容错：模型可能被示例带偏用中文键（真机实证"派系/真相/征兆/出处/状态"）——先映射再补默认
-      const pick = (...keys) => { for (const k of keys) if (f[k] != null && f[k] !== '') return f[k]; return undefined; };
-      f.name = pick('name', '派系', '名称') || `未命名派系${i + 1}`;
-      f.truth = pick('truth', '真相') || '（真相未明）';
-      f.surface = pick('surface', '征兆', '表面') || '（街头暂无可察异动）';
-      const rawCauses = pick('causes', '出处');
+      f.name = pick(f, 'name', '派系', '名称') || `未命名派系${i + 1}`;
+      f.truth = pick(f, 'truth', '真相') || '（真相未明）';
+      f.surface = pick(f, 'surface', '征兆', '表面') || '（街头暂无可察异动）';
+      const rawCauses = pick(f, 'causes', '出处');
       f.causes = (Array.isArray(rawCauses) && rawCauses.length) ? rawCauses : ['（出处未标注）'];
-      const rawState = pick('state', '状态');
+      const rawState = pick(f, 'state', '状态');
       f.state = TRI_STATES.includes(rawState) ? rawState : '推断中';
-      // S4 扩展字段：接触人/圈套/间谍（中文键容错，缺省空串——无则不注入）
-      f.contact = String(pick('contact', '接触', '接触人') || '');
-      f.scheme = String(pick('scheme', '圈套') || '');
-      f.mole = String(pick('mole', '间谍', '内线') || '');
+      f.contact = String(pick(f, 'contact', '接触', '接触人') || '');
+      f.scheme = String(pick(f, 'scheme', '圈套') || '');
+      f.mole = String(pick(f, 'mole', '间谍', '内线') || '');
+      f.stance = String(pick(f, 'stance', '立场') || '');
+      f.relations = String(pick(f, 'relations', '关系') || '');
+      f.zone = String(pick(f, 'zone', '大区', '活动范围') || '');
+      f.morale = String(pick(f, 'morale', '士气') || '');
       return f;
     });
-    // 墓碑过滤（程序兜底，SPEC §4.4 删除=墓碑）：模型违反铁律 7 输出墓碑派系时整条丢弃——
-    // 验收"墓碑派系在报告输出中断言为零"由此保证（提示词约束为主，程序兜底为辅）
+    // 墓碑过滤（程序兜底，SPEC §4.4 删除=墓碑）：模型违反铁律输出墓碑派系时整条丢弃
     const dead = (ctx && ctx.roster && Array.isArray(ctx.roster.tombstones)) ? ctx.roster.tombstones : [];
     if (dead.length) {
       const dropped = factions.filter(f => dead.includes(f.name)).map(f => f.name);
@@ -1332,9 +1292,59 @@
         logWarn('墓碑派系条目已丢弃（禁止复活）：', dropped.join('、'));
       }
     }
-    const resistance = report.resistance && typeof report.resistance === 'object' ? report.resistance : {};
+
+    // events：类型/阶段/进度校验 + 上次事件延续兜底（模型忘带 stage/stageRound 时继承）
+    const events = (Array.isArray(parsed.events) ? parsed.events : []).map(ev => {
+      ev = (ev && typeof ev === 'object') ? ev : {};
+      const name = String(pick(ev, 'name', '事件', '名称') || '').trim();
+      if (!name) return null;
+      const prev = lastEvents.find(x => x && x.name === name);
+      const type = EV_TYPES.includes(ev.type) ? ev.type : (prev && EV_TYPES.includes(prev.type) ? prev.type : 'conflict');
+      const stage = EV_STAGES.includes(ev.stage) ? ev.stage : (prev && EV_STAGES.includes(prev.stage) ? prev.stage : '萌芽');
+      let stageRound = Number(ev.stageRound);
+      if (!Number.isFinite(stageRound) || stageRound < 1 || stageRound > 9) stageRound = (prev && prev.stageRound) || 1;
+      return {
+        name, type, stage, stageRound,
+        level: clamp(1, 4, Number(ev.level) || 1),
+        factions: (Array.isArray(ev.factions) ? ev.factions : []).map(String).filter(Boolean),
+        zone: String(ev.zone || '').trim(),
+        desc: String(pick(ev, 'desc', '描述', '现状') || ''),
+      };
+    }).filter(Boolean);
+
+    // winds：传播等级校验 + 延续继承 quietRounds（否则每次推演重置计数，风声永不衰减）
+    const winds = (Array.isArray(parsed.winds) ? parsed.winds : []).map(w => {
+      w = (w && typeof w === 'object') ? w : {};
+      const content = String(pick(w, 'content', '风声', '内容') || '').trim();
+      if (!content) return null;
+      const nc = norm(content);
+      const prev = lastWinds.find(x => x && norm(x.content) && (norm(x.content) === nc || norm(x.content).includes(nc) || nc.includes(norm(x.content))));
+      return {
+        content,
+        source: String(pick(w, 'source', '来源') || ''),
+        spread: WIND_SPREADS.includes(w.spread) ? w.spread : '流传',
+        level: clamp(1, 3, Number(w.level) || 1),
+        quietRounds: prev ? (prev.quietRounds || 0) : 0,
+      };
+    }).filter(Boolean);
+
+    // encounter：heat clamp ±30；spots/districts 数组清洗 + chance clamp 0-100
+    const rawEnc = parsed.encounter && typeof parsed.encounter === 'object' ? parsed.encounter : {};
+    const rawHeat = rawEnc.heat && typeof rawEnc.heat === 'object' ? rawEnc.heat : {};
+    const zoneList = arr => (Array.isArray(arr) ? arr : [])
+      .map(z => (z && typeof z === 'object' && String(z.match || '').trim())
+        ? { match: String(z.match).trim(), chance: clamp(0, 100, Number(z.chance) || 0), why: String(z.why || '') }
+        : null)
+      .filter(Boolean);
+    const encounter = {
+      heat: { value: clamp(-30, 30, Number(rawHeat.value) || 0), why: String(rawHeat.why || '') },
+      spots: zoneList(rawEnc.spots),
+      districts: zoneList(rawEnc.districts),
+    };
+
+    // resistance：沿用原清洗（对象条目容错）
+    const resistance = parsed.resistance && typeof parsed.resistance === 'object' ? parsed.resistance : {};
     resistance.forbidden = (resistance.forbidden || []).filter(x => x && x.truth && x.path);
-    // 对象条目容错（真机实证 3.1P 输出 {target,result}/{source,effect} 对象）——按键取值拼接，防 [object Object]
     const plainText = (x, keys) => {
       if (x == null) return '';
       if (typeof x === 'string') return x.trim();
@@ -1347,21 +1357,21 @@
     };
     resistance.partial = (resistance.partial || []).map(x => plainText(x, ['target', 'result'])).filter(Boolean);
     resistance.friction = (resistance.friction || []).map(x => plainText(x, ['source', 'effect'])).filter(Boolean);
-    const ambush = (report['ambush预约'] || []).filter(a => a && a['派系'] && a['条件'] && typeof a['条件'] === 'object');
+
     return {
-      report: {
-        stage: String(report.stage || ''),
-        factions, resistance,
-        roster_ops: (report.roster_ops || []).map(String).filter(Boolean),
-        'ambush预约': ambush,
+      world: {
+        round: (lastWorld && Number.isFinite(lastWorld.round) ? lastWorld.round : 0) + 1,
+        digest: String(parsed.digest || ''),
+        factions, events, winds, resistance, encounter,
+        roster_ops: (parsed.roster_ops || []).map(String).filter(Boolean),
         generatedAt: Date.now(), reason: Trigger.busyReason || '',
-      }, errs: [],
+      }, errs,
     };
   }
 
-  // —— 提炼注入（副导演-暗线词条：深度0 system 持续在场，报告后刷新）———
+  // —— 世界动态注入（副导演词条后半：事件/风声/派系暗线三态，推演与本地骰后刷新）———
 
-  function buildShadowlineInjection(report) {
+  function buildDirectorInjection(world, _locationText) {
     // 定位声明放开标签之后：副导演输出是推断与提案，正文AI参考演出而非执行——防按头
     // 派系行尾缀：接触人/圈套/间谍（非空才带——正文 AI 可借环境渗透演出，间谍揭示节奏由三态+禁泄控制）
     const extra = f => [
@@ -1371,26 +1381,35 @@
     ].filter(Boolean).join('');
     // 段落 = [标签名, 列表行]；标签内两空格缩进 "- " 列表，段间空行
     const sections = [];
-    const facts = report.factions.filter(f => f.state !== '推断中');
+    const events = (world.events || []).filter(ev => ev && ev.stage !== '平息');
+    if (events.length) {
+      sections.push(['进行中的事件（程序每楼掷骰推进，阶段与进度可能已变化）', events.map(ev =>
+        `  - ${ev.name}【${ev.type === 'progress' ? '进展' : '冲突'}·${ev.stage}·${ev.stageRound}/9】${ev.desc || ''}`)]);
+    }
+    if (world.winds && world.winds.length) {
+      sections.push(['风声（市民舆论，可经报纸/闲谈自然提及）', world.winds.map(w =>
+        `  - ${w.content}（${w.spread}${w.source ? '·' + w.source : ''}）`)]);
+    }
+    const facts = (world.factions || []).filter(f => f.state !== '推断中');
     if (facts.length) {
       sections.push(['世界引擎推断', facts.map(f =>
         `  - ${f.truth}【${f.state}·${(f.causes || [])[0] || ''}】${extra(f)}`)]);
     }
-    const infers = report.factions.filter(f => f.state === '推断中');
+    const infers = (world.factions || []).filter(f => f.state === '推断中');
     if (infers.length) {
       sections.push(['幕后动向（推断中·仅可环境渗透，禁止直接揭示）', infers.map(f =>
         `  - ${f.truth}【推断·${(f.causes || [])[0] || ''}】${extra(f)}`)]);
     }
-    const forbidden = (report.resistance && report.resistance.forbidden) || [];
+    const forbidden = (world.resistance && world.resistance.forbidden) || [];
     if (forbidden.length) {
       sections.push(['禁泄清单（调查未抵达前禁止揭示）', forbidden.map(x =>
         `  - ${x.truth}【途径：${x.path}】`)]);
     }
-    const partial = (report.resistance && report.resistance.partial) || [];
+    const partial = (world.resistance && world.resistance.partial) || [];
     if (partial.length) {
       sections.push(['调查阻力（强行调查只应得到以下层级的信息）', partial.map(p => `  - ${p}`)]);
     }
-    const friction = (report.resistance && report.resistance.friction) || [];
+    const friction = (world.resistance && world.resistance.friction) || [];
     if (friction.length) {
       sections.push(['环境阻力（当前环境对行动的客观影响）', friction.map(f => `  - ${f}`)]);
     }
@@ -1398,7 +1417,7 @@
     return [
       MEMO_OPEN,
       '',
-      '以下是暗线世界引擎的推断——用于环境渗透、NPC 行为自洽与剧情伏笔参考，正文按合理性自由取舍。',
+      '以下是副导演世界引擎的推断——用于环境渗透、NPC 行为自洽与剧情伏笔参考，正文按合理性自由取舍。',
       '',
       body,
       '',
@@ -1406,207 +1425,92 @@
     ].join('\n');
   }
 
-  // —— 报告生成主流程 ——————————————————————————————————————
+  // —— 推演主流程（单一副导演 API）———————————————————————————
 
-  async function generateShadowlineReport(reason) {
+  async function generateDirectorEvolve(reason) {
     if (Trigger.busy) { toast('📡 推演进行中，请稍候（上次任务未完成）'); return; }
-    if (!SETTINGS.enabledShadowline) {
-      if (reason === 'manual') toast('暗线推演已关闭——⚙ 设置 → 功能开关');
-      log(`暗线开关关闭，跳过${reason}触发`);
+    if (!SETTINGS.enabledDirector) {
+      if (reason === 'manual') toast('世界推演已关闭——⚙ 设置 → 功能开关');
+      log(`推演开关关闭，跳过${reason}触发`);
       return;
     }
-    const cfg = SETTINGS.shadowline;
+    const cfg = SETTINGS.director;
     if (!cfg.baseUrl || !cfg.model) {
-      log(`暗线位端点未配置，跳过${reason}触发`);
-      toast('暗线位端点未配置——⚙ 设置 → 暗线位（Base URL / Model）');
+      log(`副导演 API 未配置，跳过${reason}触发`);
+      toast('副导演 API 未配置——⚙ 设置 → 副导演 API（Base URL / Model）');
       return;
     }
     Trigger.busy = true; Trigger.busyReason = reason;
-    if (reason === 'manual') toast('📡 暗线推演已启动…完成后自动弹出报告');
+    if (reason === 'manual') toast('📡 副导演推演已启动…完成后自动弹出世界状态');
     try {
       const stat = readLatestStatData();
-      if (!stat) { log('报告触发但无 stat_data，跳过'); return; }
-      const ctx = await buildShadowlineContext(stat);
-      const messages = buildShadowlineMessages(ctx);
+      if (!stat) { log('推演触发但无 stat_data，跳过'); return; }
+      const locationText = String(stat['地点'] || '').trim();
+      const ctx = await buildDirectorContext(stat);
+      const messages = buildDirectorMessages(ctx);
       // 调用 + 解析：仅当完全拿不到 JSON（网络失败/输出非 JSON——token 无法利用）才重试一次；
-      // 解析成功后无论校验提示多少条都宽容落地，绝不因校验丢弃整份报告浪费 token
+      // 解析成功后无论校验提示多少条都宽容落地，绝不因校验丢弃整份状态浪费 token
       let parsed = null, lastErr = '';
       for (let attempt = 1; attempt <= 2 && !parsed; attempt++) {
         try {
-          const raw = await callLLM(cfg, messages, { timeoutMs: 180000, label: 'shadowline' });
+          const raw = await callLLM(cfg, messages, { timeoutMs: 180000, label: 'director' });
           parsed = extractJson(raw);
         } catch (e) {
           lastErr = e.message || String(e);
-          logWarn(`暗线报告第 ${attempt} 次调用失败：${lastErr}`);
+          logWarn(`世界推演第 ${attempt} 次调用失败：${lastErr}`);
           if (attempt === 1) toast('📡 首次调用失败，重试中…', 4000);
         }
       }
       if (!parsed) {
-        logWarn(`暗线报告最终失败（保持上次注入）：${lastErr}`);
-        toast(`暗线报告生成失败：${lastErr}`, 6000);
+        logWarn(`世界推演最终失败（保持上次状态）：${lastErr}`);
+        toast(`世界推演失败：${lastErr}`, 6000);
         return;
       }
-      const { report, errs } = validateReport(parsed, ctx);
-      if (errs.length) logWarn('报告宽容提示（条目已保留）：', errs.join('；'));
-      if (!report) { toast('暗线报告生成失败：报告结构异常', 6000); return; }
-      if (!report.factions.length) logWarn('报告 factions 为空——已存档落地（不重试不丢弃）');
-      // 存档 + 分发（garrisons 已移除——态势由态势位全权负责，暗线不分散注意力）
-      writeChatVar(CV.report, report);
+      const { world, errs } = validateWorld(parsed, ctx);
+      if (errs.length) logWarn('推演宽容提示（条目已保留）：', errs.join('；'));
+      if (!world) { toast('世界推演失败：输出结构异常', 6000); return; }
+      if (!world.factions.length) logWarn('推演 factions 为空——已存档落地（不重试不丢弃）');
+      // 存档 + 分发
+      writeChatVar(CV.world, world);
       // 名册自动注册（新派系轻量登场；墓碑派系绝不回册——即使模型违反铁律输出）
       const roster = getRoster();
-      for (const f of report.factions) if (!roster.factions.includes(f.name) && !roster.tombstones.includes(f.name)) roster.factions.push(f.name);
-      for (const op of report.roster_ops) if (op && !roster.factions.includes(op) && !roster.tombstones.includes(op)) roster.factions.push(op);
+      for (const f of world.factions) if (!roster.factions.includes(f.name) && !roster.tombstones.includes(f.name)) roster.factions.push(f.name);
+      for (const op of world.roster_ops) if (op && !roster.factions.includes(op) && !roster.tombstones.includes(op)) roster.factions.push(op);
       saveRoster(roster);
-      // 提炼注入（世界书词条持续在场，报告后刷新；用户改过词条内容走 merge3 合并兜底）
-      const injectText = buildShadowlineInjection(report);
-      writeWbEntry(WB_ENTRY_SHADOWLINE, injectText);
-      // 预约存档（$ad_pending）
-      if (report['ambush预约'] && report['ambush预约'].length) {
-        writeChatVar(CV.pending, { ambush: report['ambush预约'], savedAt: Date.now() });
+      // 防连战锁解锁：新推演周期开始
+      if (State.randomCombatFired) { State.randomCombatFired = false; persistRuntimeState(); }
+      // 提炼注入（信号级态势 + 世界动态；用户改过词条内容走 merge3 合并兜底）
+      if (locationText) {
+        writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorSituationText(locationText, world) + '\n\n' + buildDirectorInjection(world, locationText));
       }
-      Trigger.floorsSinceReport = 0;
-      Trigger.lastReportDate = statDateKey(stat) || Trigger.lastReportDate;
+      Trigger.floorsSinceEvolve = 0;
+      Trigger.lastDateKey = statDateKey(stat) || Trigger.lastDateKey;
       Trigger.lastStage = statStage(stat) || Trigger.lastStage;
-      Trigger.lastCity = statCity(stat) || Trigger.lastCity;
-      // S4 最小版：surface 公开征兆上折叠条 ticker（最新两条，倒序插入）
-      for (const f of report.factions.slice(0, 2).reverse()) {
-        const head = `${String(f.name || '').slice(0, 5)}：${String(f.surface || '').slice(0, 12)}`;
-        if (State.tickerHeads[0] !== head) {
-          State.tickerHeads.unshift(head);
+      // ticker：事件/风声/派系征兆上轮播（最新 ≤3 条）
+      const heads = [];
+      for (const ev of (world.events || []).slice(0, 1)) heads.push(`⚔${String(ev.name || '').slice(0, 7)}·${ev.stage}`);
+      for (const w of (world.winds || []).slice(0, 1)) heads.push(`📣${String(w.content || '').slice(0, 9)}`);
+      for (const f of (world.factions || []).slice(0, 2)) heads.push(`${String(f.name || '').slice(0, 5)}：${String(f.surface || '').slice(0, 10)}`);
+      for (const h of heads.reverse()) {
+        if (State.tickerHeads[0] !== h) {
+          State.tickerHeads.unshift(h);
           State.tickerHeads = State.tickerHeads.slice(0, 3);
         }
       }
       renderTicker();
-      renderWire();   // S4：事件号外即时上报纸（灰卡/署名按接触状态渲染）
-      toast(`暗线报告已生成（${reason}）：${report.factions.length} 派系动向`);
-      log('暗线报告完成', `派系 ${report.factions.length}，预约 ${report['ambush预约'].length}`);
-      openReportModal(report);   // GM 查看弹窗（手动/自动触发均弹出）
+      renderWire();   // 事件/风声/灰卡即时上报纸
+      if (els.dot) els.dot.classList.add('on');
+      toast(`世界状态已更新（${reason}）：${world.factions.length} 派系 · ${world.events.length} 事件 · ${world.winds.length} 风声`);
+      log('世界推演完成', `round ${world.round}，派系 ${world.factions.length}，事件 ${world.events.length}，风声 ${world.winds.length}`);
+      openWorldModal(world);   // GM 查看弹窗（手动/自动触发均弹出）
     } finally {
       Trigger.busy = false; Trigger.busyReason = '';
     }
   }
 
   // ═════════════════════════════════════════════════════════════════════
-  // 7. 态势位（即时产卡）：未命中触发 → 输入组装 → 生成 → 白名单校验 → 回落
+  // 7. 随机遭遇掷骰（见分区 2 的 S6 区块；此处保留分区号占位对齐 SPEC 索引）
   // ═════════════════════════════════════════════════════════════════════
-
-  const Instant = { busy: false, tried: Object.create(null) };  // tried: norm(地点)→true 防重复产卡
-
-  // 分兵点位：角色"内心"含"不在场，前往X"类描述时提取 X（一次 LLM 调用产多卡）
-  function collectOffscreenPlaces(stat) {
-    const out = [];
-    for (const c of charList(stat)) {
-      const m = String(c['内心'] || '')
-        .match(/不在场[，,]?\s*(?:正在|已经?)?(?:前往|赶往|在)([^，。,.、;；!?！？]{2,20})/);
-      if (m) out.push(m[1].trim());
-    }
-    return [...new Set(out)];
-  }
-
-  // 卡片硬校验：结构 + menu 敌人名单（用户手输的战役名单为唯一权威，双向包含容错）；返回 null=通过
-  function validateCard(card) {
-    // 零校验模式：仅拦废数据（缺 place/faction 无法使用），menu/alert/aliases 宽容收下
-    if (!card || typeof card !== 'object') return '非对象';
-    if (!card.place || typeof card.place !== 'string') return '缺少 place';
-    if (!card.faction || typeof card.faction !== 'string') return '缺少 faction';
-    return null;
-  }
-
-  function DEFAULT_SITUATION_SYS() {
-    return [
-      '你是跑团世界模拟器的"态势位"生成器（快速、克制、结构遵循）。为给定地点各生成一张驻防态势卡。',
-      '规则：',
-      '1. place 用**地标级**名称（一所大学、一个山洞、一间旅馆、一座仓库）——禁止大区（"悉尼"），禁止房间级小地点（"某酒店303房"）。同一地标内的房间/楼层变化不产生新卡。',
-      '2. menu 是可选敌方菜单，词条名只能从【可选敌人名单】中选用，仅在原词后加 *min~max 数量后缀，格式"词条A*min~max/词条B*N"；该地点无敌方驻防（民用/中立/己方据点）时 menu 为空字符串。',
-      '3. alert 只能取：松懈/常规/警戒/严密。',
-      '4. faction 用派系名（优先从【名册】选用；民用/中立场所可标注"无（中立场所）"类描述）。',
-      '5. reaction 一句话：何类行为被容忍、何类触发敌意。verdict 一句话判定标准：何种行为构成对戒备的挑衅/侵入/暴露。',
-      '6. 只输出 JSON 数组，禁止任何解释文字。每项结构：',
-      '{"place":"地标名","aliases":["别名"],"faction":"派系","menu":"词条*min~max/…","alert":"常规","reaction":"…","verdict":"…"}',
-    ].join('\n');
-  }
-
-  const SituationPrompt = makePresetStore(LS.promptSituation, DEFAULT_SITUATION_SYS);
-
-  function buildInstantMessages(places, context) {
-    const sys = SituationPrompt.currentSys();
-    const user = [
-      `【待登记地标】\n${places.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
-      `【剧情上下文（最近正文节选）】\n${context.floorTail || '（无）'}`,
-      `【可选敌人名单（menu 只能从中选用）】\n${(context.enemyPool || []).join(' / ') || '（无——menu 一律留空）'}`,
-      `【世界书同步资料】\n${context.worldSync || '（无）'}`,
-      `【名册（已知派系）】\n${(context.roster || []).join(' / ') || '（无）'}`,
-    ].join('\n\n');
-    return [{ role: 'system', content: sys }, { role: 'user', content: user }];
-  }
-
-  async function generateInstantCards(places, stat) {
-    const cfg = SETTINGS.situation;
-    if (!cfg.baseUrl || !cfg.model) { log('态势位端点未配置，跳过即时产卡'); return; }
-    const [worldSync] = await Promise.all([getSyncedWorldbookText('situation')]);
-    const roster = [...new Set(getCards().map(c => c.faction).filter(Boolean))];
-    const floorTail = readLatestFloorTail();
-    const ctx = { roster, floorTail, worldSync, enemyPool: getEnemyPool() };
-    for (const p of places) Instant.tried[norm(p)] = true;
-    let lastErr = '';
-    for (let attempt = 1; attempt <= 2; attempt++) {          // 失败/全拒 → 重试 ≤1
-      try {
-        const raw = await callLLM(cfg, buildInstantMessages(places, ctx), { label: 'instant' });
-        const arr = extractJson(raw);
-        const list = Array.isArray(arr) ? arr : [arr];
-        const okCards = [];
-        for (const c of list) {
-          const err = validateCard(c);
-          if (err) { lastErr = `${(c && c.place) || '?'}：${err}`; logWarn('卡片校验拒绝', lastErr); continue; }
-          okCards.push({
-            place: String(c.place).trim(),
-            aliases: (c.aliases || []).map(String),
-            faction: String(c.faction).trim(),
-            menu: String(c.menu || ''),
-            alert: ALERT_LEVELS.includes(c.alert) ? c.alert : '常规',
-            reaction: String(c.reaction || ''),
-            verdict: String(c.verdict || ''),
-            source: 'instant',
-          });
-        }
-        if (!okCards.length) throw new Error(`全部卡片未过校验（${lastErr}）`);
-        const cards = getCards();
-        let added = 0;
-        for (const c of okCards) {
-          if (!cards.some(x => norm(x.place) === norm(c.place))) { cards.push(c); added++; }
-        }
-        if (added) {
-          setCards(cards); renderWire(); renderTicker();
-          toast(`新地点已登记：${okCards.map(c => c.place).join('、')}`);
-          log(`即时产卡成功（${added} 张，第 ${attempt} 次尝试）`);
-          scheduleDispatch('instant-card');   // 下一拍重新配发：当楼兜底 → 命中新卡
-        } else log('产卡结果均已存在于卡片池，跳过');
-        return;
-      } catch (e) {
-        lastErr = e.message || String(e);
-        logWarn(`即时产卡第 ${attempt} 次失败：${lastErr}`);
-      }
-    }
-    logWarn(`即时产卡最终失败（保持兜底注入）：${lastErr}`);
-    toast(`产卡失败：${lastErr}`, 5000);
-  }
-
-  // dispatchNow 接线点：主地点未命中 + 分兵点位未命中 → 一次异步产卡（busy 防并发）
-  function triggerInstant(mainMissed, mainPlace, stat) {
-    if (Instant.busy) return;
-    const cards = getCards();
-    const targets = [];
-    if (mainMissed && mainPlace && !Instant.tried[norm(mainPlace)]) targets.push(mainPlace);
-    for (const p of collectOffscreenPlaces(stat)) {
-      const n = norm(p);
-      if (!Instant.tried[n] && !matchCard(p, cards)) targets.push(p);
-    }
-    if (!targets.length) return;
-    Instant.busy = true;
-    generateInstantCards(targets, stat)
-      .catch(e => logWarn('generateInstantCards 异常', e))
-      .finally(() => { Instant.busy = false; });
-  }
 
   // ═════════════════════════════════════════════════════════════════════
   // 8. 公开层 UI（贴边折叠栏，自 demo_story_director.html 移植）
@@ -1965,11 +1869,11 @@
           <span class="ad-head-title">悉尼星期增刊 · GAZETTE</span>
         </div>
         <span class="ad-head-btns">
-          <button id="ad-btn-report" title="暗线推演：查看最新报告 / 手动触发（S3）">📡</button>
-          <button id="ad-btn-recompute" title="按最新楼层立即重算态势注入">↻</button>
-          <button id="ad-btn-cards" title="态势卡片池管理">🗂</button>
+          <button id="ad-btn-report" title="世界推演：查看最新世界状态 / 手动触发（S7）">📡</button>
+          <button id="ad-btn-recompute" title="按最新楼层立即重算注入（含本地骰推进）">↻</button>
+          <button id="ad-btn-world" title="世界状态查看器（派系/事件/风声/遇敌概率）">🌍</button>
           <button id="ad-btn-roster" title="派系名册：名册/墓碑管理（S5）">📜</button>
-          <button id="ad-btn-settings" title="双模型端点与开关">⚙</button>
+          <button id="ad-btn-settings" title="副导演 API 与开关">⚙</button>
         </span>
         <div class="ad-head-sub">
           <span id="ad-mast-date">—</span>
@@ -1999,14 +1903,18 @@
         && !els.modal.contains(e.target)) togglePanel(false);
     });
     panel.querySelector('#ad-btn-report').addEventListener('click', () => {
-      const report = readChatVar(CV.report);
-      if (report && report.factions) openReportModal(report);
-      else { toast('尚无报告——手动触发推演'); generateShadowlineReport('manual'); }
+      const world = readChatVar(CV.world);
+      if (world && world.factions) openWorldModal(world);
+      else { toast('尚无世界状态——手动触发推演'); generateDirectorEvolve('manual'); }
     });
     panel.querySelector('#ad-btn-recompute').addEventListener('click', () => {
-      dispatchNow('manual'); toast('已按最新楼层重算态势');
+      dispatchNow('manual'); toast('已按最新楼层重算注入');
     });
-    panel.querySelector('#ad-btn-cards').addEventListener('click', openCardsModal);
+    panel.querySelector('#ad-btn-world').addEventListener('click', () => {
+      const world = readChatVar(CV.world);
+      if (world) openWorldModal(world);
+      else { toast('尚无世界状态——等待首次推演（📡 手动或心跳触发）'); }
+    });
     panel.querySelector('#ad-btn-roster').addEventListener('click', openRosterModal);
     panel.querySelector('#ad-btn-settings').addEventListener('click', openSettingsModal);
 
@@ -2036,15 +1944,6 @@
     const seg = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || '');
     return seg.slice(0, 8);
   }
-  function pushTickerHead(mode, placeOrLoc) {
-    const label = mode === 'card' ? '驻防' : mode === 'safe' ? '安全区' : '新地界';
-    const name = ((mode === 'card' ? String(placeOrLoc || '') : shortLoc(placeOrLoc)) || '未知地点').slice(0, 8);
-    const head = `${name}·${label}`;
-    if (State.tickerHeads[0] === head) return;
-    State.tickerHeads.unshift(head);
-    State.tickerHeads = State.tickerHeads.slice(0, 3);
-    renderTicker();
-  }
 
   function renderTicker() {
     if (!els.rail || !els.ticker) return;
@@ -2053,38 +1952,32 @@
     els.ticker.innerHTML = heads.concat(heads).map(t => `<li>${esc(t)}</li>`).join('');
   }
 
-  // 面板主体：当前态势行 + 情报条目流（S1 数据源=卡片池；S4 换 surface 真情报流）
-  function compactMenu(menu) {
-    return parseMenu(menu).map(e => {
-      if (e.max > e.min) return `${e.name}${e.min}-${e.max}`;
-      if (e.max) return `${e.name}×${e.max}`;
-      return e.name;
-    }).join('·');
-  }
-
+  // 面板主体：当前态势行 + 世界情报流（事件卡/风声卡/派系灰卡揭幕体系）
   function renderWire() {
     if (!els.wireBody) return;
-    const cards = getCards();
-    const hit = State.lastLocationText ? matchCard(State.lastLocationText, cards) : null;
+    const world = readChatVar(CV.world);
     let html = '';
 
+    // 首段 lead：驻守信号（世界状态 zone 命中当前地点的派系）
     if (State.lastLocationText) {
       const locShort = shortLoc(State.lastLocationText);
       let leadTitle = '';
       let leadBody = '';
-
-      if (hit) {
-        const entries = parseMenu(hit.card.menu);
-        const safe = hit.card.safe || !entries.some(e => e.min || e.max);
-        const menuStr = compactMenu(hit.card.menu);
-        const alertLabel = safe ? '安全区' : `${hit.card.alert || '常规'}驻防中`;
-        leadTitle = `${hit.card.place} · ${alertLabel}`;
-        leadBody = `${hit.card.faction}驻守${menuStr ? '（' + menuStr + '）' : ''}。${hit.card.reaction || hit.card.verdict || '应邀客人以礼相待；亮械或闯入后场立即翻脸。'}`;
+      if (world && Array.isArray(world.factions)) {
+        const stationed = world.factions.filter(f => f && f.zone && zoneMatch(f.zone, State.lastLocationText));
+        const hot = (world.events || []).filter(ev => ev && ev.type === 'conflict' && ev.stage === '爆发'
+          && eventZones(ev, world).some(z => zoneMatch(z, State.lastLocationText)));
+        if (stationed.length) {
+          leadTitle = `${locShort || '当前地点'} · ${stationed[0].name}活动区`;
+          leadBody = `${stationed.map(f => `${f.name}${f.morale ? '（' + f.morale + '）' : ''}`).join('、')}在此活动。${hot.length ? `【⚠ ${hot[0].name}已到爆发阶段——冲突一触即发】` : '暂无爆发阶段冲突。'}`;
+        } else {
+          leadTitle = `${locShort || '当前地点'} · 无已知驻防`;
+          leadBody = '此地暂无已知派系活动记录。若冲突升级，敌方将按剧情合理性与世界书图鉴演化。';
+        }
       } else {
-        leadTitle = `${locShort || '当前地点'} · 通用兜底推演中`;
-        leadBody = '此地暂无固定驻防档案。若冲突升级，敌方将按剧情合理性与世界书图鉴进行态势演化。';
+        leadTitle = `${locShort || '当前地点'} · 等待首推`;
+        leadBody = '尚无世界态势档案——📡 手动触发或等待心跳推演后，此处显示驻守信号与世界动态。';
       }
-
       html += `<div class="ad-nowline ad-lead-box" title="${esc(State.lastLocationText)}">
         <div class="ad-lead-stamp">PUBLIC RECORD</div>
         <div class="ad-lead-eyebrow">📍 当前所在地态势简报 · CURRENT SITUATION</div>
@@ -2093,67 +1986,64 @@
       </div>`;
     }
 
-    if (!cards.length) {
-      html += `<div class="ad-empty">情报流为空——在 🗂 中导入卡片，或等待 S2 态势位自动产卡。</div>`;
-    }
-
-    // S4 完全体：报告 surface 公开征兆上报纸（有报告时替代卡片池成为玩家可见内容）。
-    // 灰卡阶段揭示（接触即揭）：未接触派系 ？？？ 遮名（只可见征兆）；已接触署名 + 三态徽标；
-    // 插件自动登记的派系带"新面孔"标记（预输入无）；新揭示首拍金色揭幕闪动；
-    // 已接触但本轮无条目的名册派系给平静占位卡（漏更新不丢卡）。
-    const report = readChatVar(CV.report);
-    if (report && Array.isArray(report.factions) && report.factions.length) {
-      const { roster, newly } = syncRevealState();
-      const reportDate = report.generatedAt ? new Date(report.generatedAt).toLocaleDateString() : '';
-      for (const f of report.factions) {
-        if (roster.tombstones.includes(f.name)) continue;   // 墓碑兜底（级联已删，双保险）
-        const shown = roster.revealed.includes(f.name);
-        const fresh = !roster.manual.includes(f.name);      // 插件自建 → 新面孔（预输入无标记）
-        const stateCls = f.state === '已兑现' ? 'hot' : '';
-        html += `<div class="ad-item${shown ? '' : ' grey'}${newly.includes(f.name) ? ' unveil' : ''}">
-          <div class="ad-item-header">
-            <span class="ad-item-kicker">《悉尼宪报》 · ${esc(reportDate)}${fresh ? ' · <span class="ad-newcomer">新面孔</span>' : ''}</span>
-            ${shown ? `<span class="ad-item-alert ${stateCls}">${esc(f.state || '推断中')}</span>` : ''}
-          </div>
-          <div class="ad-item-title"><span class="ad-item-place">${shown ? esc(f.name) : '？？？'}</span></div>
-          <div class="ad-item-reaction">${esc(f.surface || '')}</div>
-        </div>`;
-      }
-      // 平静占位：已接触（含预输入）但本轮报告无条目——"永远有卡，漏更新不丢卡"；
-      // 未接触派系不出占位卡（不剧透存在感——它们只经征兆灰卡登场）
-      const reportNames = new Set(report.factions.map(f => f.name));
-      for (const name of roster.factions) {
-        if (reportNames.has(name) || roster.tombstones.includes(name) || !roster.revealed.includes(name)) continue;
-        html += `<div class="ad-item quiet">
-          <div class="ad-item-header"><span class="ad-item-kicker">《悉尼宪报》 · 平静</span></div>
-          <div class="ad-item-title"><span class="ad-item-place">${esc(name)}</span></div>
-          <div class="ad-item-reaction">暂无可察异动。</div>
-        </div>`;
-      }
+    if (!world || !Array.isArray(world.factions)) {
+      html += `<div class="ad-empty">情报流为空——等待副导演首次世界推演（📡 手动触发，或每 ${SETTINGS.directorEveryX} 楼心跳自动推演）。</div>`;
       els.wireBody.innerHTML = html;
       return;
     }
 
-    for (const c of cards) {
-      const entries = parseMenu(c.menu);
-      const safe = c.safe || !entries.some(e => e.min || e.max);
-      const menuStr = compactMenu(c.menu);
-      const isHot = !safe && (c.alert === '警戒' || c.alert === '严密');
-      const alertCls = safe ? 'safe' : (isHot ? 'hot' : '');
-      const isHit = hit && hit.card.place === c.place;
-      const kickerSource = c.source === 'daily' ? '《真理报》社会版' : '《情报汇编》';
-      const statusLabel = safe ? '安全区' : (isHot ? (c.alert === '严密' ? '戒备扩充' : '火并升温') : esc(c.alert || '常规'));
-
-      html += `<div class="ad-item${isHit ? ' hit' : ''}">
+    // 事件卡：阶段徽标 + 进度（平息不显示）
+    const worldDate = world.generatedAt ? new Date(world.generatedAt).toLocaleDateString() : '';
+    for (const ev of (world.events || [])) {
+      if (!ev || ev.stage === '平息') continue;
+      const stageCls = ev.stage === '爆发' ? 'hot' : (ev.stage === '逼近' ? 'hot' : '');
+      html += `<div class="ad-item${ev.stage === '爆发' ? ' hit' : ''}">
         <div class="ad-item-header">
-          <span class="ad-item-kicker">${esc(kickerSource)} · 派系：${esc(c.faction || '未知')}</span>
-          <span class="ad-item-alert ${alertCls}">${esc(statusLabel)}</span>
+          <span class="ad-item-kicker">⚡ 事件链 · ${esc(worldDate)}</span>
+          <span class="ad-item-alert ${stageCls}">${esc(ev.stage)} ${ev.stageRound}/9</span>
         </div>
-        <div class="ad-item-title">
-          <span class="ad-item-place">${esc(c.place)}</span>${menuStr ? `：<span class="menu">${esc(menuStr)}</span>` : ''}
+        <div class="ad-item-title"><span class="ad-item-place">${esc(ev.name)}</span><span class="menu"> · ${ev.type === 'progress' ? '进展' : '冲突'}</span></div>
+        <div class="ad-item-reaction">${esc(ev.desc || '')}</div>
+      </div>`;
+    }
+
+    // 风声卡：传播等级
+    for (const w of (world.winds || [])) {
+      if (!w) continue;
+      html += `<div class="ad-item">
+        <div class="ad-item-header">
+          <span class="ad-item-kicker">📣 风声 · ${esc(w.spread || '流传')}</span>
         </div>
-        <div class="ad-item-reaction">${esc(c.reaction || '现场暂无特殊反应记录，按常识与戒备等级演出。')}</div>
-        ${c.verdict ? `<div class="ad-item-sub-wire">✦ 现场反应与判定：${esc(c.verdict)}</div>` : ''}
+        <div class="ad-item-reaction">${esc(w.content || '')}${w.source ? `<div class="ad-item-sub-wire">——${esc(w.source)}</div>` : ''}</div>
+      </div>`;
+    }
+
+    // 派系灰卡（S4 揭幕体系全保留）：未接触派系 ？？？ 遮名（只可见征兆）；已接触署名 + 三态徽标；
+    // 新面孔标记；新揭示首拍金色揭幕闪动；已接触但本轮无条目的名册派系给平静占位卡。
+    const { roster, newly } = syncRevealState();
+    for (const f of (world.factions || [])) {
+      if (roster.tombstones.includes(f.name)) continue;   // 墓碑兜底（级联已删，双保险）
+      const shown = roster.revealed.includes(f.name);
+      const fresh = !roster.manual.includes(f.name);      // 插件自建 → 新面孔（预输入无标记）
+      const stateCls = f.state === '已兑现' ? 'hot' : '';
+      html += `<div class="ad-item${shown ? '' : ' grey'}${newly.includes(f.name) ? ' unveil' : ''}">
+        <div class="ad-item-header">
+          <span class="ad-item-kicker">《悉尼宪报》 · ${esc(worldDate)}${fresh ? ' · <span class="ad-newcomer">新面孔</span>' : ''}</span>
+          ${shown ? `<span class="ad-item-alert ${stateCls}">${esc(f.state || '推断中')}</span>` : ''}
+        </div>
+        <div class="ad-item-title"><span class="ad-item-place">${shown ? esc(f.name) : '？？？'}</span>${f.zone ? `<span class="menu"> · ${esc(f.zone)}</span>` : ''}</div>
+        <div class="ad-item-reaction">${esc(f.surface || '')}</div>
+      </div>`;
+    }
+    // 平静占位：已接触（含预输入）但本轮世界状态无条目——"永远有卡，漏更新不丢卡"；
+    // 未接触派系不出占位卡（不剧透存在感——它们只经征兆灰卡登场）
+    const worldNames = new Set((world.factions || []).map(f => f.name));
+    for (const name of roster.factions) {
+      if (worldNames.has(name) || roster.tombstones.includes(name) || !roster.revealed.includes(name)) continue;
+      html += `<div class="ad-item quiet">
+        <div class="ad-item-header"><span class="ad-item-kicker">《悉尼宪报》 · 平静</span></div>
+        <div class="ad-item-title"><span class="ad-item-place">${esc(name)}</span></div>
+        <div class="ad-item-reaction">暂无可察异动。</div>
       </div>`;
     }
 
@@ -2198,26 +2088,19 @@
   function closeModal() { els.modal.classList.remove('open'); }
   function openModal(html) { els.modalBox.innerHTML = html; els.modal.classList.add('open'); }
 
-  // —— 设置弹窗 ——————————————————————————————————————————
+  // —— 设置弹窗（可重渲染：世界书同步的增删/选书操作不丢其他输入）———————————
 
-  // —— 设置弹窗（可重渲染：世界书同步的增删/选书操作不丢其他输入）———
-
-  let editSync = null;   // 编辑中的两套 worldSync 副本 { situation: [], shadowline: [] }
+  let editSync = null;   // 编辑中的 worldSync 副本 { world: [] }
 
   function openSettingsModal() {
-    editSync = {
-      situation: JSON.parse(JSON.stringify(SETTINGS.worldSyncSituation || [])),
-      shadowline: JSON.parse(JSON.stringify(SETTINGS.worldSyncShadowline || [])),
-    };
+    editSync = { world: JSON.parse(JSON.stringify(SETTINGS.worldSync || [])) };
     renderSettingsModal();
   }
 
-  // 把表单输入收进 SETTINGS（不持久化——供 sync 操作重渲前保存现场）
   // worldSync 即时持久化：选书/勾词条/增删立即写回（不依赖"保存"按钮）；
   // 已选书未勾词条的来源保留（filter 只去 book 空的），防止"选书后重开被清空"
   function persistSyncNow() {
-    SETTINGS.worldSyncSituation = editSync.situation.filter(x => x && x.book);
-    SETTINGS.worldSyncShadowline = editSync.shadowline.filter(x => x && x.book);
+    SETTINGS.worldSync = editSync.world.filter(x => x && x.book);
     saveSettings(SETTINGS);
   }
 
@@ -2243,7 +2126,7 @@
           <label style="width:auto;color:var(--ad-ink)"><input type="checkbox" data-entry="${esc(name)}" ${src.entries.includes(name) ? 'checked' : ''}> ${esc(name)}</label>
         </div>`).join('') || '<div class="dim">该世界书无词条。</div>';
       openModal(`<h3>📖 选择同步词条 · ${esc(src.book)}</h3>
-        <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">勾选的词条内容将注入${slot === 'shadowline' ? '暗线位（报告）' : '态势位（产卡）'}的输入。</div>
+        <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">勾选的词条内容将注入副导演推演的输入。</div>
         <div style="max-height:52vh;overflow-y:auto">${items}</div>
         <div class="ad-btnrow"><button class="primary" id="ad-sync-pick-ok">确定</button><button id="ad-sync-pick-back">返回</button></div>`);
       els.modalBox.querySelector('#ad-sync-pick-ok').addEventListener('click', () => {
@@ -2352,50 +2235,48 @@
         <option value="slate">slate · 深色档案（MMS 基因）</option>
       </select></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">功能开关</label><div style="display:flex;flex-direction:column;gap:4px">
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledShadowline" ${s.enabledShadowline ? 'checked' : ''}> 暗线推演（报告 + 暗线词条注入）</label>
-        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledSituation" ${s.enabledSituation ? 'checked' : ''}> 态势配发（态势词条注入 + 即时产卡 + 预约引爆）</label>
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="enabledDirector" ${s.enabledDirector ? 'checked' : ''}> 世界推演（心跳/强制触发 + 副导演词条注入）</label>
       </div></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">🎲 随机遭遇</label><div style="display:flex;flex-direction:column;gap:4px">
         <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatEnabled" ${s.randomCombatEnabled ? 'checked' : ''}> 每楼掷骰，命中即在用户本楼输入末尾追加"强制开战"指令</label>
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatOncePerCycle" ${s.randomCombatOncePerCycle ? 'checked' : ''}> 防连战锁：每个推演周期（两次推演之间）最多一场随机战斗</label>
         <div style="display:flex;align-items:center;gap:6px">
           <input type="number" step="1" min="0" max="100" data-k="randomCombatChance" value="${s.randomCombatChance}" style="width:64px">
-          <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">% / 楼 · 安全区与战斗进行中不掷骰</span>
+          <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">% / 楼 · 基线兜底值（世界状态 spots/districts 命中时被覆盖）· 安全区与战斗进行中不掷骰</span>
         </div>
       </div></div>
-      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">本轮敌人名单</label>
-        <textarea data-k="enemyPool" rows="3" placeholder="手输本轮战役可选敌人，逗号/换行分隔（产卡 menu 与暗线预约"规模"从中选用）&#10;例：萨里山剃刀党混混，黑帮职业杀手，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
-        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不校验 menu</span></div>
+      <div class="ad-form-row"><label>推演心跳</label><input type="number" step="1" min="1" data-k="directorEveryX" value="${s.directorEveryX}">
+        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">每 N 楼常规推演一次；战斗结果/跨日/阶段变化强制推</span></div>
+      <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">敌方阵营参考</label>
+        <textarea data-k="enemyPool" rows="3" placeholder="手输敌方阵营参考，逗号/换行分隔（仅供推演参考，具体敌人由正文AI自选）&#10;例：萨里山剃刀帮，黑法老兄弟会，悉尼常规巡警">${esc(s.enemyPool || '')}</textarea>
+        <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则不注入</span></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">主角核心白名单</label>
         <textarea data-k="coreTeam" rows="2" placeholder="手输绝不背叛的核心队友，逗号/换行分隔&#10;例：弗兰克，林有声">${esc(s.coreTeam || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">留空则任何人都可能是间谍</span></div>
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">附加铁律</label>
-        <textarea data-k="extraRules" rows="3" placeholder="手输给副导演的最高优先级注意事项（多行），拼到暗线输入文末，压过默认规则&#10;例：灰瘟与邪教无任何关系，禁止关联；主角团是身经百战的强者，算计他们必须有成本与风险">${esc(s.extraRules || '')}</textarea>
+        <textarea data-k="extraRules" rows="3" placeholder="手输给副导演的最高优先级注意事项（多行），拼到推演输入文末，压过默认规则&#10;例：灰瘟与邪教无任何关系，禁止关联；主角团是身经百战的强者，算计他们必须有成本与风险">${esc(s.extraRules || '')}</textarea>
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">世界观纠偏/尺度约束</span></div>
-      <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="shadowlineFloors" value="${s.shadowlineFloors}">
+      <div class="ad-form-row"><label>副导演可见楼层</label><input type="number" step="1" min="0" data-k="directorFloors" value="${s.directorFloors}">
         <span class="dim" style="flex:none;font-size:9.5px;color:var(--ad-ink-faint)">0=全部历史；仅 AI 楼层，排除玩家输入</span></div>
       <div class="ad-form-row"><label>调试模式</label><label style="width:auto;color:var(--ad-ink-strong)">
         <input type="checkbox" data-k="debug" ${s.debug ? 'checked' : ''}> 记录 LLM 请求/响应（控制台 + 日志查看）</label></div>
       <div class="ad-btnrow" style="margin-top:2px"><button id="ad-debug-open">🐞 LLM 调试日志</button></div>
-      ${syncSectionHtml('shadowline', '副导演 · 世界书同步（→ 报告输入）')}
-      ${syncSectionHtml('situation', '态势位 · 世界书同步（→ 产卡输入）')}
-      ${promptSectionHtml('shadowline', '暗线导演 · 提示词', ShadowlinePrompt)}
-      ${ep('shadowline', '暗线位（次高智力 · 天级+事件）')}
-      ${promptSectionHtml('situation', '态势产卡 · 提示词', SituationPrompt)}
-      ${ep('situation', '态势位（快速小模型 · 随地点）')}
+      ${syncSectionHtml('world', '世界书同步（→ 推演输入）')}
+      ${promptSectionHtml('director', '副导演 · 提示词', DirectorPrompt)}
+      ${ep('director', '副导演 API（世界推演：派系/事件/风声/遇敌概率）')}
       <div class="ad-btnrow">
         <button class="primary" id="ad-set-save">保存</button>
         <button id="ad-set-close">关闭</button>
       </div>`);
     els.modalBox.querySelector('#ad-set-theme').value = currentTheme;
 
-    // 全部设置项 change 即时持久化（不依赖"保存"按钮——敌人名单/端点/楼层窗口改完即生效）
+    // 全部设置项 change 即时持久化（不依赖"保存"按钮——名单/端点/楼数改完即生效）
     els.modalBox.querySelectorAll('[data-k]').forEach(el => {
       el.addEventListener('change', () => {
         collectFormToSettings();
         saveSettings(SETTINGS);
-        // 双功能开关切换即时生效：关→词条下灯；开→强制重写重新上灯
-        const k = el.getAttribute('data-k');
-        if (k === 'enabledShadowline' || k === 'enabledSituation') applySwitches();
+        // 推演开关切换即时生效：关→词条下灯；开→强制重写重新上灯
+        if (el.getAttribute('data-k') === 'enabledDirector') applySwitches();
       });
     });
 
@@ -2435,7 +2316,7 @@
       });
     };
     bindSyncOps();
-    bindPromptOps({ shadowline: ShadowlinePrompt, situation: SituationPrompt });
+    bindPromptOps({ director: DirectorPrompt });
 
     els.modalBox.querySelector('#ad-debug-open').addEventListener('click', () => {
       collectFormToSettings();   // 先收表单（含调试开关），再打开日志
@@ -2446,7 +2327,7 @@
       collectFormToSettings();
       persistSyncNow();
       applySwitches();   // 开关状态兜底生效（表单与即时监听一致时幂等）
-      if (SETTINGS.enabledSituation || SETTINGS.enabledShadowline) scheduleDispatch('settings-saved');
+      if (SETTINGS.enabledDirector) scheduleDispatch('settings-saved');
       const theme = els.modalBox.querySelector('#ad-set-theme').value;
       const p = loadUiPrefs(); p.theme = theme; saveUiPrefs(p);
       applyTheme(theme);
@@ -2491,59 +2372,59 @@
     els.modalBox.querySelector('#ad-dbg-back').addEventListener('click', renderSettingsModal);
   }
 
-  // —— 报告查看弹窗（GM：最新暗线报告概览 + 完整 JSON + 重新推演）———————
+  // —— 世界状态查看弹窗（GM：派系/事件/风声/遇敌概率概览 + 完整 JSON + 重新推演）———
 
-  function openReportModal(report) {
-    if (!report) { toast('尚无报告'); return; }
-    const facRows = (report.factions || []).map(f => `
+  function openWorldModal(world) {
+    if (!world) { toast('尚无世界状态'); return; }
+    const enc = world.encounter || {};
+    const facRows = (world.factions || []).map(f => `
       <div class="ad-card-item" style="cursor:default">
-        <span class="place">${esc(f.name)}</span>
+        <span class="place">${esc(f.name)}${f.zone ? `（${esc(f.zone)}）` : ''}</span>
         <span class="meta">${esc(f.state)} · ${esc((f.causes || [])[0] || '')}</span>
       </div>
       <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin:-4px 0 8px">
-        征兆：${esc(f.surface)}<br>真相：${esc(f.truth)}</div>`).join('')
+        征兆：${esc(f.surface)}<br>真相：${esc(f.truth)}${f.stance ? `<br>对我方：${esc(f.stance)}` : ''}${f.relations ? `<br>关系：${esc(f.relations)}` : ''}${f.morale ? `<br>士气：${esc(f.morale)}` : ''}</div>`).join('')
       || '<div class="dim">（无派系条目）</div>';
-    const forb = ((report.resistance && report.resistance.forbidden) || [])
+    const evRows = (world.events || []).map(ev => `
+      <div class="ad-card-item" style="cursor:default">
+        <span class="place">${esc(ev.name)}</span>
+        <span class="meta">${ev.type === 'progress' ? '进展' : '冲突'} · ${esc(ev.stage)} ${ev.stageRound}/9 · Lv${ev.level}</span>
+      </div>
+      <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin:-4px 0 8px">${esc(ev.desc || '')}${ev.factions && ev.factions.length ? '｜涉及：' + esc(ev.factions.join('、')) : ''}</div>`).join('')
+      || '<div class="dim">（无事件）</div>';
+    const windRows = (world.winds || []).map(w => `
+      <div class="ad-card-item" style="cursor:default">
+        <span class="place">📣 ${esc(w.content)}</span>
+        <span class="meta">${esc(w.spread || '流传')} · 安静${w.quietRounds || 0}楼</span>
+      </div>`).join('')
+      || '<div class="dim">（无风声）</div>';
+    const encRows = [
+      `<div class="ad-card-item" style="cursor:default"><span class="place">🌡 剧情冷热</span><span class="meta">${enc.heat ? `${enc.heat.value > 0 ? '+' : ''}${enc.heat.value} · ${esc(enc.heat.why || '')}` : '未设置'}</span></div>`,
+      ...((enc.spots || []).map(z => `<div class="ad-card-item" style="cursor:default"><span class="place">📍 ${esc(z.match)}</span><span class="meta">${z.chance}%${z.why ? ' · ' + esc(z.why) : ''}${z.chance === 0 ? '（安全区）' : ''}</span></div>`)),
+      ...((enc.districts || []).map(z => `<div class="ad-card-item" style="cursor:default"><span class="place">🏙 ${esc(z.match)}</span><span class="meta">${z.chance}%${z.why ? ' · ' + esc(z.why) : ''}${z.chance === 0 ? '（安全区）' : ''}</span></div>`)),
+    ].join('');
+    const forb = ((world.resistance && world.resistance.forbidden) || [])
       .map(x => `<div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">· ${esc(x.truth)}【途径：${esc(x.path)}】</div>`).join('');
-    const ambush = (report['ambush预约'] || [])
-      .map(a => `<div class="dim" style="font-size:10px;color:var(--ad-ink-faint)">· ${esc(a['派系'])} @ ${esc(JSON.stringify(a['条件']))}</div>`).join('');
     openModal(`
-      <h3>📡 暗线报告 · ${esc(report.stage || '—')}</h3>
+      <h3>🌍 世界状态 · 第 ${world.round || 1} 轮${world.digest ? ` · ${esc(world.digest)}` : ''}</h3>
       <div class="dim" style="font-size:9.5px;color:var(--ad-ink-faint);margin-bottom:8px">
-        生成于 ${new Date(report.generatedAt || Date.now()).toLocaleString()}（触发：${esc(report.reason || '—')}）</div>
-      ${facRows}
+        生成于 ${new Date(world.generatedAt || Date.now()).toLocaleString()}（触发：${esc(world.reason || '—')}）</div>
+      <div class="ad-sec-title">事件链（本地骰每楼推进）</div>${evRows}
+      <div class="ad-sec-title">风声（安静超时按概率消散）</div>${windRows}
+      <div class="ad-sec-title">派系动向（暗线三态）</div>${facRows}
+      <div class="ad-sec-title">遇敌概率档案</div>${encRows}
       ${forb ? `<div class="ad-sec-title">禁泄清单</div>${forb}` : ''}
-      ${ambush ? `<div class="ad-sec-title">已埋预约（条件命中即引爆）</div>${ambush}` : ''}
-      <div class="ad-sec-title">完整报告（存档 $ad_report）</div>
-      <textarea readonly style="width:100%;height:180px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(JSON.stringify(report, null, 2))}</textarea>
+      <div class="ad-sec-title">完整世界状态（存档 $ad_world）</div>
+      <textarea readonly style="width:100%;height:180px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(JSON.stringify(world, null, 2))}</textarea>
       <div class="ad-btnrow">
         <button class="primary" id="ad-report-regen">📡 重新推演</button>
         <button id="ad-report-close">关闭</button>
       </div>`);
     els.modalBox.querySelector('#ad-report-regen').addEventListener('click', () => {
       closeModal();
-      generateShadowlineReport('manual');
+      generateDirectorEvolve('manual');
     });
     els.modalBox.querySelector('#ad-report-close').addEventListener('click', closeModal);
-  }
-
-  // —— 卡片管理弹窗 ————————————————————————————————————————
-
-  let editingCard = null; // null = 列表态；对象 = 编辑态；'new' = 新建
-
-  function cardForm(c) {
-    return `
-      <div class="ad-form-row"><label>地点名 *</label><input type="text" id="ad-c-place" value="${esc(c.place || '')}" placeholder="绿顶酒馆"></div>
-      <div class="ad-form-row"><label>别名（逗号分隔）</label><input type="text" id="ad-c-aliases" value="${esc((c.aliases || []).join(', '))}" placeholder="凯特的酒馆, Green Roof"></div>
-      <div class="ad-form-row"><label>派系 *</label><input type="text" id="ad-c-faction" value="${esc(c.faction || '')}" placeholder="凯特·利（萨里山）"></div>
-      <div class="ad-form-row"><label>敌方菜单</label><input type="text" id="ad-c-menu" value="${esc(c.menu || '')}" placeholder="词条A*4~6/词条B*3~5（留空=安全区）"></div>
-      <div class="ad-form-row"><label>戒备</label><select id="ad-c-alert">
-        ${ALERT_LEVELS.map(a => `<option value="${a}" ${(c.alert || '常规') === a ? 'selected' : ''}>${a}</option>`).join('')}
-      </select></div>
-      <div class="ad-form-row"><label>安全区</label><label style="width:auto;color:#e2e8f0">
-        <input type="checkbox" id="ad-c-safe" ${c.safe ? 'checked' : ''}> 强制安全地点变体（无可见敌人）</label></div>
-      <div class="ad-form-row"><label>反应模式</label><textarea id="ad-c-reaction" placeholder="应邀客人以礼相待、敬酒试探；亮械或闯后场立即翻脸…">${esc(c.reaction || '')}</textarea></div>
-      <div class="ad-form-row"><label>判定标准</label><textarea id="ad-c-verdict" placeholder="何种行为构成挑衅/侵入/暴露；何种属于可容忍（留空=默认）">${esc(c.verdict || '')}</textarea></div>`;
   }
 
   // —— S5 派系名册弹窗（名册 CRUD + 墓碑）———————————————————————
@@ -2554,7 +2435,7 @@
       <div class="ad-card-item" style="cursor:default">
         <span class="place">${esc(name)}</span>
         <button class="ad-row-btn" data-tomb="${esc(name)}" title="除名=墓碑：级联删该派系全部暗线并禁止模型复活">🪦 除名</button>
-      </div>`).join('') || '<div class="dim" style="padding:8px 2px">名册为空——报告生成时自动登记，或在上方手动添加。</div>';
+      </div>`).join('') || '<div class="dim" style="padding:8px 2px">名册为空——世界推演时自动登记，或在上方手动添加。</div>';
     const tombs = roster.tombstones.map(name => `
       <div class="ad-card-item" style="cursor:default;opacity:0.62">
         <span class="place">🪦 ${esc(name)}</span>
@@ -2563,7 +2444,7 @@
     openModal(`
       <h3>📜 派系名册（在册 ${roster.factions.length} · 墓碑 ${roster.tombstones.length}）</h3>
       <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">
-        名册进暗线报告输入（已知派系，新派系由报告自动登记）；除名=墓碑——级联删该派系全部暗线（交叉暗线整条删、预约作废）并禁止模型复活。存 $ad_roster。</div>
+        名册进推演输入（已知派系，新派系由推演自动登记）；除名=墓碑——级联删该派系全部暗线（世界状态条目、提及它的事件/风声/阻力整条删）并禁止模型复活。存 $ad_roster。</div>
       <div class="ad-form-row"><label>添加派系</label><input type="text" id="ad-roster-new" placeholder="派系名（轻量登场：先入册，真相由推演补）">
         <button class="ad-row-btn" id="ad-roster-add">＋ 入册</button></div>
       ${rows}
@@ -2588,137 +2469,7 @@
     els.modalBox.querySelector('#ad-roster-close').addEventListener('click', closeModal);
   }
 
-  function openCardsModal() { editingCard = null; renderCardsModal(); }
 
-  function renderCardsModal() {
-    const cards = getCards();
-    if (editingCard === null) {
-      const list = cards.map((c, i) => `
-        <div class="ad-card-item" data-i="${i}">
-          <span class="place">${esc(c.place)}</span>
-          <span class="meta">${esc(c.faction || '？')} · ${esc(c.alert || '常规')}${c.safe ? ' · 安全区' : ''}</span>
-        </div>`).join('') || '<div class="ad-intel dim">卡片池为空。</div>';
-      openModal(`
-        <h3>🗂 态势卡片池（${cards.length}）</h3>
-        <div class="dim" style="font-size:10px;color:#64748b;margin-bottom:10px">点击卡片编辑；保存写入聊天变量 $ad_cards。</div>
-        ${list}
-        <div class="ad-btnrow">
-          <button class="primary" id="ad-c-new">＋ 新建卡片</button>
-          <button id="ad-c-import">导入 JSON</button>
-          <button id="ad-c-export">导出 JSON</button>
-          <button id="ad-c-close">关闭</button>
-        </div>`);
-      els.modalBox.querySelectorAll('.ad-card-item').forEach(n => {
-        n.addEventListener('click', () => { editingCard = cards[+n.getAttribute('data-i')]; renderCardsModal(); });
-      });
-      els.modalBox.querySelector('#ad-c-new').addEventListener('click', () => { editingCard = { place: '', aliases: [], faction: '', menu: '', alert: '常规' }; renderCardsModal(); });
-      els.modalBox.querySelector('#ad-c-import').addEventListener('click', importCards);
-      els.modalBox.querySelector('#ad-c-export').addEventListener('click', exportCards);
-      els.modalBox.querySelector('#ad-c-close').addEventListener('click', closeModal);
-    } else {
-      const isNew = editingCard.place === '' && !editingCard._edited;
-      openModal(`
-        <h3>🗂 ${isNew ? '新建' : '编辑'}态势卡片</h3>
-        ${cardForm(editingCard)}
-        <div class="ad-btnrow">
-          <button class="primary" id="ad-c-save">保存</button>
-          <button id="ad-c-del">删除</button>
-          <button id="ad-c-back">返回列表</button>
-        </div>`);
-      els.modalBox.querySelector('#ad-c-save').addEventListener('click', () => {
-        const c = editingCard;
-        c.place = els.modalBox.querySelector('#ad-c-place').value.trim();
-        c.aliases = els.modalBox.querySelector('#ad-c-aliases').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-        c.faction = els.modalBox.querySelector('#ad-c-faction').value.trim();
-        c.menu = els.modalBox.querySelector('#ad-c-menu').value.trim();
-        c.alert = els.modalBox.querySelector('#ad-c-alert').value;
-        c.safe = els.modalBox.querySelector('#ad-c-safe').checked;
-        c.reaction = els.modalBox.querySelector('#ad-c-reaction').value.trim();
-        c.verdict = els.modalBox.querySelector('#ad-c-verdict').value.trim();
-        c.source = c.source || 'manual';
-        if (!c.place || !c.faction) { toast('地点名与派系为必填'); return; }
-        const cards = getCards();
-        const idx = cards.findIndex(x => x === editingCard || (x.place === c.place && x !== c));
-        if (idx >= 0) cards[idx] = c; else cards.push(c);
-        setCards(cards);
-        toast(`卡片已保存：${c.place}`);
-        editingCard = null; renderCardsModal(); renderWire(); renderTicker();
-        scheduleDispatch('cards-edited');
-      });
-      els.modalBox.querySelector('#ad-c-del').addEventListener('click', () => {
-        const cards = getCards().filter(x => x !== editingCard);
-        setCards(cards);
-        toast('卡片已删除');
-        editingCard = null; renderCardsModal(); renderWire(); renderTicker();
-        scheduleDispatch('cards-edited');
-      });
-      els.modalBox.querySelector('#ad-c-back').addEventListener('click', () => { editingCard = null; renderCardsModal(); });
-    }
-  }
-
-  // jsonc → json：剥 // 行注释、/* */ 块注释与尾逗号（字符串字面量内的内容原样保留，
-  // 否则 "https://" 会被误伤）；让用户从 SPEC/报告里直接复制的 jsonc 也能导入
-  function stripJsonc(src) {
-    let out = '', i = 0;
-    const s = String(src == null ? '' : src);
-    while (i < s.length) {
-      const c = s[i];
-      if (c === '"') {                       // 字符串字面量：复制到闭合引号（处理 \" 转义）
-        out += c; i++;
-        while (i < s.length) {
-          const ch = s[i];
-          out += ch; i++;
-          if (ch === '\\') { out += s[i] || ''; i++; continue; }
-          if (ch === '"') break;
-        }
-        continue;
-      }
-      if (c === '/' && s[i + 1] === '/') { while (i < s.length && s[i] !== '\n') i++; continue; }
-      if (c === '/' && s[i + 1] === '*') { i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) i++; i += 2; continue; }
-      out += c; i++;
-    }
-    return out.replace(/,(\s*[\]}])/g, '$1');   // 尾逗号
-  }
-
-  function importCards() {
-    const input = el('textarea', { style: 'width:100%;height:180px;background:rgba(30,41,59,0.7);color:#e2e8f0;border:1px solid rgba(148,163,184,0.28);border-radius:6px;font-family:inherit;font-size:11px;padding:8px;' });
-    openModal(`<h3>📥 导入卡片 JSON</h3>
-      <div class="dim" style="font-size:10px;color:#64748b;margin-bottom:8px">粘贴卡片数组（整体替换）或单个卡片对象（合并）。</div>`);
-    els.modalBox.appendChild(input);
-    const row = el('div', { class: 'ad-btnrow' });
-    row.innerHTML = '<button class="primary">导入</button><button>取消</button>';
-    els.modalBox.appendChild(row);
-    const [ok, cancel] = row.querySelectorAll('button');
-    ok.addEventListener('click', () => {
-      try {
-        const data = JSON.parse(stripJsonc(input.value));
-        const arr = Array.isArray(data) ? data : [data];
-        const bad = arr.filter(c => !c || !c.place || !c.faction);
-        if (bad.length) { toast(`格式错误：${bad.length} 条缺少 place/faction`); return; }
-        setCards(Array.isArray(data) ? arr : getCards().concat(arr));
-        toast(`已导入 ${arr.length} 张卡片`);
-        editingCard = null; renderCardsModal(); renderWire(); renderTicker();
-      } catch (e) { toast('JSON 解析失败'); }
-    });
-    cancel.addEventListener('click', openCardsModal);
-  }
-
-  function exportCards() {
-    const cards = getCards();
-    openModal(`<h3>📤 导出卡片 JSON</h3>`);
-    const ta = el('textarea', { readonly: 'readonly', style: 'width:100%;height:220px;background:rgba(30,41,59,0.7);color:#e2e8f0;border:1px solid rgba(148,163,184,0.28);border-radius:6px;font-family:inherit;font-size:11px;padding:8px;' });
-    ta.value = JSON.stringify(cards, null, 2);
-    els.modalBox.appendChild(ta);
-    const row = el('div', { class: 'ad-btnrow' });
-    row.innerHTML = '<button class="primary">复制到剪贴板</button><button>返回</button>';
-    els.modalBox.appendChild(row);
-    const [copy, back] = row.querySelectorAll('button');
-    copy.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(ta.value); toast('已复制'); }
-      catch (e) { ta.select(); document.execCommand && document.execCommand('copy'); toast('已尝试复制'); }
-    });
-    back.addEventListener('click', openCardsModal);
-  }
 
   // ═════════════════════════════════════════════════════════════════════
   // 10. 主流程编排
@@ -2735,15 +2486,14 @@
       bindEvent(EVT.swiped, onFloorEvent);
       bindEvent(EVT.chatChanged, onChatChanged);
       log(`已挂载（LIVE · v${SCRIPT_VERSION}），等待楼层事件`);
-      if (SETTINGS.enabledSituation || SETTINGS.enabledShadowline) {
-        if (SETTINGS.enabledShadowline) syncShadowlineEntry();   // 重挂载：按存档报告重建暗线词条（词条被删/被改也在此兜底）
-        else disableWbEntries([WB_ENTRY_SHADOWLINE]);
-        if (SETTINGS.enabledSituation) State.forceSituationWrite = true;   // 自愈：词条残留禁用态时首拍重新上灯
+      if (SETTINGS.enabledDirector) {
+        syncDirectorEntry();   // 重挂载：按存档世界状态重建词条 + V0.2.x 旧双词条下灯
+        State.forceDirectorWrite = true;   // 自愈：词条残留禁用态时首拍重新上灯
         scheduleDispatch('init');
       }
-      else log('暗线与态势均已关闭，仅 UI 待命');
+      else log('世界推演已关闭，仅 UI 待命（随机遭遇掷骰独立工作）');
     } else {
-      log(`已挂载（DEMO · v${SCRIPT_VERSION}）——无酒馆助手环境，UI/卡片管理可用，注入与监听待命`);
+      log(`已挂载（DEMO · v${SCRIPT_VERSION}）——无酒馆助手环境，UI 可用，注入与监听待命`);
       updatePanelStatus('演示模式 · 无酒馆环境');
     }
   }
@@ -2755,31 +2505,30 @@
   window.__AD__ = {
     version: SCRIPT_VERSION, IS_LIVE,
     // 引擎纯函数
-    norm, matchCard, parseMenu, parseAttr, parseAmmoTotal, charList, computeScale,
-    buildSituationText, buildSafeText, buildFallbackText,
-    shortLoc, pushTickerHead, renderTicker, renderWire, stripJsonc, applyTheme,
-    // S2：LLM 客户端与态势位
+    norm, zoneMatch, landmarkKey, statDateKey, statStage, statCity,
+    buildDirectorSituationText, buildDirectorInjection,
+    shortLoc, renderTicker, renderWire, applyTheme,
+    // 本地骰（S7）
+    rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension,
+    EV_STAGES, STAGE_SCORE, clamp,
+    // LLM 客户端与推演层
     callLLM, extractJson,
-    getEnemyPool, inEnemyPool, landmarkKey, getSyncedWorldbookText, getShadowlineFloorContext,
-    getLwbSummaryText, readLatestFloorTail,
-    collectOffscreenPlaces, validateCard, generateInstantCards, triggerInstant, Instant,
-    // S3：战略层
-    checkTriggers, generateShadowlineReport, buildShadowlineContext, buildShadowlineMessages,
-    validateReport, buildShadowlineInjection, checkAmbush,
+    getEnemyPool, getCoreTeam, getSyncedWorldbookText, getShadowlineFloorContext,
+    getLwbSummaryText,
+    checkTriggers, generateDirectorEvolve, buildDirectorContext, buildDirectorMessages,
+    validateWorld, DirectorPrompt, DEFAULT_DIRECTOR_SYS,
     getRoster, saveRoster, addRosterFaction, tombstoneFaction, restoreFaction, openRosterModal,
-    Trigger, statDateKey, statStage, statCity, openReportModal,
+    Trigger, openWorldModal,
     // S6：随机遭遇掷骰
-    onGenerationStarted, combatInProgress, RC_MARKER, RC_DIRECTIVE,
+    onGenerationStarted, combatInProgress, encounterProfile, RC_MARKER, RC_DIRECTIVE,
     DebugLog, openDebugModal, persistSyncNow,
-    // 提示词预设（默认构造 + 两个 store 实例）
-    DEFAULT_SHADOWLINE_SYS, DEFAULT_SITUATION_SYS, ShadowlinePrompt, SituationPrompt, getCoreTeam,
     // 状态与数据
-    state: State, settings: () => SETTINGS,
-    getCards, setCards, saveSettings, loadSettings,
+    state: State, settings: () => SETTINGS, migrateSettings,
+    saveSettings, loadSettings,
     readLatestStatData, dispatchNow, scheduleDispatch, persistRuntimeState, loadRuntimeState,
     // 注入通道（世界书词条）与功能开关
-    writeWbEntry, merge3, disableWbEntries, syncShadowlineEntry, applySwitches, HAS_WB,
-    CV, WB_ENTRY_SITUATION, WB_ENTRY_SHADOWLINE, MEMO_OPEN, SIT_OPEN, SIT_CLOSE,
+    writeWbEntry, merge3, disableWbEntries, syncDirectorEntry, applySwitches, HAS_WB,
+    CV, WB_ENTRY_DIRECTOR, WB_ENTRY_LEGACY, MEMO_OPEN, SIT_OPEN, SIT_CLOSE,
     togglePanel, updatePanelMeta,
   };
 })();

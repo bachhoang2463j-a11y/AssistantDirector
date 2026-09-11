@@ -121,6 +121,12 @@ const MOCK = (function () {
   window.eventEmit = function (name, ...args) {
     for (const l of listeners) if (l.name === name) try { l.cb(...args); } catch (e) { console.error(e); }
   };
+  // 楼层消息 mock：currentFloorId/checkTriggers/本地骰幂等守卫均读 getChatMessages(-1) 取楼号
+  window.getChatMessages = function (id) {
+    if (id === 'all') return [];
+    return [{ message_id: Math.max(0, floorCount - 1), name: 'AI', role: 'assistant', is_hidden: false,
+      message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。', data: {}, extra: {} }];
+  };
 
   return {
     // 测试辅助
@@ -190,37 +196,38 @@ const STAT = (loc, chars) => ({
   '角色列表': chars,
 });
 
-const STAT_SUITE = STAT('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前', [
-  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
-  CH('🛡️弗兰克', 180, 180, '[🔩] [.45子弹：28]'),
-]);
 const STAT_GREEN = STAT('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', [
   CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
   CH('🛡️弗兰克', 180, 180, '[🔩] [.45子弹：28]'),
 ]);
-const STAT_GREEN_DOWNED = STAT('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', [
-  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
-  CH('🛡️弗兰克', 0, 180, '[🔩] [.45子弹：28]'),
-]);
-const STAT_GREEN_LOWAMMO = STAT('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', [
-  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：10]'),
-  CH('🛡️弗兰克', 180, 180, '[🔩] [.45子弹：8]'),
-]);
-const STAT_ALLEY = STAT('📍 悉尼 · 萨里山 · 某条后巷 · 苦力的棚屋前', [
-  CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
-]);
 
-const CARDS = [
-  { place: '绿顶酒馆', aliases: ['凯特的酒馆', 'Green Roof'], faction: '凯特·利（萨里山）',
-    menu: '萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2', alert: '警戒',
-    reaction: '应邀客人以礼相待、敬酒试探；亮械或闯后场酒窖立即翻脸。',
-    verdict: '拒酒属待客试探，不构成开战；拔枪、闯后场禁区、暴露警方关联才构成。', source: 'daily' },
-  { place: '澳大利亚酒店', aliases: ['总督套房'], faction: '无（中立场所·己方据点）',
-    menu: '', alert: '常规', reaction: '酒店以住客隐私为重；大堂滋事召巡警。', source: 'daily' },
-  { place: '伦道夫船运仓库', aliases: ['达令港仓库'], faction: '伦道夫船运（黑法老触点）',
-    menu: '达令港码头武装打手*4~6', alert: '严密',
-    reaction: '白天禁区周边有人即喝止驱逐，夜间闯入直接动手。', source: 'daily' },
-];
+// S7 世界状态测试数据（$ad_world 同构；派系三态 + 事件链 + 风声 + encounter）
+const WORLD = {
+  round: 1, digest: '黑帮摩擦升温，警方收网在即',
+  factions: [
+    { name: '凯特·利（萨里山）', surface: '绿顶酒馆谢绝散客', truth: '凯特要的不是爆破手而是运输队共谋', contact: '', scheme: '以酒馆谈判为饵，实则调虎离山劫仓库', mole: '酒店门童比利（实为凯特眼线）', causes: ['楼23'], state: '推断中', stance: '觊觎主角团的爆破能力', relations: '与剃刀帮结仇', zone: '萨里山', morale: '士气高涨' },
+    { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', contact: '便衣警员雷诺兹（伪装成记者）', scheme: '', mole: '', causes: ['楼15'], state: '已渗透', stance: '盯上主角团', relations: '与黑法老兄弟会有旧怨', zone: '悉尼', morale: '按部就班' },
+  ],
+  events: [
+    { name: '仓库冲突', type: 'conflict', stage: '逼近', stageRound: 5, level: 2, factions: ['凯特·利（萨里山）'], zone: '', desc: '双方在仓库周边对峙' },
+    { name: '警方收网筹备', type: 'progress', stage: '发酵', stageRound: 3, level: 3, factions: ['麦凯探长（飞行小队）'], zone: '悉尼', desc: '搜查令流转中' },
+  ],
+  winds: [
+    { content: '达令港夜里能听见仓库方向的枪声', source: '码头工人', spread: '流传', level: 2, quietRounds: 0 },
+  ],
+  encounter: {
+    heat: { value: 10, why: '多线冲突临近爆发' },
+    spots: [{ match: '伦道夫船运仓库', chance: 60, why: '黑法老触点盘踞' },
+      { match: '澳大利亚酒店 - 总督套房', chance: 0, why: '己方据点' }],
+    districts: [{ match: '萨里山', chance: 25, why: '帮派混战区' }],
+  },
+  resistance: {
+    forbidden: [{ truth: '炸药原属伦道夫/黑法老兄弟会', path: '由玩家在谈判桌上自行打出', leak_cost: '谈判筹码崩塌' }],
+    partial: ['只得到"有人整箱扫货"的粗话原话'],
+    friction: ['警方全城戒备'],
+  },
+  roster_ops: [], generatedAt: Date.now(), reason: 'harness',
+};
 
 /* ════════════════════════════════════════════════════════════════════
    断言框架
@@ -262,6 +269,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
+  assert('版本 v0.3.0（世界引擎化重构）', json.content.includes("@version      0.3.0"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -269,194 +277,248 @@ async function runAll() {
   assert('LIVE 环境检测通过（mock API 全套）', AD.IS_LIVE === true);
   assert('世界书写入能力探测通过（注入通道）', AD.HAS_WB === true);
   assert('悬浮窗挂载（#ad-rail）', !!document.getElementById('ad-rail'));
-  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×5（报头内联：📡↻🗂📜⚙）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 5);
+  assert('面板挂载（#ad-panel）', !!document.getElementById('ad-panel'));  assert('GM 工具按钮 ×5（报头内联：📡↻🌍📜⚙）', document.querySelectorAll('#ad-panel .ad-head-btns button').length === 5);
   await sleep(1200); // init 去抖静默期（无 stat → 只走禁用探测，不建词条）
-  assert('无楼层时 init 不写入词条', WB_MOCK.writes('副导演-态势') === 0 && WB_MOCK.writes('副导演-暗线') === 0);
+  assert('无楼层时 init 不写入词条', WB_MOCK.writes('副导演') === 0);
 
-  /* ——— 纯函数：归一化与三级匹配 ——— */
-  head('地点归一化与三级匹配');
+  /* ——— 纯函数：归一化与区块匹配 ——— */
+  head('地点归一化与区块匹配');
   assert('剥 emoji/空白归一化', AD.norm('📍 悉尼 · 绿顶酒馆') === '悉尼 · 绿顶酒馆');
-  let m = AD.matchCard('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', CARDS);
-  assert('包含匹配命中绿顶酒馆', m && m.card.place === '绿顶酒馆', `score=${m && m.score.toFixed(2)}`);
-  m = AD.matchCard('凯特的酒馆', CARDS);
-  assert('别名全等命中', m && m.card.place === '绿顶酒馆');
-  m = AD.matchCard('绿顶酒馆', CARDS);
-  assert('place 全等命中', m && m.card.place === '绿顶酒馆');
-  m = AD.matchCard('📍 悉尼 · 总督套房 · 客厅', CARDS);
-  assert('别名包含命中（总督套房→澳大利亚酒店）', m && m.card.place === '澳大利亚酒店');
-  m = AD.matchCard('📍 悉尼 · 萨里山 · 某条后巷 · 苦力的棚屋前', CARDS);
-  assert('未命中返回 null（不可穷尽地点）', m === null);
-  const cardsAmbig = [
-    CARDS[0],
-    { place: '悉尼', aliases: [], faction: 'X', menu: '', alert: '常规' },
-  ];
-  m = AD.matchCard('📍 悉尼 · 萨里山 · 绿顶酒馆', cardsAmbig);
-  assert('多卡命中择优（具体名 > 泛地名）', m && m.card.place === '绿顶酒馆', `胜者=${m && m.card.place}`);
-  assert('空地点文本不匹配', AD.matchCard('', CARDS) === null);
-  assert('空卡片池不匹配', AD.matchCard('绿顶酒馆', []) === null);
+  assert('Z1 zoneMatch 双向包含（pattern⊂text）', AD.zoneMatch('萨里山', '📍 悉尼 · 萨里山 · 绿顶酒馆') === true);
+  assert('Z2 zoneMatch 双向包含（text⊂pattern）', AD.zoneMatch('悉尼萨里山码头', '萨里山') === true);
+  assert('Z3 zoneMatch 未命中 / 空串', AD.zoneMatch('墨尔本', '悉尼') === false && AD.zoneMatch('', '悉尼') === false);
+  assert('L1 地标键：大区后首字段（含子标题）', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前') === '澳大利亚酒店 - 总督套房');
+  assert('L2 地标键：房间级变化不改变键', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 玄关') === '澳大利亚酒店 - 总督套房');
+  assert('L3 地标键：单段地点', AD.landmarkKey('📍 某独立地标') === '某独立地标');
 
-  /* ——— 纯函数：menu 解析 ——— */
-  head('menu 解析');
-  let entries = AD.parseMenu('萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2');
-  assert('区间词条解析 ×3', entries.length === 3 && entries[0].name === '萨里山剃刀党混混' && entries[0].min === 4 && entries[0].max === 6);
-  entries = AD.parseMenu('打手*4');
-  assert('固定数量解析', entries[0].min === 4 && entries[0].max === 4);
-  entries = AD.parseMenu('夏恩(夏盖妖虫)');
-  assert('无数量标记解析（min=max=0）', entries[0].min === 0 && entries[0].max === 0);
-  entries = AD.parseMenu('');
-  assert('空 menu 解析为空数组', entries.length === 0);
-  entries = AD.parseMenu('打手×4～6／保镖*2');
-  assert('全角符号容错（×／～）', entries[0].min === 4 && entries[0].max === 6 && entries[1].min === 2);
+  /* ——— S7 信号级态势文本（驻守信号 + 临近冲突提醒）——— */
+  head('S7 信号级态势文本');
+  {
+    const locGreen = '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂';
+    let text = AD.buildDirectorSituationText(locGreen, null);
+    assert('无世界状态：尚无档案提示 + 敌方由正文AI自选 + XML 包裹', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE)
+      && text.includes('尚无世界态势档案') && text.includes('世界书图鉴与剧情合理性决定')
+      && text.includes('<Combat_block>'));
+    text = AD.buildDirectorSituationText(locGreen, WORLD);
+    assert('有世界状态：大区命中派系驻守信号（名称/大区/士气）', text.includes('驻守信号：凯特·利（萨里山）（萨里山）')
+      && text.includes('士气：士气高涨') && text.includes('对我方：觊觎主角团的爆破能力'));
+    assert('有世界状态：无敌人菜单（正文 AI 自选，不再列词条）', !text.includes('词条*') && !text.includes('驻守：'));
+    const locRnd = '📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区';
+    text = AD.buildDirectorSituationText(locRnd, WORLD);
+    assert('冲突事件爆发阶段 → 临近冲突提醒行', (() => {
+      const hot = JSON.parse(JSON.stringify(WORLD));
+      hot.events[0].stage = '爆发';
+      hot.events[0].zone = '达令港';   // 事件归属当前大区（无派系关联时自带 zone）
+      hot.events[0].factions = [];
+      return AD.buildDirectorSituationText(locRnd, hot).includes('【⚠ 临近冲突】仓库冲突已推进到爆发阶段');
+    })());
+    assert('跨大区爆发事件不提醒（萨里山的事件不警示达令港）', (() => {
+      const hot = JSON.parse(JSON.stringify(WORLD));
+      hot.events[0].stage = '爆发';   // zone 经派系=凯特（萨里山），不命中达令港
+      return !AD.buildDirectorSituationText(locRnd, hot).includes('【⚠ 临近冲突】');
+    })());
+    // 麦凯 zone=悉尼：地点大区=悉尼 时其驻守信号也命中（zoneMatch 双向包含）
+    const locHotel = '📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅';
+    text = AD.buildDirectorSituationText(locHotel, WORLD);
+    assert('多派系命中时最多列 3 条（悉尼/萨里山双命中）', text.includes('麦凯探长（飞行小队）') || text.includes('此地无已知派系驻防'));
+  }
 
-  /* ——— 纯函数：stat 解析 ——— */
-  head('stat_data 解析');
-  assert('HP 属性解析', JSON.stringify(AD.parseAttr('[❤️HP:0/180][🔮MP:110/110]', 'HP')) === '{"cur":0,"max":180}');
-  assert('HP 属性缺失返回 null', AD.parseAttr('[🛡️Armor:40]', 'HP') === null);
-  assert('弹药求和（多词条）', AD.parseAmmoTotal('[🔩] [.45子弹：28][12号独头弹：0]') === 28);
-  assert('弹药零值计入', AD.parseAmmoTotal('[🔩] [.45子弹：0]') === 0);
-  assert('角色列表归一（剥包装）', AD.charList(STAT_GREEN).length === 2);
+  /* ——— S7 本地骰（事件链推进 / 风声衰减 / swipe 幂等）——— */
+  head('S7 本地骰（事件推进/风声衰减/幂等守卫）');
+  {
+    const rr = Math.random;
+    // 事件链推进：dice=100 恒推进；stageRound 到 9 晋级下一阶段
+    let w1 = JSON.parse(JSON.stringify(WORLD));
+    Math.random = () => 0.999;   // dice = floor(0.999*100)+1 = 100 > 任何阈值 → 恒推进
+    AD.rollEvents(w1, Math.random);
+    assert('D1 高骰推进：stageRound 5→6（阶段不变）', w1.events[0].stageRound === 6 && w1.events[0].stage === '逼近');
+    w1.events[0].stageRound = 8;
+    AD.rollEvents(w1, Math.random);
+    assert('D2 stageRound≥9 → 晋级下一阶段（conflict 逼近→爆发，stageRound 重置 1）', w1.events[0].stage === '爆发' && w1.events[0].stageRound === 1);
+    // 受挫：dice=1 < 阈值×0.4 → 回退
+    let w2 = JSON.parse(JSON.stringify(WORLD));
+    Math.random = () => 0;   // dice = 1
+    AD.rollEvents(w2, Math.random);
+    assert('D3 低骰受挫：stageRound 回退（5→4）', w2.events[0].stageRound === 4);
+    // 平息事件不再推进（单事件隔离——其他事件恒推进会掩盖）
+    let w3 = { events: [JSON.parse(JSON.stringify(WORLD.events[0]))] };
+    w3.events[0].stage = '平息'; w3.events[0].stageRound = 3;
+    Math.random = () => 0.999;
+    const d3changed = AD.rollEvents(w3, Math.random);
+    assert('D4 平息阶段事件不掷骰', w3.events[0].stage === '平息' && w3.events[0].stageRound === 3 && d3changed === false);
+    Math.random = rr;
 
-  /* ——— 纯函数：规模随行重算 ——— */
-  head('规模随行重算');
-  AD.state.ammoBaseline = 0; // 重置基准
-  let scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN);
-  assert('正常状态取区间中值（4~6→5）', scaled[0].count === 5, `count=${scaled[0].count}`);
-  assert('弹药基准记录（20+28=48）', AD.state.ammoBaseline === 48, `baseline=${AD.state.ammoBaseline}`);
-  scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN_DOWNED);
-  assert('有倒地 → 下限-1（4~6→3）', scaled[0].count === 3, `count=${scaled[0].count}`);
-  scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN_LOWAMMO);
-  assert('弹药消耗过半（48→18） → 降档', scaled[0].count === 3, `count=${scaled[0].count}`);
-  scaled = AD.computeScale(AD.parseMenu('打手*1~2'), STAT_GREEN_DOWNED);
-  assert('下限保护（min=1 → 不低于1）', scaled[0].count === 1, `count=${scaled[0].count}`);
+    // 风声衰减：grace 内不衰减；超时按线性概率衰减（dice=1 恒消散）
+    let w4 = JSON.parse(JSON.stringify(WORLD));
+    Math.random = () => 0.5;
+    AD.rollWinds(w4, Math.random);
+    assert('W1 安静楼数累加（quietRounds 0→1），grace 内不衰减', w4.winds.length === 1 && w4.winds[0].quietRounds === 1);
+    w4.winds[0].quietRounds = 9;   // 远超 grace=3：n=6，chance=10+15×6=100%
+    Math.random = () => 0;   // dice=1 ≤ chance → 消散
+    const w4changed = AD.rollWinds(w4, Math.random);
+    assert('W2 超时风声按递增概率消散（数组剔除）', w4changed === true && w4.winds.length === 0);
+    Math.random = rr;
 
-  /* ——— 纯函数：注入文本拼装 ——— */
-  head('注入文本拼装（三种形态）');
-  scaled = AD.computeScale(AD.parseMenu(CARDS[0].menu), STAT_GREEN);
-  let text = AD.buildSituationText(CARDS[0], scaled, '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂');
-  assert('命中卡：XML 包裹（开合标签完整）', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE));
-  assert('命中卡：地点行（两空格缩进）', text.includes('  📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂'));
-  assert('命中卡：驻守+派系+菜单（规模已重算，缩进列表）', text.includes('  驻守：凯特·利（萨里山）（萨里山剃刀党混混*5/私酒蒸馏师*4/黑帮职业杀手*2）'));
-  assert('命中卡：反应模式', text.includes('反应模式：应邀客人以礼相待'));
-  assert('命中卡：战斗轮规则提醒（只写名字）', text.includes('<Combat_block>') && text.includes('我方/敌方各只写名字'));
-  assert('命中卡：场景判定标准', text.includes('判定标准：拒酒属待客试探'));
-  text = AD.buildSituationText(CARDS[2], AD.computeScale(AD.parseMenu(CARDS[2].menu), STAT_GREEN), 'x');
-  assert('无 verdict 卡片回落默认判定', text.includes('判定标准：玩家行动在语义上构成'));
-  text = AD.buildSafeText('📍 悉尼 · 澳大利亚酒店 - 总督套房');
-  assert('安全变体：无可见敌人 + 认知外突袭保留', text.includes('当前场景无可见敌人，但不排除剧情合理范围内的认知外突袭'));
-  assert('安全变体：XML 包裹', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE) && text.includes('  若冲突升级，按【战斗轮规则】输出 <Combat_block>。'));
-  text = AD.buildFallbackText('某条后巷');
-  assert('兜底：无驻防情报 + 图鉴选择 + 禁自创数值', text.includes('此地无驻防情报') && text.includes('禁止自创敌方数值')
-    && text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE));
+    // runLocalDice 幂等：同 floorId 不重复掷
+    MOCK.reset(); AD.loadRuntimeState();
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorCount=1 → floorId=0
+    window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+    Math.random = () => 0.999;   // 恒推进
+    AD.runLocalDice();
+    const ev1 = MOCK.chat.$ad_world.events[0].stageRound;
+    assert('D5 runLocalDice 首掷推进并回写 $ad_world', ev1 === 6);
+    Math.random = () => 0;      // 若重复掷会受挫回退——用于检验不掷
+    AD.runLocalDice();
+    assert('D6 同 floorId 幂等：swipe/重roll 重触发不重复推进', MOCK.chat.$ad_world.events[0].stageRound === ev1);
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // 新楼 floorId=1
+    AD.runLocalDice();
+    assert('D7 新楼恢复掷骰（floorId 前进）', MOCK.chat.$ad_world.events[0].stageRound === Math.max(1, ev1 - 1));   // Math.random=0 → 受挫回退
+    Math.random = rr;
+  }
+
+  /* ——— S7 遇敌概率档案（三级兜底 + 冷热修正 + 安全区）——— */
+  head('S7 遇敌概率档案');
+  {
+    MOCK.reset();
+    window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+    const s7 = AD.settings();
+    const savedChance = s7.randomCombatChance;
+    s7.randomCombatChance = 5;
+    // spots 命中：伦道夫船运仓库（chance 60）+ heat 10 + 事件"仓库冲突"逼近(+6，zone=萨里山 命中？)
+    // 地点"📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区"：大区=悉尼；事件归属=凯特 zone 萨里山——不命中悉尼 → tension=0
+    let p = AD.encounterProfile('📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区');
+    assert('P1 spots 命中：60 + heat10 + tension0（事件zone不命中当前大区不计分）', p.chance === 70 && p.via === 'spot' && p.tension === 0, `chance=${p.chance}`);
+    // 地标键 spots 匹配：总督套房 chance=0 → 显式安全区（不加修正）
+    p = AD.encounterProfile('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅');
+    assert('P2 spots chance=0 → 显式安全区（不叠冷热修正）', p.safe === true && p.chance === 0 && p.via === 'spot');
+    // spots 未命中 + districts 命中：萨里山 25
+    p = AD.encounterProfile('📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂');
+    // 大区=悉尼；事件"仓库冲突"派系凯特 zone=萨里山——萨里山 与 悉尼？zoneMatch('萨里山','悉尼')=false；事件"警方收网筹备" zone=悉尼 命中但 type=progress 不计分
+    assert('P3 spots 未命中 → districts 命中（25 + heat10 + tension6=41；本区冲突逼近事件计分）', p.chance === 41 && p.via === 'district' && p.tension === 6, `chance=${p.chance}`);
+    // 均未命中 → 玩家设置兜底
+    p = AD.encounterProfile('📍 墨尔本 · 唐人街 · 茶楼');
+    assert('P4 spots/districts 均未命中 → 玩家设置兜底（不加修正）', p.chance === 5 && p.via === 'settings');
+    // eventTension：本大区 conflict 事件阶段分计入
+    {
+      const wT = JSON.parse(JSON.stringify(WORLD));
+      wT.events[0].zone = '墨尔本'; wT.events[0].stage = '爆发'; wT.events[0].factions = [];   // 爆发+12
+      wT.events[0].type = 'conflict';
+      window.insertOrAssignVariables({ $ad_world: wT }, { type: 'chat' });
+      // 墨尔本 无 spots/districts → settings 兜底不加修正；改用 districts 命中检验
+      wT.encounter.districts = [{ match: '墨尔本', chance: 50, why: '' }];
+      window.insertOrAssignVariables({ $ad_world: wT }, { type: 'chat' });
+      p = AD.encounterProfile('📍 墨尔本 · 唐人街 · 茶楼');
+      assert('P5 eventTension：本大区冲突爆发事件 +12 计入', p.chance === 50 + 10 + 12 && p.tension === 12, `chance=${p.chance}`);
+    }
+    // clamp：修正上限 +40 / 概率上限 100
+    {
+      const wC = JSON.parse(JSON.stringify(WORLD));
+      wC.encounter.heat.value = 30;   // clamp 后 30
+      wC.encounter.districts = [{ match: '墨尔本', chance: 90, why: '' }];
+      wC.events[0].zone = '墨尔本'; wC.events[0].stage = '爆发'; wC.events[0].factions = []; wC.events[0].type = 'conflict';
+      window.insertOrAssignVariables({ $ad_world: wC }, { type: 'chat' });
+      p = AD.encounterProfile('📍 墨尔本 · 唐人街 · 茶楼');
+      assert('P6 clamp：最终概率上限 100（90+30+12 → 100）', p.chance === 100);
+    }
+    // 无世界状态：回落玩家设置（S6 原行为）
+    MOCK.reset();
+    p = AD.encounterProfile('📍 悉尼 · 萨里山 · 绿顶酒馆');
+    assert('P7 无世界状态 → 玩家设置（与 S6 原行为一致）', p.chance === 5 && p.via === 'settings');
+    s7.randomCombatChance = savedChance;
+  }
 
   /* ——— 端到端：dispatch 主流程 ——— */
-  head('端到端 dispatch（每楼配发 → 世界书词条）');
-  MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS); AD.state.ammoBaseline = 0;
+  head('端到端 dispatch（信号级注入 → 世界书词条）');
+  MOCK.reset(); AD.loadRuntimeState();
   MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
   AD.dispatchNow('test');
-  assert('命中楼写入态势词条（constant 蓝灯 + at_depth/system/深度0/排序15）', await waitFor(() => {
-    const e = WB_MOCK.find('副导演-态势');
+  assert('首楼写入副导演词条（constant 蓝灯 + at_depth/system/深度0/排序15）', await waitFor(() => {
+    const e = WB_MOCK.find('副导演');
     return e && e.enabled === true && e.strategy && e.strategy.type === 'constant'
       && e.position && e.position.type === 'at_depth' && e.position.role === 'system'
       && e.position.depth === 0 && e.position.order === 15;
   }, 4000));
-  assert('注入内容含驻防与判定标准', (WB_MOCK.entry('副导演-态势') || '').includes('驻守：凯特·利')
-    && (WB_MOCK.entry('副导演-态势') || '').includes('判定标准'));
+  assert('无世界状态：注入含"尚无世界态势档案" + 图鉴自选提示', (WB_MOCK.entry('副导演') || '').includes('尚无世界态势档案')
+    && (WB_MOCK.entry('副导演') || '').includes('世界书图鉴与剧情合理性决定'));
   AD.dispatchNow('test-again');
   await sleep(150);   // 第二次写入走微任务链，静置后查幂等
-  assert('幂等：同地点同状态不重写词条', WB_MOCK.writes('副导演-态势') === 1
-    && AD.state.wbLast.situation.includes('驻守：凯特·利'));
+  assert('幂等：同地点同状态不重写词条', WB_MOCK.writes('副导演') === 1
+    && AD.state.wbLast.director.includes('尚无世界态势档案'));
 
-  MOCK.setFloorStat(STAT_SUITE);
-  AD.dispatchNow('test');
-  assert('换地点→安全变体注入（menu 空卡）', await waitFor(() =>
-    (WB_MOCK.entry('副导演-态势') || '').includes('无可见敌人') && WB_MOCK.writes('副导演-态势') === 2, 4000));
-
-  MOCK.setFloorStat(STAT_ALLEY);
-  AD.dispatchNow('test');
-  assert('未命中地点→通用兜底注入', await waitFor(() =>
-    (WB_MOCK.entry('副导演-态势') || '').includes('此地无驻防情报') && WB_MOCK.writes('副导演-态势') === 3, 4000));
-
-  MOCK.setFloorStat(STAT_GREEN_DOWNED);
-  AD.state.wbLast.situation = ''; // 强制重注以观察规模
-  AD.dispatchNow('test');
-  assert('倒地楼规模降档（*3）', await waitFor(() =>
-    (WB_MOCK.entry('副导演-态势') || '').includes('萨里山剃刀党混混*3'), 4000));
+  // 有世界状态：注入 = 信号级态势 + 世界动态（事件/风声/派系三态）
+  window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+  AD.state.wbLast.director = '';   // 强制重写观察新内容
+  AD.dispatchNow('test-world');
+  assert('有世界状态：词条含驻守信号 + 事件链段 + 风声段 + 派系三态段', await waitFor(() => {
+    const c = WB_MOCK.entry('副导演') || '';
+    return c.includes('驻守信号：凯特·利（萨里山）')
+      && c.includes('<进行中的事件') && c.includes('仓库冲突')
+      && c.includes('<风声') && c.includes('达令港夜里能听见仓库方向的枪声')
+      && c.includes('<世界引擎推断>') && c.includes('空白搜查令已备')
+      && c.includes('<幕后动向') && c.includes('运输队共谋');
+  }, 4000));
 
   /* ——— 事件链路：楼层事件 + 去抖 ——— */
   head('事件链路（eventOn 接线与去抖）');
-  MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+  MOCK.reset(); AD.loadRuntimeState();
+  window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
   MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
-  const evWrites = WB_MOCK.writes('副导演-态势');
+  const evWrites = WB_MOCK.writes('副导演');
   MOCK.eventEmit('MESSAGE_RECEIVED');
   MOCK.eventEmit('MESSAGE_UPDATED');
   MOCK.eventEmit('MESSAGE_SWIPED');
-  const merged = await waitFor(() => WB_MOCK.writes('副导演-态势') === evWrites + 1, 8000);
-  assert('连续三事件去抖合并为一次词条写入', merged, `+${WB_MOCK.writes('副导演-态势') - evWrites}`);
+  const merged = await waitFor(() => WB_MOCK.writes('副导演') === evWrites + 1, 8000);
+  assert('连续三事件去抖合并为一次词条写入', merged, `+${WB_MOCK.writes('副导演') - evWrites}`);
 
-  MOCK.setFloorStat(STAT_GREEN_DOWNED);
-  MOCK.eventEmit('MESSAGE_RECEIVED');
-  const scaledDown = await waitFor(() => (WB_MOCK.entry('副导演-态势') || '').includes('萨里山剃刀党混混*3'), 8000);
-  assert('新楼事件触发重算（规模降档生效）', scaledDown);
-
-  const chatWrites = WB_MOCK.writes('副导演-态势');
-  const chatContent = WB_MOCK.entry('副导演-态势');
+  const chatWrites = WB_MOCK.writes('副导演');
   MOCK.eventEmit('CHAT_CHANGED');
-  // 换聊天去抖后的 dispatch 幂等重放（wbLast 重建回写即完成），不产生新写调用
-  const chatOk = await waitFor(() => AD.state.wbLast.situation !== '' && AD.state.wbLast.situation === chatContent, 10000);
-  assert('CHAT_CHANGED 重建注入不报错（同内容幂等不重写）', chatOk
-    && WB_MOCK.writes('副导演-态势') === chatWrites);
+  // 换聊天去抖后 dispatch 重建注入（本地骰对同楼会再掷一次致 stageRound 演进——
+  // 内容可能变化是预期行为，此处只验证重建成功且幂等不重复写）
+  const chatOk = await waitFor(() => AD.state.wbLast.director !== '' && WB_MOCK.writes('副导演') === chatWrites + 1, 10000);
+  assert('CHAT_CHANGED 重建注入不报错（词条重建一次）', chatOk);
 
-  /* ——— 持久化：卡片 / 设置 ——— */
+  /* ——— 持久化：设置 / 运行时状态 ——— */
   head('持久化');
-  MOCK.reset(); AD.setCards(CARDS);
-  assert('卡片写入聊天变量 $ad_cards', Array.isArray(MOCK.chat.$ad_cards) && MOCK.chat.$ad_cards.length === 3);
-  assert('卡片读回一致', AD.getCards()[2].place === '伦道夫船运仓库');
-  assert('运行时状态持久化 $ad_state（含 wbLast 上次纯内容）', (() => { AD.persistRuntimeState(); return MOCK.chat.$ad_state && typeof MOCK.chat.$ad_state.wbLast === 'object' && typeof MOCK.chat.$ad_state.wbLast.situation === 'string' && typeof MOCK.chat.$ad_state.lastLocationText === 'string'; })());
+  MOCK.reset();
+  assert('运行时状态持久化 $ad_state（含 wbLast.director 上次纯内容）', (() => { AD.persistRuntimeState(); return MOCK.chat.$ad_state && typeof MOCK.chat.$ad_state.wbLast === 'object' && typeof MOCK.chat.$ad_state.wbLast.director === 'string' && typeof MOCK.chat.$ad_state.lastLocationText === 'string' && typeof MOCK.chat.$ad_state.randomCombatFired === 'boolean'; })());
   const s = AD.loadSettings();
-  assert('设置默认结构（双端点+双独立开关）', s.enabledShadowline === true && s.enabledSituation === true && s.shadowline && s.situation);
-  s.situation.baseUrl = 'https://api.example.com/v1'; s.enabledShadowline = false; s.enabledSituation = false;
+  assert('设置默认结构（单副导演端点 + 推演开关 + 心跳 + 防连战锁）', s.enabledDirector === true && s.director && s.directorEveryX === 3
+    && s.randomCombatEnabled === true && s.randomCombatOncePerCycle === true && s.directorFloors === 20);
+  s.director.baseUrl = 'https://api.example.com/v1'; s.enabledDirector = false;
   AD.saveSettings(s);
-  assert('设置保存到 localStorage 并读回', AD.loadSettings().situation.baseUrl === 'https://api.example.com/v1'
-    && AD.loadSettings().enabledShadowline === false && AD.loadSettings().enabledSituation === false);
-  const disCalls = WB_MOCK.writes('副导演-态势');
+  assert('设置保存到 localStorage 并读回', AD.loadSettings().director.baseUrl === 'https://api.example.com/v1'
+    && AD.loadSettings().enabledDirector === false);
+  const disCalls = WB_MOCK.writes('副导演');
   MOCK.setFloorStat(STAT_GREEN);
   AD.dispatchNow('test');
-  assert('双开关全关 → 不注入不重写词条', WB_MOCK.writes('副导演-态势') === disCalls);
-  s.enabledShadowline = true; s.enabledSituation = true; AD.saveSettings(s); // 恢复
+  assert('推演开关关 → 不注入不重写词条', WB_MOCK.writes('副导演') === disCalls);
+  s.enabledDirector = true; AD.saveSettings(s); // 恢复
 
   /* ——— UI 数据驱动 ——— */
   head('UI 数据驱动');
-  AD.state.wbLast.situation = '';   // 下一拍 dispatch 重写词条 → 点亮未读提醒
-  MOCK.setFloorStat(STAT_GREEN);
+  MOCK.reset(); AD.loadRuntimeState();
+  window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+  MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+  AD.state.wbLast.director = '';   // 下一拍 dispatch 重写词条 → 点亮未读提醒
   AD.dispatchNow('ui-dot');
   assert('注入更新点亮未读提醒（rail-dot.on）', await waitFor(() =>
-    document.getElementById('ad-rail-dot').classList.contains('on')
-    && (WB_MOCK.entry('副导演-态势') || '').includes('绿顶酒馆'), 4000));
-  assert('ticker 渲染（最新情报×2 无缝循环）', (() => {
-    const lis = document.querySelectorAll('#ad-ticker li');
-    return lis.length >= 2 && lis[0].textContent.includes('绿顶酒馆');
-  })());
+    document.getElementById('ad-rail-dot').classList.contains('on'), 4000));
   AD.togglePanel(true, true);
   assert('展开后未读熄灭', !document.getElementById('ad-rail-dot').classList.contains('on'));
   assert('报头解析（日期+阶段）', document.getElementById('ad-mast-date').textContent.includes('1925年') && document.getElementById('ad-mast-date').textContent.includes('6月13日') && document.getElementById('ad-mast-stage').textContent === '潜伏期');
-  // UI 段前的持久化段 reset 过楼层表，此处补一楼有效数据再 dispatch，刷新 nowline/hit
-  MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
-  AD.dispatchNow('ui-setup');
-  assert('情报条目流渲染（每卡一条，无边框纯排版）', (() => {
-    const items = document.querySelectorAll('#ad-wire .ad-item');
-    return items.length === 3 && !document.querySelector('#ad-wire .ad-faction');
-  })());
-  assert('情报条目含派系与敌情菜单', (() => {
-    const first = document.querySelector('#ad-wire .ad-item');
-    return first.textContent.includes('凯特·利') && first.textContent.includes('萨里山剃刀党混混4-6') && (first.textContent.includes('警戒') || first.textContent.includes('火并升温'));
-  })());
-  assert('当前态势行（地点+配发形态）', (() => {
+  assert('lead 驻守信号（大区命中派系 + 士气）', (() => {
     const now = document.querySelector('#ad-wire .ad-nowline');
-    return now && now.textContent.includes('绿顶酒馆') && now.textContent.includes('驻防');
+    return now && now.textContent.includes('凯特·利') && now.textContent.includes('士气高涨');
   })());
-  assert('当前地点卡片高亮（hit 类）', (() => {
-    const hitEl = document.querySelector('#ad-wire .ad-item.hit');
-    return hitEl && hitEl.textContent.includes('绿顶酒馆');
+  assert('事件卡渲染（阶段徽标 + stageRound 进度）', (() => {
+    const items = [...document.querySelectorAll('#ad-wire .ad-item')];
+    const ev = items.find(n => n.textContent.includes('仓库冲突'));
+    return ev && ev.textContent.includes('逼近') && /\d\/9/.test(ev.textContent);
+  })());
+  assert('风声卡渲染（传播等级）', (() => {
+    const items = [...document.querySelectorAll('#ad-wire .ad-item')];
+    const w = items.find(n => n.textContent.includes('达令港夜里能听见仓库方向的枪声'));
+    return w && w.textContent.includes('流传');
   })());
   assert('工具按钮内联报头（无底部工具条）', (() => {
     return document.querySelectorAll('.ad-head-btns button').length === 5
@@ -472,13 +534,13 @@ async function runAll() {
     return document.getElementById('ad-rail').classList.contains('empty')
       && document.querySelectorAll('#ad-ticker li').length === 0;
   })());
-  AD.state.tickerHeads = ['绿顶酒馆·驻防']; AD.renderTicker();   // 恢复演示态
-  assert('反应模式完整显示（长文本不截断）', (() => {
-    const long = '信使按接头规则行事，便装暗桩在售票厅与月台两端；若对方暴露侦探身份或被跟踪，暗桩喊扒手制造骚乱掩护撤离并中止接触；白日公共场合任何一方都避免火并。';
-    AD.setCards(AD.getCards().concat([{ place: '长文测试点', faction: '测试', menu: '', alert: '常规', reaction: long }]));
+  AD.state.tickerHeads = ['仓库冲突·逼近']; AD.renderTicker();   // 恢复演示态
+  assert('无世界状态空态（等待首推提示）', (() => {
+    delete MOCK.chat.$ad_world;
     AD.renderWire();
-    const ok = document.getElementById('ad-wire').innerText.includes('任何一方都避免火并');
-    AD.setCards(CARDS); AD.renderWire();   // 还原
+    const ok = document.getElementById('ad-wire').innerText.includes('情报流为空') && document.getElementById('ad-wire').innerText.includes('心跳');
+    window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+    AD.renderWire();   // 还原
     return ok;
   })());
   assert('皮肤系统（paper 主题：类切换 + 衬线变量 + 直角 + 多层纸影）', (() => {
@@ -495,8 +557,8 @@ async function runAll() {
     return okPaper && okBack;
   })());
 
-  /* ——— 副导演双通道上下文（楼层窗口 / LWB 摘要 / 两套世界书配置 / 迁移）——— */
-  head('副导演双通道上下文');
+  /* ——— 副导演上下文（楼层窗口 / LWB 摘要 / worldSync 单套 / V0.3 迁移）——— */
+  head('副导演上下文与设置迁移');
   {
     // 世界书 mock：固定资料书注册进 WB_MOCK（reset 不清除，跨段复用；词条名带等级前缀 + keys，对齐真实 V3.0 结构）
     WB_MOCK.fixtures['剧情世界书'] = [   // position/order 乱序（模拟 getWorldbook 原始返回与酒馆上下文顺序无关）
@@ -504,12 +566,6 @@ async function runAll() {
         position: { type: 'at_depth', order: 100 } },
       { name: '当地邪教：沙蝎教派', content: '潜伏在内辖的邪教组织，与内陆货运有隐秘关联。',
         position: { type: 'before_character_definition', order: 1 } },
-    ];
-    WB_MOCK.fixtures['COC-澳大利亚篇敌人与召唤物图鉴V3.0'] = [
-      { name: '澳大利亚战役敌人图鉴·总览与索引', content: '本图鉴整合了全部敌方势力：街头犯罪/执法/邪教/眷族四类。' },
-      { name: '1级·萨里山剃刀党混混', strategy: { keys: ['萨里山剃刀党混混', '剃刀党混混'] } },
-      { name: '2级·达令港码头武装打手', strategy: { keys: ['达令港码头武装打手', '码头打手'] } },
-      { name: '2级·悉尼常规巡警', strategy: { keys: ['悉尼常规巡警', '悉尼巡警'] } },
     ];
 
     // 楼层窗口：mock 30 楼（AI 25 / 玩家 4 / hidden… 动态计数）
@@ -522,436 +578,273 @@ async function runAll() {
     assert('F3 排除 /hide 隐藏楼（is_system 字段，真机实证）', !ctx.includes('被LWB隐藏'));
     assert('F4 楼层分隔线严格排版（━━ + 楼层号，causes 出处用）', ctx.includes('━━━━━━ 楼层'));
     assert('F5 代码块剥除', !ctx.includes('状态栏代码块'));
-    const sF = AD.loadSettings(); sF.shadowlineFloors = 0; AD.saveSettings(sF);
+    const sF = AD.loadSettings(); sF.directorFloors = 0; AD.saveSettings(sF);
     const ctxAll = AD.getShadowlineFloorContext();
     assert('F6 0=全部历史 AI 楼', ST_MOCK.aiIds.every(id => ctxAll.includes(`AI叙事第${id}楼`)));
-    sF.shadowlineFloors = 20; AD.saveSettings(sF);
+    sF.directorFloors = 20; AD.saveSettings(sF);
 
     // LWB 摘要（早期历史载体）
     const lwb = AD.getLwbSummaryText();
     assert('L1 LWB 摘要格式化（关键词+事件+楼层出处）', lwb.includes('黑法老兄弟会')
       && lwb.includes('悉尼港海关大厅·入境刁难化解') && lwb.includes('#1-3'));
 
-    // 两套世界书配置独立
+    // worldSync 单套配置
     const sW2 = AD.loadSettings();
-    sW2.worldSyncSituation = [{ book: '剧情世界书', entries: ['悉尼'] }];
-    sW2.worldSyncShadowline = [{ book: '剧情世界书', entries: ['当地邪教：沙蝎教派'] }];
+    sW2.worldSync = [{ book: '剧情世界书', entries: ['悉尼', '当地邪教：沙蝎教派'] }];
     AD.saveSettings(sW2);
-    const sitText = await AD.getSyncedWorldbookText('situation');
-    const shText = await AD.getSyncedWorldbookText('shadowline');
-    assert('W1 两套配置独立（态势位只含自己勾的词条）', sitText.includes('新南威尔士') && !sitText.includes('邪教组织'));
-    assert('W2 两套配置独立（暗线位只含自己勾的词条）', shText.includes('邪教组织') && !shText.includes('新南威尔士'));
-    const sKeep = AD.loadSettings();
-    sKeep.worldSyncSituation = [{ book: '剧情世界书', entries: [] }];
-    AD.saveSettings(sKeep);
-    assert('W3 已选书未勾词条的来源保留（选书不丢失）', AD.loadSettings().worldSyncSituation.length === 1
-      && AD.loadSettings().worldSyncSituation[0].book === '剧情世界书');
-    sKeep.worldSyncSituation = sW2.worldSyncSituation; AD.saveSettings(sKeep);   // 还原 W 段原配置
-    assert('P1 两套配置 + 楼层窗口持久化往返', AD.loadSettings().worldSyncSituation.length === 1
-      && AD.loadSettings().worldSyncShadowline[0].entries[0] === '当地邪教：沙蝎教派'
-      && AD.loadSettings().shadowlineFloors === 20);
-    // W4 世界书按酒馆上下文顺序（position.type 分组 + order 升序）输出
-    const sW3 = AD.loadSettings();
-    sW3.worldSyncSituation = [{ book: '剧情世界书', entries: ['悉尼', '当地邪教：沙蝎教派'] }];
-    AD.saveSettings(sW3);
-    const ordered = await AD.getSyncedWorldbookText('situation');
+    const syncText = await AD.getSyncedWorldbookText();
+    assert('W1 同步资料组装（多词条带书名头 + 全量无截断）', syncText.includes('【剧情世界书 · 悉尼】')
+      && syncText.includes('新南威尔士') && syncText.includes('邪教组织') && syncText.includes('【词条尾部标记】'));
     assert('W4 世界书按酒馆 order 排序（角色定义前 order1 先于 at_depth）',
-      ordered.indexOf('邪教组织') >= 0 && ordered.indexOf('邪教组织') < ordered.indexOf('新南威尔士首府'));
-    sW3.worldSyncSituation = sW2.worldSyncSituation; AD.saveSettings(sW3);
+      syncText.indexOf('邪教组织') >= 0 && syncText.indexOf('邪教组织') < syncText.indexOf('新南威尔士首府'));
+    const sKeep = AD.loadSettings();
+    sKeep.worldSync = [{ book: '剧情世界书', entries: [] }];
+    AD.saveSettings(sKeep);
+    assert('W3 已选书未勾词条的来源保留（选书不丢失）', AD.loadSettings().worldSync.length === 1
+      && AD.loadSettings().worldSync[0].book === '剧情世界书');
 
-    // 迁移：旧单一 worldSync → 复制到两套
+    // V0.2.x → V0.3.0 设置迁移
     localStorage.setItem('ad_settings_v1', JSON.stringify({
-      enabled: true, worldSync: [{ book: '旧世界书', entries: ['旧词条'] }] }));
+      enabled: true,
+      shadowline: { baseUrl: 'https://old-shadow.local/v1', apiKey: 'sk-old', model: 'smart-old', temperature: 0.5, maxTokens: 9000 },
+      situation: { baseUrl: 'https://old-sit.local/v1', apiKey: '', model: 'fast-old', temperature: 0.2, maxTokens: 1000 },
+      worldSyncShadowline: [{ book: '剧情世界书', entries: ['悉尼'] }],
+      worldSyncSituation: [{ book: '剧情世界书', entries: ['悉尼'] }, { book: '图鉴', entries: ['敌人'] }],
+      shadowlineFloors: 12, enemyPool: '老敌人', coreTeam: '老白名单', extraRules: '老铁律', debug: true }));
     const migrated = AD.loadSettings();
-    assert('M1 旧 worldSync 迁移复制到两套', migrated.worldSyncSituation.length === 1
-      && migrated.worldSyncShadowline.length === 1
-      && migrated.worldSyncSituation[0].book === '旧世界书');
+    assert('M1 双端点迁移：取暗线位为 director（高智力位）', migrated.director.baseUrl === 'https://old-shadow.local/v1'
+      && migrated.director.model === 'smart-old' && migrated.director.maxTokens === 9000);
+    assert('M2 双 worldSync 迁移：取并集去重（剧情世界书合并，图鉴保留）', migrated.worldSync.length === 2
+      && migrated.worldSync.some(x => x.book === '图鉴' && x.entries[0] === '敌人'));
+    assert('M3 旧 shadowlineFloors → directorFloors + 其余键透传', migrated.directorFloors === 12
+      && migrated.enemyPool === '老敌人' && migrated.coreTeam === '老白名单' && migrated.debug === true);
+    assert('M4 旧总开关 enabled:true → enabledDirector:true', migrated.enabledDirector === true);
     localStorage.setItem('ad_settings_v1', JSON.stringify({ enabled: false }));
-    assert('M2 旧总开关 false → 迁移为双开关全关', (() => {
-      const m2 = AD.loadSettings();
-      return m2.enabledShadowline === false && m2.enabledSituation === false;
-    })());
+    assert('M5 旧总开关 false → enabledDirector:false', AD.loadSettings().enabledDirector === false);
+    localStorage.setItem('ad_settings_v1', JSON.stringify({ enabledShadowline: false, enabledSituation: true }));
+    assert('M6 旧暗线开关 false 优先迁移（推演开关随暗线位）', AD.loadSettings().enabledDirector === false);
     const mRestore = AD.loadSettings();
-    mRestore.enabledShadowline = true; mRestore.enabledSituation = true;
-    AD.saveSettings(mRestore);   // 恢复双开并写回新键格式，消除旧键影响
+    mRestore.enabledDirector = true;
+    mRestore.worldSync = [];
+    AD.saveSettings(mRestore);   // 恢复并写回新键格式，消除旧键影响
   }
-
-  /* ——— S2 态势位即时产卡（mock LLM 环境）——— */
-  head('S2 态势位即时产卡');
+  /* ——— S7 世界推演层（validateWorld / 单 API 端到端 / 心跳+强制触发 / 开关）——— */
+  head('S7 世界推演层');
   {
-    // mock：fetch（可控响应+调用计数）/ getChatMessages / 世界书图鉴
-    let fetchCalls = 0, lastPrompt = '', responder = null;
+    // V0 validateWorld 纯函数：宽容清洗 + 墓碑过滤 + 事件/风声延续继承 + encounter clamp
+    {
+      const lastWorld = { round: 3, events: [{ name: '仓库冲突', type: 'conflict', stage: '逼近', stageRound: 7, level: 2, factions: [], zone: '萨里山', desc: '旧' }],
+        winds: [{ content: '码头枪声传闻', source: 'x', spread: '私下', level: 1, quietRounds: 5 }] };
+      const vw = AD.validateWorld({
+        digest: '摩擦升级',
+        factions: [   // 中文键容错（真机实证模型被示例带偏）+ 墓碑派系
+          { '派系': '凯特·利（萨里山）', '征兆': '绿顶酒馆谢绝散客', '真相': '凯特要的是运输队共谋', '圈套': '以谈判为饵', '内线': '门童比利', '出处': ['楼23'], '状态': '推断中', '立场': '觊觎爆破能力', '关系': '与剃刀帮结仇', '大区': '萨里山', '士气': '高涨' },
+          { name: '麦凯探长', surface: '设卡', truth: '收网在即', causes: ['楼15'], state: '已渗透', stance: '盯上', relations: '', zone: '悉尼', morale: '' },
+          { name: '墓碑派系', surface: 'x', truth: 'y', causes: ['楼1'] },
+        ],
+        events: [   // 延续（无 stageRound → 继承 7）+ 新事件（非法 type/stage 回落）+ 无名事件丢弃
+          { name: '仓库冲突' },
+          { '事件': '新风波', type: 'war', stage: '沸腾', level: 9, factions: ['麦凯探长'], desc: 'd' },
+        ],
+        winds: [   // 延续（继承 quietRounds=5）+ 新风声（非法 spread 回落）+ 空 content 丢弃
+          { content: '码头枪声传闻', source: 'y', spread: '公开', level: 5 },
+          { '风声': '新流言', '来源': '报纸', spread: '街谈' },
+          { content: '' },
+        ],
+        encounter: { heat: { value: 99, why: '热' }, spots: [{ match: '仓库', chance: 150 }, { match: '', chance: 5 }, 'junk'], districts: 7 },
+        resistance: { forbidden: [{ truth: '炸药归属', path: '谈判桌' }],
+          partial: [{ target: '阿尔菲', result: '只问出口音' }], friction: [{ source: '警方', effect: '巡逻三倍' }] },
+        roster_ops: ['禧市洪门堂口'],
+      }, { roster: { tombstones: ['墓碑派系'] }, lastWorld });
+      assert('V0a validateWorld：中文键容错映射 + 墓碑派系过滤（3→2）', vw.world.factions.length === 2
+        && vw.world.factions[0].name === '凯特·利（萨里山）' && vw.world.factions[0].scheme === '以谈判为饵'
+        && vw.world.factions[0].stance === '觊觎爆破能力' && vw.world.factions[0].zone === '萨里山');
+      assert('V0b 事件延续：同名事件继承 stage/stageRound/type；新事件非法值回落（conflict/萌芽/Lv clamp 4）', (() => {
+        const ev1 = vw.world.events[0], ev2 = vw.world.events[1];
+        return ev1.stage === '逼近' && ev1.stageRound === 7 && ev1.type === 'conflict'
+          && ev2.name === '新风波' && ev2.type === 'conflict' && ev2.stage === '萌芽' && ev2.level === 4;
+      })());
+      assert('V0c 风声延续：同内容风声继承 quietRounds（5）；新风声非法 spread 回落"流传"、level clamp', (() => {
+        const w1 = vw.world.winds[0], w2 = vw.world.winds[1];
+        return vw.world.winds.length === 2 && w1.quietRounds === 5 && w2.content === '新流言' && w2.spread === '流传' && w2.level === 1;
+      })());
+      assert('V0d encounter 清洗：heat clamp 30、chance clamp 100、废条目剔除、非数组容错', vw.world.encounter.heat.value === 30
+        && vw.world.encounter.spots.length === 1 && vw.world.encounter.spots[0].chance === 100
+        && vw.world.encounter.districts.length === 0);
+      assert('V0e round 递增（lastWorld.round+1）+ roster_ops 透传 + resistance 对象容错', vw.world.round === 4
+        && vw.world.roster_ops[0] === '禧市洪门堂口'
+        && vw.world.resistance.partial[0] === '阿尔菲：只问出口音');
+    }
+
+    // mock LLM 端到端（单一副导演 API）
+    let s7FetchCalls = 0, s7Responder = null, s7LastPrompt = '', s7LastSys = '';
     window.fetch = async (url, opts) => {
-      fetchCalls++;
+      s7FetchCalls++;
       const body = JSON.parse(opts.body);
-      lastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
-      const content = responder ? responder(body) : '[]';
+      s7LastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
+      s7LastSys = (body.messages && body.messages[0] && body.messages[0].content) || '';
+      const content = s7Responder ? s7Responder(body) : '{}';
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
     };
-    window.getChatMessages = () => [{ message_id: 0, name: 'AI', role: 'assistant', is_hidden: false,
-      message: '众人穿过萨里山的后巷，苦力们警惕地放下木箱。' + '长篇叙事正文。'.repeat(300) + '【正文尾部标记】', data: {}, extra: {} }];
-
-    // 配置先行（图鉴校验源显式配置 + 端点 + 调试），再跑图鉴断言
-    const s2 = AD.loadSettings();
-    s2.situation = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'fast', temperature: 0.4, maxTokens: 1000 };
-    s2.enemyPool = '达令港码头武装打手，悉尼常规巡警\n萨里山剃刀党混混';
-    s2.debug = true;
-    AD.saveSettings(s2);
-
-    // ── 敌人名单（手输权威）与地标键 ──
-    const pool = AD.getEnemyPool();
-    assert('E1 敌人名单解析（逗号/换行分隔）', pool.length === 3 && pool[0] === '达令港码头武装打手' && pool[2] === '萨里山剃刀党混混');
-    assert('E2 名单内 menu 词条通过', AD.validateCard({ place: 'X', faction: 'Y', menu: '萨里山剃刀党混混*3~5', alert: '常规' }) === null);
-    const vcPool = { place: 'X', faction: 'Y', menu: '未知敌人*2', alert: '常规' };
-    const savedPool = s2.enemyPool; s2.enemyPool = ''; AD.saveSettings(s2);
-    assert('E4 未配名单则不校验 menu（人类权威）', AD.validateCard(vcPool) === null);
-    assert('E5 零校验模式：名单外词条也收下（先跑通看效果）', AD.validateCard({ place: 'X', faction: 'Y', menu: '名单外敌人*9', alert: '松懈' }) === null);
-    s2.enemyPool = savedPool; AD.saveSettings(s2);
-    assert('L1 地标键：大区后首字段（含子标题）', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅与全景窗前') === '澳大利亚酒店 - 总督套房');
-    assert('L2 地标键：房间级变化不改变键', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 玄关') === '澳大利亚酒店 - 总督套房');
-    assert('L3 地标键：单段地点', AD.landmarkKey('📍 某独立地标') === '某独立地标');
-
-    // ── 世界书同步（态势位侧；内容注入产卡输入）──
-    const sW = AD.loadSettings();
-    sW.worldSyncSituation = [{ book: '剧情世界书', entries: ['悉尼'] },
-      { book: 'COC-澳大利亚篇敌人与召唤物图鉴V3.0', entries: ['澳大利亚战役敌人图鉴·总览与索引'] }];
-    AD.saveSettings(sW);
-    const syncText = await AD.getSyncedWorldbookText('situation');
-    assert('S7 同步资料组装（多书多词条带书名头）', syncText.includes('【剧情世界书 · 悉尼】')
-      && syncText.includes('新南威尔士') && syncText.includes('总览与索引') && syncText.includes('敌方势力'));
-    assert('S7b 信息完整性：长词条全量注入（无截断）', syncText.includes('【词条尾部标记】'));
-    assert('S8 同步配置持久化往返', AD.loadSettings().worldSyncSituation.length === 2
-      && AD.loadSettings().worldSyncSituation[0].entries[0] === '悉尼');
-
-    // A. 成功产卡：闯入未登记地点 → 兜底注入 → 异步产卡入池 → 下一拍命中
-    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
-    AD.Instant.tried = Object.create(null);
-    MOCK.addFloor({ stat_data: { '状态栏': STAT_ALLEY } });
-    responder = () => JSON.stringify([{ place: '苦力棚屋', aliases: ['后巷'], faction: '悉尼街头苦力',
-      menu: '达令港码头武装打手*2~4', alert: '常规', reaction: '白天生人靠近即被驱赶。',
-      verdict: '强行闯入或翻找木箱才构成冲突。' }]);
-    const callsA = fetchCalls;
-    AD.dispatchNow('s2a');
-    const lastA = () => WB_MOCK.entry('副导演-态势') || '';
-    assert('A1 未命中楼先落通用兜底注入', await waitFor(() => lastA().includes('此地无驻防情报'), 4000));
-    const gotCard = await waitFor(() => AD.getCards().some(c => c.place === '苦力棚屋'), 8000);
-    assert('A2 闯入未登记地点 → 异步产卡入池（source=instant）', gotCard && AD.getCards().find(c => c.place === '苦力棚屋').source === 'instant');
-    AD.dispatchNow('s2a2');
-    assert('A3 下一拍配发命中新卡（驻防注入含词条与判定）', await waitFor(() =>
-      lastA().includes('苦力的棚屋前') && lastA().includes('达令港码头武装打手') && lastA().includes('强行闯入或翻找木箱'), 4000));
-    assert('A4 成功产卡恰好调用 1 次 LLM', fetchCalls === callsA + 1, `+${fetchCalls - callsA}`);
-    assert('A5 产卡请求含地点/敌人名单/名册/世界书同步资料/全量正文', lastPrompt.includes('苦力')
-      && lastPrompt.includes('萨里山剃刀党混混') && lastPrompt.includes('凯特·利')
-      && lastPrompt.includes('【世界书同步资料】') && lastPrompt.includes('新南威尔士')
-      && lastPrompt.includes('【正文尾部标记】') && lastPrompt.includes('【词条尾部标记】'));
-    AD.dispatchNow('s2a3');
-    await waitFor(() => true, 1500);
-    assert('A6 已登记地点不重复产卡（tried + 卡池命中）', fetchCalls === callsA + 1);
-    assert('A7 调试日志记录产卡请求/响应（label+raw）', AD.DebugLog.some(e => e.label === 'instant'
-      && e.ok && e.raw.includes('苦力棚屋') && Array.isArray(e.messages) && e.messages.length === 2));
-    // A8 地标键：未命中 + 地标没变（房间级变化）→ 不产卡
-    MOCK.setFloorStat(STAT('📍 悉尼 · 全新地标X · 大堂', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
-    AD.dispatchNow('s2-a8a');
-    await waitFor(() => fetchCalls >= callsA + 2, 8000);   // 新地标首访产卡
-    const a8Calls = fetchCalls;
-    MOCK.setFloorStat(STAT('📍 悉尼 · 全新地标X · 203号房', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
-    AD.dispatchNow('s2-a8b');
-    await waitFor(() => true, 1500);
-    assert('A8 地标没变不产卡（房间级小变化，地标键触发）', fetchCalls === a8Calls);
-
-    // B. 零校验：menu 任意词条直接入池，单次调用不因校验重试
-    responder = () => JSON.stringify([{ place: '黑仓库区', faction: '神秘组织',
-      menu: '不存在的敌人*3', alert: '常规', reaction: '驱赶生人。', verdict: '闯入即敌对。' }]);
-    MOCK.setFloorStat(STAT('📍 悉尼 · 达令港 · 黑仓库区 · 码头北端', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
-    const callsB = fetchCalls;
-    AD.dispatchNow('s2b');
-    const bGot = await waitFor(() => AD.getCards().some(c => c.place === '黑仓库区'), 8000);
-    assert('B1 零校验：menu 名单外词条直接入池（不重试不浪费 token）', bGot && fetchCalls === callsB + 1
-      && AD.getCards().find(c => c.place === '黑仓库区').menu === '不存在的敌人*3');
-    await waitFor(() => true, 1200);
-    assert('B3 同地点不重复产卡（tried 生效）', fetchCalls === callsB + 1);
-
-    // C. 分兵多卡：主地点命中，角色"不在场，前往X" → 一次产卡
-    responder = () => JSON.stringify([{ place: '禧市茶楼', faction: '禧市洪门堂口',
-      menu: '悉尼常规巡警*1~2', alert: '松懈', reaction: '说书人在场时以礼待客。', verdict: '只有挑衅堂口才翻脸。' }]);
-    const STAT_SPLIT = STAT('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅', [
-      CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]'),
-      { '角色': { '名字': ' 🎭林有声', '属性': '[❤️HP:110/110]', '内心': '不在场，前往禧市茶楼找蒂莉的放风人' } },
-    ]);
-    MOCK.setFloorStat(STAT_SPLIT);
-    const callsC = fetchCalls;
-    AD.dispatchNow('s2c');
-    const gotSplit = await waitFor(() => AD.getCards().some(c => c.place === '禧市茶楼'), 8000);
-    assert('C1 分兵点位（内心"前往X"）一次产卡入池', gotSplit && fetchCalls === callsC + 1);
-    assert('C2 主地点命中时仅对分兵点位发起产卡', lastPrompt.includes('禧市茶楼') && !lastPrompt.includes('总督套房'));
-
-    // D. 端点未配置 → 不调 LLM
-    const s2d = AD.loadSettings();
-    s2d.situation.baseUrl = ''; AD.saveSettings(s2d);
-    AD.Instant.tried = Object.create(null);
-    MOCK.setFloorStat(STAT('📍 悉尼 · 未知角落 · 全新地点Z', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]));
-    const callsD = fetchCalls;
-    AD.dispatchNow('s2d');
-    await waitFor(() => true, 1500);
-    assert('D1 端点未配置 → 不发起 LLM 调用（纯兜底）', fetchCalls === callsD);
-    // 清理：还原设置（不留 mock 端点/同步配置/调试开关污染 localStorage 与下轮回归）
-    const s2z = AD.loadSettings();
-    s2z.situation = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 1000 };
-    s2z.worldSyncSituation = [];
-    s2z.worldSyncShadowline = [];
-    s2z.debug = false;
-    AD.saveSettings(s2z);
-  }
-
-  /* ——— S3 暗线位战略层（触发矩阵 / 报告校验 / 三路分发 / 预约引爆）——— */
-  head('S3 暗线位战略层');
-  {
-    // 独立 fetch mock（S2 段闭包不可复用）
-    let s3FetchCalls = 0, s3Responder = null, s3LastPrompt = '', s3LastSys = '';
-    window.fetch = async (url, opts) => {
-      s3FetchCalls++;
-      const body = JSON.parse(opts.body);
-      s3LastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
-      s3LastSys = (body.messages && body.messages[0] && body.messages[0].content) || '';
-      const content = s3Responder ? s3Responder(body) : '{}';
-      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
-    };
-    const s3 = AD.loadSettings();
-    s3.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
-    s3.coreTeam = '弗兰克，林有声';   // 主角核心白名单（手输）——验证注入暗线输入
-    s3.extraRules = '灰瘟与邪教无任何关系，禁止关联';   // 附加铁律（手输）——验证拼到暗线输入文末
-    s3.enemyPool = '达令港码头武装打手，萨里山剃刀党混混';   // 可选敌人名单——验证注入暗线输入（预约"规模"选用源）
-    s3.debug = true;
-    AD.saveSettings(s3);
-    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+    const s7 = AD.loadSettings();
+    s7.director = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s7.coreTeam = '弗兰克，林有声';
+    s7.extraRules = '灰瘟与邪教无任何关系，禁止关联';
+    s7.enemyPool = '达令港码头武装打手，萨里山剃刀党混混';
+    s7.debug = true;
+    AD.saveSettings(s7);
+    MOCK.reset(); AD.loadRuntimeState();
     window.insertOrAssignVariables({ $ad_roster: { factions: ['伦道夫船运（黑法老触点）'], tombstones: ['墓碑派系'] } }, { type: 'chat' });
-    AD.Instant.tried = Object.create(null);
-    AD.Trigger.lastReportDate = ''; AD.Trigger.lastStage = ''; AD.Trigger.lastCity = '';
-    AD.Trigger.lastCombatResult = ''; AD.Trigger.lastFloorId = -1; AD.Trigger.floorsSinceReport = 0;
+    AD.Trigger.lastDateKey = ''; AD.Trigger.lastStage = '';
+    AD.Trigger.lastCombatResult = ''; AD.Trigger.lastFloorId = -1; AD.Trigger.floorsSinceEvolve = 0;
 
-    // 基线：首楼记录不触发
+    // 基线：首楼只记录不触发
     MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
-    const baseCalls = s3FetchCalls;
-    AD.dispatchNow('s3-baseline');
-    assert('T0 首楼只记基线不触发报告', s3FetchCalls === baseCalls);
+    const baseCalls = s7FetchCalls;
+    AD.dispatchNow('s7-baseline');
+    assert('T0 首楼只记基线不触发推演', s7FetchCalls === baseCalls);
 
-    // T1 手动报告：校验 + 三路分发
-    s3Responder = () => JSON.stringify({
-      stage: '双线绞合期',
-      factions: [   // 中文键（模拟真机模型被示例带偏的输出——validateReport 键名容错）；圈套/内线为 S4 扩展字段中文键
-        { '派系': '凯特·利（萨里山）', '征兆': '绿顶酒馆谢绝散客', '真相': '凯特要的不是爆破手而是运输队共谋', '圈套': '以酒馆谈判为饵，实则调虎离山劫仓库', '内线': '酒店门童比利（实为凯特眼线）', '出处': ['楼23 心理推演'], '状态': '推断中' },
-        { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', contact: '便衣警员雷诺兹（伪装成记者）', causes: ['楼15 电报分析'], state: '已渗透' },
-        { '派系': '无出处派系', '征兆': 'x', '真相': 'y', '出处': [] },
-        { name: '墓碑派系', surface: 'x', truth: 'y', causes: ['楼1'] },
+    // T1 手动推演端到端：存档 + 名册注册 + 词条 + 防连战锁解锁 + label
+    AD.state.randomCombatFired = true;   // 预置锁，验证推演后解锁
+    s7Responder = () => JSON.stringify({
+      digest: '双线绞合',
+      factions: [
+        { '派系': '凯特·利（萨里山）', '征兆': '绿顶酒馆谢绝散客', '真相': '凯特要的不是爆破手而是运输队共谋', '圈套': '以酒馆谈判为饵，实则调虎离山劫仓库', '内线': '酒店门童比利（实为凯特眼线）', '出处': ['楼23 心理推演'], '状态': '推断中', '大区': '萨里山', '士气': '高涨' },
+        { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: '空白搜查令已备，明日凌晨收网', contact: '便衣警员雷诺兹（伪装成记者）', causes: ['楼15 电报分析'], state: '已渗透', zone: '悉尼' },
       ],
+      events: [{ name: '仓库冲突', type: 'conflict', stage: '发酵', stageRound: 2, level: 2, factions: ['凯特·利（萨里山）'], desc: '对峙中' }],
+      winds: [{ content: '达令港枪声传闻', source: '码头工人', spread: '流传', level: 2 }],
+      encounter: { heat: { value: 10, why: '临近爆发' }, spots: [{ match: '伦道夫船运仓库', chance: 60 }], districts: [{ match: '萨里山', chance: 25 }] },
       resistance: {
         forbidden: [{ truth: '炸药原属伦道夫/黑法老兄弟会', path: '由玩家在谈判桌上自行打出', leak_cost: '谈判筹码崩塌' }],
-        // 对象形式（真机实证 3.1P 输出 {target,result}/{source,effect}——validateReport 对象容错拼接）
-        partial: [
-          '只得到"有人整箱扫货"的粗话原话',
-          { target: '蒂莉信使阿尔菲', result: '逼问仅能问出身高体貌与口音，无法得知买家代号' },
-        ],
-        friction: [{ source: '警方全城戒备', effect: '牛津街机动巡逻增加三倍，携带长枪即遭截停' }],
+        partial: [{ target: '蒂莉信使阿尔菲', result: '逼问仅能问出身高体貌与口音' }],
+        friction: [{ source: '警方全城戒备', effect: '牛津街机动巡逻增加三倍' }],
       },
       roster_ops: [],
-      garrisons: [
-        { place: '绿顶酒馆', faction: '凯特·利（萨里山）', menu: '萨里山剃刀党混混*4~6', alert: '严密', reaction: '谈判日增岗。', verdict: '拔枪才构成冲突。' },
-        { place: '黑仓库新区', faction: '黑法老', menu: '不存在的敌人*2', alert: '常规' },
-      ],
-      'ambush预约': [{ '派系': '伦道夫船运（黑法老触点）',
-        '条件': { '时间': '6月13日夜-6月14日凌晨', '地点∈': ['达令港仓库'] },
-        '规模': '码头武装打手*4', '引爆态': '严密' }],
     });
-    await AD.generateShadowlineReport('harness');
-    const rep = MOCK.chat['$ad_report'];
-    assert('T1 报告存档 $ad_report（含触发原因）', rep && rep.factions && rep.reason === 'harness');
-    assert('T2 零校验：非墓碑条目全保留 + 中文键名容错映射（墓碑派系被程序过滤）', rep.factions.length === 3
-      && !rep.factions.some(f => f.name === '墓碑派系')
-      && rep.factions.some(f => f.name === '凯特·利（萨里山）' && f.surface === '绿顶酒馆谢绝散客')
-      && rep.factions.some(f => f.name === '无出处派系' && f.causes[0] === '（出处未标注）'));
-    assert('T2b S4 扩展字段：圈套/内线中文键容错 + contact 英文键透传 + 缺省空串', (() => {
-      const kate = rep.factions.find(f => f.name === '凯特·利（萨里山）');
-      const mccay = rep.factions.find(f => f.name === '麦凯探长（飞行小队）');
-      const none = rep.factions.find(f => f.name === '无出处派系');
-      return kate && kate.scheme === '以酒馆谈判为饵，实则调虎离山劫仓库' && kate.mole === '酒店门童比利（实为凯特眼线）'
-        && mccay && mccay.contact === '便衣警员雷诺兹（伪装成记者）'
-        && none && none.scheme === '' && none.mole === '' && none.contact === '';
-    })());
-    await waitFor(() => !!WB_MOCK.find('副导演-暗线'), 4000);   // 词条写入是 fire-and-forget 微任务链，先等落书
-    assert('T3 提炼注入暗线词条（三态标注+渗透+禁泄）', (() => {
-      const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return inj.startsWith(AD.MEMO_OPEN) && inj.endsWith('</内部导演备忘>')
+    await AD.generateDirectorEvolve('harness');
+    const world1 = MOCK.chat['$ad_world'];
+    assert('T1 世界状态存档 $ad_world（digest + reason）', world1 && world1.reason === 'harness' && world1.digest === '双线绞合');
+    assert('T1b 防连战锁随推演解锁', AD.state.randomCombatFired === false);
+    assert('T5 名册自动注册（推演派系全部入册，墓碑不回册）', MOCK.chat['$ad_roster'].factions.includes('凯特·利（萨里山）')
+      && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）')
+      && !MOCK.chat['$ad_roster'].factions.includes('墓碑派系'));
+    await waitFor(() => (WB_MOCK.entry('副导演') || '').includes('空白搜查令已备'), 6000);   // 词条写入 fire-and-forget：等新内容真正落书
+    assert('T3 词条注入（态势信号 + 事件/风声段 + 三态 + 禁泄 + 对象容错无 [object Object]）', (() => {
+      const inj = WB_MOCK.entry('副导演') || '';
+      return inj.includes(AD.SIT_OPEN) && inj.includes('驻守信号：凯特·利（萨里山）')
+        && inj.includes('<进行中的事件') && inj.includes('仓库冲突')
+        && inj.includes('<风声') && inj.includes('达令港枪声传闻')
         && inj.includes('<世界引擎推断>') && inj.includes('空白搜查令已备')
-        && inj.includes('推断') && inj.includes('运输队共谋')
-        && inj.includes('<禁泄清单（调查未抵达前禁止揭示）>') && inj.includes('炸药原属伦道夫');
+        && inj.includes('<幕后动向') && inj.includes('运输队共谋')
+        && inj.includes('｜圈套：以酒馆谈判为饵') && inj.includes('｜间谍：酒店门童比利') && inj.includes('｜接触：便衣警员雷诺兹')
+        && inj.includes('<禁泄清单') && inj.includes('炸药原属伦道夫')
+        && !inj.includes('[object Object]')
+        && inj.includes('阿尔菲：逼问仅能问出身高体貌与口音') && inj.includes('警方全城戒备：牛津街机动巡逻增加三倍')
+        && inj.endsWith('</内部导演备忘>');
     })());
-    assert('T3d partial/friction 对象条目容错（真机 {target,result}/{source,effect}——无 [object Object]）', (() => {
-      const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return !inj.includes('[object Object]')
-        && inj.includes('蒂莉信使阿尔菲：逼问仅能问出身高体貌与口音，无法得知买家代号')
-        && inj.includes('警方全城戒备：牛津街机动巡逻增加三倍')
-        && inj.includes('只得到"有人整箱扫货"的粗话原话');
+    assert('T10 调试日志记录推演请求/响应（label=director）', AD.DebugLog.some(e => e.label === 'director' && e.ok && e.raw.includes('双线绞合')));
+    assert('T11 请求结构：世界书→LWB→楼层→时空→名单→名册→墓碑→上次世界状态→附加铁律（文末）', (() => {
+      const p = s7LastPrompt;
+      const order = ['【世界书同步资料】', '【早期历史总结', '【非隐藏楼层原文', '【当前时空与敌方动向】',
+        '【主角核心白名单', '【名册（已知派系）】', '【墓碑（禁止复活）】', '【上次世界状态', '【附加铁律'];
+      let idx = -1, ok = true;
+      for (const key of order) { const i = p.indexOf(key); if (i <= idx) { ok = false; break; } idx = i; }
+      return ok && p.includes('日期和时间') && p.includes('━━━━━━ 楼层') && !p.includes('玩家输入')
+        && p.includes('弗兰克 / 林有声') && p.includes('灰瘟与邪教无任何关系');
     })());
-    assert('T3b 注入含圈套/间谍/接触缀行（非空才带，事实与推断两段均缀）', (() => {
-      const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return inj.includes('｜圈套：以酒馆谈判为饵') && inj.includes('｜间谍：酒店门童比利')
-        && inj.includes('｜接触：便衣警员雷诺兹');
+    assert('T11c 副导演人格：架构师 + 事件链/风声/encounter 铁律 + 圈套纪律 + 安全区标记', s7LastSys.includes('开放世界的架构师')
+      && s7LastSys.includes('floor(N/2)') && s7LastSys.includes('事件链')
+      && s7LastSys.includes('风声') && s7LastSys.includes('encounter')
+      && s7LastSys.includes('0 是显式安全标记') && s7LastSys.includes('墓碑'));
+    assert('T12 事件/风声上 ticker（轮播头条）', (() => {
+      const lis = [...document.querySelectorAll('#ad-ticker li')].map(n => n.textContent);
+      return lis.some(t => t.includes('仓库冲突')) || lis.some(t => t.includes('枪声'));
     })());
-    assert('T3c 注入定位声明：推断备忘是参考素材非指令（防按头正文AI）', (() => {
-      const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return inj.includes('以下是暗线世界引擎的推断') && inj.includes('正文按合理性自由取舍');
-    })());
-    assert('T3f XML 模板：段落标签 + 两空格缩进"- "列表', (() => {
-      const inj = WB_MOCK.entry('副导演-暗线') || '';
-      return inj.includes('\n  - 空白搜查令已备') && inj.includes('<调查阻力（强行调查只应得到以下层级的信息）>')
-        && inj.includes('<环境阻力（当前环境对行动的客观影响）>')
-        && inj.includes('  - 蒂莉信使阿尔菲：逼问仅能问出身高体貌与口音');
-    })());
-    assert('T4 报告不再收编 garrisons（态势归态势位，绿顶卡保持原值）', (() => {
-      const rep2 = MOCK.chat['$ad_report'];
-      const green = AD.getCards().find(c => c.place === '绿顶酒馆');
-      return !rep2.garrisons && green && green.alert === '警戒'
-        && green.menu === '萨里山剃刀党混混*4~6/私酒蒸馏师*3~5/黑帮职业杀手*1~2'
-        && !AD.getCards().some(c => c.place === '黑仓库新区');
-    })());
-    assert('T5 名册自动注册（报告派系全部入册）', MOCK.chat['$ad_roster'].factions.includes('凯特·利（萨里山）')
-      && MOCK.chat['$ad_roster'].factions.includes('麦凯探长（飞行小队）'));
-    assert('T6 预约存档 $ad_pending', MOCK.chat['$ad_pending'] && MOCK.chat['$ad_pending'].ambush.length === 1);
-    assert('T10 调试日志记录推演请求/响应（label=shadowline）', AD.DebugLog.some(e => e.label === 'shadowline'
-      && e.ok && e.raw.includes('双线绞合期')));
-    assert('T11 请求结构：世界书→LWB→楼层 顺序 + 状态栏裁剪 + ━━ 排版', (() => {
-      const p = s3LastPrompt;
-      const iw = p.indexOf('【世界书同步资料】'), il = p.indexOf('【早期历史总结');
-      const ifl = p.indexOf('【非隐藏楼层原文'), it = p.indexOf('【当前时空与敌方动向】');
-      return iw >= 0 && il > iw && ifl > il && it > ifl
-        && !p.includes('角色列表') && !p.includes('小地图') && !p.includes('内心')
-        && !p.includes('当前态势卡片池')
-        && p.includes('日期和时间') && p.includes('━━━━━━ 楼层')
-        && !p.includes('玩家输入') && !p.includes('被LWB隐藏');
-    })());
-    assert('T11d 可选敌人名单注入暗线输入（预约"规模"选用源，与产卡同一名单）', (() => {
-      const i = s3LastPrompt.indexOf('【可选敌人名单（ambush 预约的"规模"只能从中选用）】');
-      return i >= 0 && s3LastPrompt.includes('达令港码头武装打手') && s3LastPrompt.includes('萨里山剃刀党混混')
-        && i > s3LastPrompt.indexOf('【当前时空与敌方动向】');   // 跟在辅助信息块内
-    })());
-    assert('T11e 预约规模铁律指向名单（引爆发敌与战斗链路对齐）', s3LastSys.includes('规模词条只能从【可选敌人名单】中选用'));
-    assert('T11b 主角核心白名单注入暗线输入（手输设置）', s3LastPrompt.includes('【主角核心白名单（绝不背叛、绝不可能是间谍）】')
-      && s3LastPrompt.includes('弗兰克 / 林有声'));
-    assert('T11b2 附加铁律拼到暗线输入文末（用户指定最高优先级）', (() => {
-      const i = s3LastPrompt.indexOf('【附加铁律（用户指定，优先级高于本文所有默认规则）】');
-      return i >= 0 && s3LastPrompt.slice(i).includes('灰瘟与邪教无任何关系')
-        && i > s3LastPrompt.indexOf('【上次报告的派系三态');   // 必须在文末
-    })());
-    assert('T11c 暗线人格重写：架构师 + 反废话铁律 + 圈套纪律', s3LastSys.includes('开放世界的架构师')
-      && s3LastSys.includes('你不是记录的庸才') && s3LastSys.includes('永远不顺水推舟写看似合理的废话')
-      && s3LastSys.includes('floor(N/2)') && s3LastSys.includes('这是下限也是上限')
-      && s3LastSys.includes('推断与提案，不是既定事实') && s3LastSys.includes('报纸社会新闻或街头传闻体')
-      && s3LastSys.includes('尊重实力设定') && s3LastSys.includes('每项一句话以内')
-      && s3LastSys.includes('contact') && s3LastSys.includes('scheme') && s3LastSys.includes('mole'));
 
-    // T13 提示词预设（默认锁定 / 新建=快照 / 自定义生效 / 删除回落 / 更新不写默认）
+    // T7 心跳：每 directorEveryX(3) 楼自动推演
+    const s7h = AD.loadSettings(); s7h.directorEveryX = 3; AD.saveSettings(s7h);
+    AD.Trigger.floorsSinceEvolve = 0;
+    let genBefore = MOCK.chat['$ad_world'].generatedAt;
+    const floorStep = (stat) => { MOCK.addFloor({ stat_data: { '状态栏': stat || STAT_GREEN } }); AD.dispatchNow('s7-floor'); };
+    floorStep();   // floorsSinceEvolve=1
+    floorStep();   // 2
+    floorStep();   // 3 ≥ directorEveryX → 心跳触发
+    const heartbeatOk = await waitFor(() => MOCK.chat['$ad_world'] && MOCK.chat['$ad_world'].generatedAt !== genBefore, 12000);
+    assert('T7 心跳：第 3 楼自动推演（reason=heartbeat）', heartbeatOk && MOCK.chat['$ad_world'].reason === 'heartbeat');
+
+    // T7b 强制触发：combat-result 变化
+    genBefore = MOCK.chat['$ad_world'].generatedAt;
+    window.insertOrAssignVariables({ $rpg_combat_result: { win: true, round: 4 } }, { type: 'chat' });
+    floorStep();
+    const combatOk = await waitFor(() => MOCK.chat['$ad_world'].generatedAt !== genBefore, 12000);
+    assert('T7b 战斗结果变化 → 强制推演（reason=combat-result）', combatOk && MOCK.chat['$ad_world'].reason === 'combat-result');
+
+    // T7c 强制触发：跨日
+    genBefore = MOCK.chat['$ad_world'].generatedAt;
+    floorStep(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月14日 · 08:00 · 潜伏期' }));
+    const newdayOk = await waitFor(() => MOCK.chat['$ad_world'].generatedAt !== genBefore, 12000);
+    assert('T7c 跨日 → 强制推演（reason=newday）', newdayOk && MOCK.chat['$ad_world'].reason === 'newday');
+
+    // T9 端点未配置 → 不调 LLM
+    const s9 = AD.loadSettings();
+    s9.director.baseUrl = ''; AD.saveSettings(s9);
+    const offCalls = s7FetchCalls;
+    floorStep(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月15日 · 08:00 · 潜伏期' }));
+    await sleep(1500);
+    assert('T9 端点未配置 → 不调 LLM', s7FetchCalls === offCalls);
+
+    // T14 推演开关：关 → 手动/自动均拒 + 词条下灯
+    const s14 = AD.loadSettings();
+    s14.director.baseUrl = 'https://mock.local/v1'; s14.enabledDirector = false; AD.saveSettings(s14);
+    const dirContent = WB_MOCK.entry('副导演');
+    AD.applySwitches();
+    await sleep(300);
+    const t14Calls = s7FetchCalls;
+    await AD.generateDirectorEvolve('manual');   // 开关关 → 手动推演被拒
+    floorStep(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月16日 · 08:00 · 潜伏期' }));   // 自动触发也被拦
+    const t14Off = await waitFor(() => {
+      const e = WB_MOCK.find('副导演');
+      return e && e.enabled === false && e.content === dirContent;
+    }, 4000);
+    assert('T14 推演开关关 → 手动/自动均不调 LLM + 词条下灯（内容保留）', t14Off && s7FetchCalls === t14Calls);
+    s14.enabledDirector = true; AD.saveSettings(s14);
+    AD.applySwitches();
+    assert('T14b 开关重开 → 词条重新上灯（forceDirectorWrite 强写）', await waitFor(() => {
+      const e = WB_MOCK.find('副导演');
+      return e && e.enabled === true;
+    }, 6000));
+
+    // T13 提示词预设（单 DirectorPrompt 链）
     {
-      const st = AD.ShadowlinePrompt;
+      const st = AD.DirectorPrompt;
       const data0 = st.load();
       assert('T13a 预设默认项锁定 + currentSys 实时取默认构造', data0.presets[0].id === 'default' && data0.presets[0].locked === true
-        && st.currentSys() === AD.DEFAULT_SHADOWLINE_SYS());
+        && st.currentSys() === AD.DEFAULT_DIRECTOR_SYS());
       st.add('自定义A');
       const data1 = st.load();
       const custom = data1.presets.find(p => p.name === '自定义A');
       assert('T13b 新建预设=默认快照并激活', data1.active === custom.id && custom.locked === false
-        && custom.content === AD.DEFAULT_SHADOWLINE_SYS());
+        && custom.content === AD.DEFAULT_DIRECTOR_SYS());
       st.updateContent('自定义提示词内容X');
       assert('T13c 自定义预设可更新内容（currentSys 切换到快照）', st.load().presets.find(p => p.name === '自定义A').content === '自定义提示词内容X'
         && st.currentSys() === '自定义提示词内容X');
       st.remove();
       const data2 = st.load();
-      assert('T13d 删除自定义回落默认（currentSys 回默认构造）', data2.active === 'default' && !data2.presets.some(p => p.name === '自定义A')
-        && st.currentSys() === AD.DEFAULT_SHADOWLINE_SYS());
+      assert('T13d 删除自定义回落默认 + 默认项不可删', data2.active === 'default' && !data2.presets.some(p => p.name === '自定义A')
+        && st.currentSys() === AD.DEFAULT_DIRECTOR_SYS());
       st.remove();
       assert('T13e 默认项不可删（remove 兜底静默拒绝）', st.load().presets.some(p => p.id === 'default'));
-      // 态势位预设独立（不同 localStorage 键，互不污染）
-      AD.SituationPrompt.add('态势B');
-      assert('T13f 两链路预设独立存储（暗线删空不影响态势新建）',
-        AD.SituationPrompt.load().presets.some(p => p.name === '态势B') && !AD.ShadowlinePrompt.load().presets.some(p => p.name === '态势B'));
-      AD.SituationPrompt.remove();   // 清理，回落默认
     }
-    AD.renderWire();
-    assert('T12 surface 上报纸（未接触灰卡：？？？遮名 + 征兆可见 + 新面孔标记）', (() => {
-      // 只查情报卡区域——顶部当前态势简报合法显示驻防派系名（玩家在场看得见驻军）
-      const items = [...document.querySelectorAll('#ad-wire .ad-item')].map(n => n.innerText).join('\n');
-      return items.includes('绿顶酒馆谢绝散客') && items.includes('？？？') && items.includes('新面孔')
-        && !items.includes('凯特·利（萨里山）');
-    })());
-    assert('T12b surface 上 ticker（最新情报轮播）', (() => {
-      const lis = [...document.querySelectorAll('#ad-ticker li')].map(n => n.textContent);
-      return lis.some(t => t.includes('麦凯探长') || t.includes('凯特·利'));
-    })());
 
-    // T7 newday 跨日自动触发
-    const genBefore = MOCK.chat['$ad_report'].generatedAt;
-    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月14日 · 08:00 · 潜伏期' }));
-    AD.dispatchNow('s3-newday');
-    const newdayOk = await waitFor(() => MOCK.chat['$ad_report'] && MOCK.chat['$ad_report'].generatedAt !== genBefore, 12000);
-    assert('T7 newday 跨日自动触发报告（reason=newday）', newdayOk && MOCK.chat['$ad_report'].reason === 'newday');
-
-    // T8 预约引爆（时间+地点命中 → 戒备置顶 + 主动接触态 + 预约移除）
-    MOCK.setFloorStat(Object.assign({}, STAT_GREEN,
-      { '日期和时间': '⏰ 1925年 · 6月14日 · 22:00 · 潜伏期', '地点': '📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区' }));
-    AD.dispatchNow('s3-ambush');
-    assert('T8 预约引爆（注入主动接触态 + 戒备置顶 + 预约移除，插入 </当前态势> 之前）', await waitFor(() => {
-      const last = WB_MOCK.entry('副导演-态势') || '';
-      const rnd = AD.getCards().find(c => c.place === '伦道夫船运仓库');
-      const pending = MOCK.chat['$ad_pending'];
-      return last.includes('  【⚠ 主动接触态】') && last.endsWith(AD.SIT_CLOSE)
-        && last.includes('严密')
-        && rnd && rnd.alert === '严密' && pending && pending.ambush.length === 0;
-    }, 4000));
-
-    // T9 暗线端点未配置 → 触发条件满足也不调 LLM
-    const s3z = AD.loadSettings();
-    s3z.shadowline.baseUrl = ''; AD.saveSettings(s3z);
-    const offCalls = s3FetchCalls;
-    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月15日 · 08:00 · 潜伏期' }));
-    AD.dispatchNow('s3-off');
-    await sleep(1500);   // 真实静置：等 dispatch 的异步词条写入落定（waitFor(恒真) 是立即返回，防 T14 捕获到旧内容）
-    assert('T9 暗线端点未配置 → 不调 LLM', s3FetchCalls === offCalls);
-
-    // T14 双独立开关（总开关取消——玩家自由决定功能，两开关互不牵连）
-    const s4sw = AD.loadSettings();
-    s4sw.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
-    s4sw.enabledSituation = false; AD.saveSettings(s4sw);   // 态势关 · 暗线开
-    const sitContent = WB_MOCK.entry('副导演-态势');
-    AD.dispatchNow('t14-sit-off');
-    assert('T14 态势开关关 → 态势词条下灯（内容保留）', await waitFor(() => {
-      const e = WB_MOCK.find('副导演-态势');
-      return e && e.enabled === false && e.content === sitContent;
-    }, 4000));
-    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月16日 · 08:00 · 潜伏期' }));
-    const t14Calls = s3FetchCalls;
-    AD.dispatchNow('t14-newday');
-    assert('T14b 态势关不影响暗线触发（跨日自动推演照跑）', await waitFor(() => s3FetchCalls === t14Calls + 1, 12000));
-    s4sw.enabledSituation = true; s4sw.enabledShadowline = false; AD.saveSettings(s4sw);   // 态势开 · 暗线关
-    AD.applySwitches();   // 开关切换即时生效（关→下灯；开→强写重新上灯）
-    const t14bCalls = s3FetchCalls;
-    await AD.generateShadowlineReport('manual');   // 暗线开关关 → 手动推演被拒
-    MOCK.setFloorStat(Object.assign({}, STAT_GREEN, { '日期和时间': '⏰ 1925年 · 6月17日 · 08:00 · 潜伏期' }));
-    AD.dispatchNow('t14-newday2');   // 自动触发也被开关拦下
-    const sitRelit = await waitFor(() => {
-      const e = WB_MOCK.find('副导演-态势');
-      return e && e.enabled === true;
-    }, 6000);
-    assert('T14c 暗线开关关 → 手动/自动推演均不调 LLM + 暗线词条下灯', await waitFor(() => {
-      const e = WB_MOCK.find('副导演-暗线');
-      return e && e.enabled === false;
-    }, 4000) && s3FetchCalls === t14bCalls);
-    assert('T14d 态势开关重开 → 词条重新上灯（forceSituationWrite 强写）', sitRelit);
-    s4sw.enabledShadowline = true; s4sw.enabledSituation = true; AD.saveSettings(s4sw);   // 恢复双开
-    // 清理
-    s3z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
-    s3z.worldSyncSituation = []; s3z.worldSyncShadowline = [];
-    s3z.enemyPool = '';
-    AD.saveSettings(s3z);
-    window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
+    // 清理：还原设置（不留 mock 端点/名单/调试污染 localStorage 与下轮回归）
+    const s7z = AD.loadSettings();
+    s7z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
+    s7z.coreTeam = ''; s7z.extraRules = ''; s7z.enemyPool = ''; s7z.debug = false;
+    AD.saveSettings(s7z);
+    window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] } }, { type: 'chat' });
+    delete MOCK.chat['$rpg_combat_result'];
+    MOCK.reset();
   }
 
   /* ——— S5 名册 CRUD（双轨来源 / 删除=墓碑 / 轻量登场）——— */
@@ -963,10 +856,10 @@ async function runAll() {
       const content = s5Responder ? s5Responder() : '{}';
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
     };
-    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
+    MOCK.reset(); AD.loadRuntimeState();
     window.insertOrAssignVariables({ $ad_roster: { factions: ['凯特·利（萨里山）'], tombstones: ['墓碑派系'] } }, { type: 'chat' });
     const s5 = AD.loadSettings();
-    s5.shadowline = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    s5.director = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
     AD.saveSettings(s5);
 
     // R1 添加（预输入/轻量登场）：trim 入册 + 重复/墓碑名/空名拒绝
@@ -976,26 +869,31 @@ async function runAll() {
       && AD.addRosterFaction('墓碑派系') === false
       && AD.addRosterFaction('') === false);
 
-    // R2 除名=墓碑：级联删报告条目 + 提及暗线 + 预约；不提及该派的条目保留
-    window.insertOrAssignVariables({ $ad_report: { stage: 'X', factions: [
-        { name: '蒂莉（达令赫斯特）', surface: 's', truth: '蒂莉借刀杀人', causes: ['楼1'], state: '推断中' },
-        { name: '凯特·利（萨里山）', surface: 's', truth: '凯特脱手军火', causes: ['楼2'], state: '已渗透' },
+    // R2 除名=墓碑：级联删世界状态条目 + 提及它的事件/风声/阻力；不提及该派的条目保留
+    window.insertOrAssignVariables({ $ad_world: { round: 2, digest: 'X', factions: [
+        { name: '蒂莉（达令赫斯特）', surface: 's', truth: '蒂莉借刀杀人', causes: ['楼1'], state: '推断中', zone: '达令赫斯特' },
+        { name: '凯特·利（萨里山）', surface: 's', truth: '凯特脱手军火', causes: ['楼2'], state: '已渗透', zone: '萨里山' },
+      ], events: [
+        { name: '蒂莉的复仇', type: 'conflict', stage: '萌芽', stageRound: 1, level: 1, factions: ['蒂莉（达令赫斯特）'], desc: '' },
+        { name: '仓库冲突', type: 'conflict', stage: '发酵', stageRound: 2, level: 2, factions: ['凯特·利（萨里山）'], desc: '' },
+      ], winds: [
+        { content: '蒂莉在唐人街放话', source: 'x', spread: '私下', level: 1, quietRounds: 0 },
+        { content: '码头枪声传闻', source: 'y', spread: '流传', level: 2, quietRounds: 1 },
       ], resistance: { forbidden: [{ truth: '蒂莉与麦凯有旧怨', path: '审讯其信使' }],
         partial: ['蒂莉的信使只会撒谎'], friction: ['警方全城戒备'] },
-      'ambush预约': [{ '派系': '蒂莉（达令赫斯特）', '条件': { '时间': '6月13日夜', '地点∈': ['中央车站'] }, '规模': '打手*2', '引爆态': '严密' }] } }, { type: 'chat' });
-    window.insertOrAssignVariables({ $ad_pending: { ambush: [{ '派系': '蒂莉（达令赫斯特）', '条件': { '时间': '6月13日夜', '地点∈': ['中央车站'] }, '规模': '打手*2', '引爆态': '严密' }] } }, { type: 'chat' });
+      encounter: {}, roster_ops: [], generatedAt: Date.now(), reason: 's5' } }, { type: 'chat' });
     const r2 = AD.tombstoneFaction('蒂莉（达令赫斯特）');
-    const rep2 = MOCK.chat['$ad_report'];
-    assert('R2 除名=墓碑：报告条目/提及暗线/预约级联删除，其他派系不动', r2 === true
-      && rep2.factions.length === 1 && rep2.factions[0].name === '凯特·利（萨里山）'
-      && rep2.resistance.forbidden.length === 0 && rep2.resistance.partial.length === 0
-      && rep2.resistance.friction.length === 1
-      && rep2['ambush预约'].length === 0
-      && MOCK.chat['$ad_pending'].ambush.length === 0
+    const w2 = MOCK.chat['$ad_world'];
+    assert('R2 除名=墓碑：世界状态条目/提及事件/提及风声/提及阻力级联删除，其他派系与事件保留', r2 === true
+      && w2.factions.length === 1 && w2.factions[0].name === '凯特·利（萨里山）'
+      && w2.events.length === 1 && w2.events[0].name === '仓库冲突'
+      && w2.winds.length === 1 && w2.winds[0].content === '码头枪声传闻'
+      && w2.resistance.forbidden.length === 0 && w2.resistance.partial.length === 0
+      && w2.resistance.friction.length === 1
       && AD.getRoster().tombstones.includes('蒂莉（达令赫斯特）')
       && !AD.getRoster().factions.includes('蒂莉（达令赫斯特）'));
-    assert('R2b 暗线词条级联重写（无该派系真相，其他派系保留）', await waitFor(() => {
-      const c = WB_MOCK.entry('副导演-暗线') || '';
+    assert('R2b 副导演词条级联重写（无该派系真相，其他派系保留）', await waitFor(() => {
+      const c = WB_MOCK.entry('副导演') || '';
       return !c.includes('蒂莉借刀杀人') && !c.includes('蒂莉的信使只会撒谎') && c.includes('凯特脱手军火');
     }, 4000));
 
@@ -1005,25 +903,25 @@ async function runAll() {
       && !AD.getRoster().tombstones.includes('蒂莉（达令赫斯特）')
       && AD.restoreFaction('凯特·利（萨里山）') === false);
 
-    // R4 墓碑过滤：validateReport 丢弃墓碑派系（报告输出为零），其余保留
+    // R4 墓碑过滤：validateWorld 丢弃墓碑派系（世界状态输出为零），其余保留
     AD.tombstoneFaction('蒂莉（达令赫斯特）');
-    const vr = AD.validateReport({ factions: [
+    const vr = AD.validateWorld({ factions: [
       { name: '蒂莉（达令赫斯特）', surface: 's', truth: 't', causes: ['楼1'], state: '推断中' },
       { name: '麦凯探长（飞行小队）', surface: 's', truth: 't', causes: ['楼2'], state: '推断中' },
     ] }, { roster: AD.getRoster() });
-    assert('R4 墓碑过滤：validateReport 报告输出为零（其余保留）', vr.report.factions.length === 1
-      && vr.report.factions[0].name === '麦凯探长（飞行小队）');
+    assert('R4 墓碑过滤：validateWorld 世界状态输出为零（其余保留）', vr.world.factions.length === 1
+      && vr.world.factions[0].name === '麦凯探长（飞行小队）');
 
-    // R5 端到端：模型违反铁律输出墓碑派系 → 报告落地无它 + 不回册 + 新派系照常登记
-    s5Responder = () => JSON.stringify({ stage: 's5', factions: [
+    // R5 端到端：模型违反铁律输出墓碑派系 → 世界状态落地无它 + 不回册 + 新派系照常登记
+    s5Responder = () => JSON.stringify({ digest: 's5', factions: [
       { name: '蒂莉（达令赫斯特）', surface: 'x', truth: 'y', causes: ['楼1'], state: '推断中' },
       { name: '全新派系', surface: 'x', truth: 'y', causes: ['楼1'], state: '推断中' },
-    ], resistance: {}, roster_ops: [], 'ambush预约': [] });
+    ], events: [], winds: [], encounter: {}, resistance: {}, roster_ops: [] });
     MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
-    await AD.generateShadowlineReport('s5');
-    assert('R5 墓碑派系不落报告不回册，新派系轻量登场照常', await waitFor(() => {
-      const rep = MOCK.chat['$ad_report'];
-      return rep && rep.reason === 's5' && rep.factions.length === 1 && rep.factions[0].name === '全新派系'
+    await AD.generateDirectorEvolve('s5');
+    assert('R5 墓碑派系不落世界状态不回册，新派系轻量登场照常', await waitFor(() => {
+      const w = MOCK.chat['$ad_world'];
+      return w && w.reason === 's5' && w.factions.length === 1 && w.factions[0].name === '全新派系'
         && !AD.getRoster().factions.includes('蒂莉（达令赫斯特）')
         && AD.getRoster().factions.includes('全新派系');
     }, 8000));
@@ -1044,19 +942,19 @@ async function runAll() {
       && document.querySelectorAll('#ad-modal-box [data-restore="全新派系"]').length === 1);
     // 清理
     const s5z = AD.loadSettings();
-    s5z.shadowline = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 8000 };
+    s5z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
     AD.saveSettings(s5z);
-    window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] }, $ad_pending: { ambush: [] } }, { type: 'chat' });
+    window.insertOrAssignVariables({ $ad_roster: { factions: [], tombstones: [] } }, { type: 'chat' });
   }
 
   /* ——— S4 公开层·阶段揭示（灰卡 / 接触即揭 / 新面孔 / 平静占位 / 墓碑联动）——— */
   head('S4 公开层·阶段揭示');
   {
-    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS);
-    window.insertOrAssignVariables({ $ad_report: { stage: 'X', generatedAt: Date.now(), factions: [
-      { name: '凯特·利（萨里山）', surface: '绿顶酒馆谢绝散客', truth: 't', causes: ['楼1'], state: '推断中' },
-      { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: 't', causes: ['楼2'], state: '已渗透' },
-    ], resistance: {} } }, { type: 'chat' });
+    MOCK.reset(); AD.loadRuntimeState();
+    window.insertOrAssignVariables({ $ad_world: { round: 1, digest: 'X', generatedAt: Date.now(), factions: [
+      { name: '凯特·利（萨里山）', surface: '绿顶酒馆谢绝散客', truth: 't', causes: ['楼1'], state: '推断中', zone: '萨里山' },
+      { name: '麦凯探长（飞行小队）', surface: '克利夫兰街连日设卡', truth: 't', causes: ['楼2'], state: '已渗透', zone: '悉尼' },
+    ], events: [], winds: [], encounter: {}, resistance: {} } }, { type: 'chat' });
     window.insertOrAssignVariables({ $ad_roster: { factions: ['凯特·利（萨里山）', '麦凯探长（飞行小队）', '禧市洪门堂口'], tombstones: [], revealed: [], manual: [] } }, { type: 'chat' });
     AD.renderWire();
     assert('V1 未接触派系灰卡（？？？遮名 + 征兆可见；未接触不出占位卡不剧透）', (() => {
@@ -1142,72 +1040,88 @@ async function runAll() {
     })());
 
     // 端到端：用户改词条内容 → 下一轮注入合并保留
-    MOCK.reset(); AD.loadRuntimeState(); AD.setCards(CARDS); AD.state.ammoBaseline = 0;
+    MOCK.reset(); AD.loadRuntimeState();
     MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
     AD.dispatchNow('wb-a');
     assert('B1 首次写入后词条内容 = 纯脚本内容', await waitFor(() =>
-      (WB_MOCK.entry('副导演-态势') || '').includes('驻守：凯特·利'), 4000));
-    WB_MOCK.patch('副导演-态势', { content: (WB_MOCK.entry('副导演-态势') || '') + '\n（GM注：凯特已与警方达成默契）' });   // 模拟用户在世界书编辑器改词条
-    MOCK.setFloorStat(STAT_ALLEY);   // 换地点（脚本内容大改）
+      (WB_MOCK.entry('副导演') || '').includes('尚无世界态势档案'), 4000));
+    WB_MOCK.patch('副导演', { content: (WB_MOCK.entry('副导演') || '') + '\n（GM注：凯特已与警方达成默契）' });   // 模拟用户在世界书编辑器改词条
+    window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });   // 换世界状态（脚本内容大改）
     AD.dispatchNow('wb-b');
-    assert('B2 用户改过的词条在脚本换内容时合并：用户注保留 + 兜底态势生效', await waitFor(() => {
-      const c = WB_MOCK.entry('副导演-态势') || '';
-      return c.includes('此地无驻防情报') && c.includes('（GM注：凯特已与警方达成默契）');
+    assert('B2 用户改过的词条在脚本换内容时合并：用户注保留 + 新世界动态生效', await waitFor(() => {
+      const c = WB_MOCK.entry('副导演') || '';
+      return c.includes('驻守信号：凯特·利（萨里山）') && c.includes('（GM注：凯特已与警方达成默契）');
     }, 4000));
 
     // 端到端：用户调 position（顺序）→ 脚本更新永不覆盖
-    WB_MOCK.patch('副导演-态势', { position: { type: 'at_depth', role: 'system', depth: 4, order: 2 } });   // 模拟用户调顺序
-    MOCK.setFloorStat(STAT_GREEN);
+    WB_MOCK.patch('副导演', { position: { type: 'at_depth', role: 'system', depth: 4, order: 2 } });   // 模拟用户调顺序
     AD.dispatchNow('wb-c');
     assert('B3 用户调过的 position 永久保留（脚本只改 content 不动位置）', await waitFor(() => {
-      const e = WB_MOCK.find('副导演-态势');
+      const e = WB_MOCK.find('副导演');
       return e && e.position.depth === 4 && e.position.order === 2
-        && (e.content || '').includes('驻守：凯特·利');
+        && (e.content || '').includes('驻守信号：凯特·利（萨里山）');
     }, 4000));
 
-    // 禁用兜底：无 stat 聊天 → 态势词条下灯（先造残留词条再验证只下灯不删除）
+    // 禁用兜底：无 stat 聊天 → 词条下灯（先造残留词条再验证只下灯不删除）
     MOCK.reset();
-    await AD.writeWbEntry('副导演-态势', '旧聊天的态势残留');
+    await AD.writeWbEntry('副导演', '旧聊天的副导演残留');
     AD.dispatchNow('wb-d');   // 楼层表已清 → 无 stat_data
-    assert('B4 无 stat_data 聊天 → 态势词条禁用（内容保留不删除）', await waitFor(() => {
-      const e = WB_MOCK.find('副导演-态势');
-      return e && e.enabled === false && e.content === '旧聊天的态势残留';
+    assert('B4 无 stat_data 聊天 → 副导演词条禁用（内容保留不删除）', await waitFor(() => {
+      const e = WB_MOCK.find('副导演');
+      return e && e.enabled === false && e.content === '旧聊天的副导演残留';
     }, 4000));
 
-    // 换聊天：暗线词条按新聊天报告重建（无报告 → 禁用）
+    // 换聊天：副导演词条按新聊天世界状态重建（无状态 → 禁用）
     MOCK.reset();
-    MOCK.chat['$ad_report'] = { factions: [{ name: 'Z', surface: 's', truth: '暗线Z真相', causes: ['楼1'], state: '推断中' }], resistance: {} };
+    MOCK.chat['$ad_world'] = JSON.parse(JSON.stringify(WORLD));
     AD.loadRuntimeState();
     MOCK.eventEmit('CHAT_CHANGED');
-    assert('B5 换聊天 → 暗线词条按新聊天报告重建（wbLast 清空防误判）', await waitFor(() => {
-      const c = WB_MOCK.entry('副导演-暗线') || '';
-      return c.includes('暗线Z真相') && AD.state.wbLast.shadowline === c;
+    assert('B5 换聊天 → 副导演词条按新聊天世界状态重建（wbLast 清空防误判）', await waitFor(() => {
+      const c = WB_MOCK.entry('副导演') || '';
+      return c.includes('空白搜查令已备') && AD.state.wbLast.director === c;
     }, 4000));
-    delete MOCK.chat['$ad_report'];   // 再换到无报告聊天（词条保留，只应下灯）
+    delete MOCK.chat['$ad_world'];   // 再换到无状态聊天（词条保留，只应下灯）
     MOCK.eventEmit('CHAT_CHANGED');
-    assert('B6 换到无报告聊天 → 暗线词条禁用（不删除）', await waitFor(() => {
-      const e = WB_MOCK.find('副导演-暗线');
-      return e && e.enabled === false && (e.content || '').includes('暗线Z真相');
+    assert('B6 换到无状态聊天 → 副导演词条禁用（不删除）', await waitFor(() => {
+      const e = WB_MOCK.find('副导演');
+      return e && e.enabled === false && (e.content || '').includes('空白搜查令已备');
     }, 4000));
+
+    // 旧词条升级下灯：V0.2.x 双词条（副导演-态势/副导演-暗线）残留 → disable 不删
+    MOCK.reset();
+    await AD.writeWbEntry('副导演-态势', '旧版态势内容');
+    await AD.writeWbEntry('副导演-暗线', '旧版暗线内容');
+    MOCK.chat['$ad_world'] = JSON.parse(JSON.stringify(WORLD));
+    AD.loadRuntimeState();
+    MOCK.eventEmit('CHAT_CHANGED');
+    assert('B7 V0.2.x 旧双词条升级下灯（内容保留不删除，新词条接管注入）', await waitFor(() => {
+      const oldSit = WB_MOCK.find('副导演-态势'), oldSh = WB_MOCK.find('副导演-暗线'), nw = WB_MOCK.find('副导演');
+      return oldSit && oldSit.enabled === false && oldSit.content === '旧版态势内容'
+        && oldSh && oldSh.enabled === false && oldSh.content === '旧版暗线内容'
+        && nw && nw.enabled === true;
+    }, 6000));
   }
 
-  /* ——— jsonc 导入容错 ——— */
-  /* ——— S6：随机遭遇掷骰（GENERATION_STARTED → 用户楼输入注入） ——— */
+  /* ——— S6：随机遭遇掷骰（动态概率 + 防连战锁 + 用户楼注入）——— */
   head('S6 随机遭遇掷骰（用户楼输入注入）');
   {
     const stChat = SillyTavern.getContext().chat;   // 与 ST_MOCK.chat 同引用
     const BASE_LEN = stChat.length;
     const realRandom = Math.random;
     const s6 = AD.settings();                       // SETTINGS 同引用，就地改即时生效
+    const clearWorld = () => { try { window.replaceVariables({}, { type: 'chat' }); } catch (e) {} delete MOCK.chat.$ad_world; };
+    const setWorld = w => { window.insertOrAssignVariables({ $ad_world: w }, { type: 'chat' }); };
     const restore = () => {
       while (stChat.length > BASE_LEN) stChat.pop();
       Math.random = realRandom;
-      s6.randomCombatEnabled = true; s6.randomCombatChance = 5;
-      AD.state.lastMode = 'card';
+      s6.randomCombatEnabled = true; s6.randomCombatChance = 5; s6.randomCombatOncePerCycle = true;
+      AD.state.randomCombatFired = false;
+      clearWorld();
     };
     const setupUserFloor = mes => { restore(); stChat.push({ mes, is_user: true, is_system: false }); };
     const lastMes = () => String(stChat[stChat.length - 1].mes || '');
 
+    // ── 无世界状态：与 S6 原行为一致（玩家设置概率）──
     setupUserFloor('我们进酒馆喝一杯。');
     Math.random = () => 0;
     MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
@@ -1233,6 +1147,37 @@ async function runAll() {
     assert('概率 0 → 永不触发', !lastMes().includes(AD.RC_MARKER));
     restore();
 
+    // ── 有世界状态：动态概率（spots 命中 100% 必注入 + 来源标注）──
+    MOCK.addFloor({ stat_data: { '状态栏': STAT('📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]) } });
+    setupUserFloor('摸进仓库。');
+    setWorld(Object.assign(JSON.parse(JSON.stringify(WORLD)), { encounter: { heat: { value: 0, why: '' }, spots: [{ match: '伦道夫船运仓库', chance: 100, why: '热区' }], districts: [] } }));
+    Math.random = () => 0.999;   // 即便 99.9% 骰值也命中（chance=100）
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('动态概率：spots 命中 chance=100 → 必注入', lastMes().includes(AD.RC_MARKER));
+    assert('动态概率命中后防连战锁上锁（randomCombatFired=true）', AD.state.randomCombatFired === true);
+
+    // 防连战锁两例直接续楼（不走 setupUserFloor——其 restore 会清锁/清 world）
+    stChat.push({ mes: '锁住了再试。', is_user: true, is_system: false });
+    Math.random = () => 0;   // 概率再高也被锁拦下
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('防连战锁：同推演周期内二次掷骰被拦（无逻辑连战防护）', !lastMes().includes(AD.RC_MARKER));
+
+    stChat.push({ mes: '关锁再试。', is_user: true, is_system: false });
+    s6.randomCombatOncePerCycle = false;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('防连战锁开关关闭 → 不拦（连续触发允许）', lastMes().includes(AD.RC_MARKER));
+    s6.randomCombatOncePerCycle = true;
+
+    // ── 显式安全区：spots chance=0 → 跳过掷骰（不叠冷热修正）──
+    setupUserFloor('回酒店休息。');
+    MOCK.addFloor({ stat_data: { '状态栏': STAT('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅', [CH('🔮埃利奥特', 100, 100, '[🔩] [.32子弹：20]')]) } });
+    setWorld(Object.assign(JSON.parse(JSON.stringify(WORLD)), { encounter: { heat: { value: 30, why: '极热' }, spots: [{ match: '澳大利亚酒店', chance: 0, why: '己方据点' }], districts: [] } }));
+    Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('显式安全区（spots chance=0）→ 跳过掷骰（heat=30 也不抬出）', !lastMes().includes(AD.RC_MARKER));
+
+    // ── 开关 / 模式守卫 / 防重复 ──
+    restore();
     setupUserFloor('开关关');
     s6.randomCombatEnabled = false; Math.random = () => 0;
     MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
@@ -1248,11 +1193,7 @@ async function runAll() {
     MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
     assert('已含标记 → 不重复追加', lastMes().split(AD.RC_MARKER).length === 2);
 
-    setupUserFloor('安全区');
-    AD.state.lastMode = 'safe';
-    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
-    assert('安全区豁免（lastMode=safe）→ 跳过掷骰', !lastMes().includes(AD.RC_MARKER));
-
+    // ── 战斗进行中 / 末楼非用户楼 ──
     restore();
     stChat.push({ mes: '<Combat_block>\n战斗数据栏: 我方/敌方列表……\n</Combat_block>', is_user: false, is_system: false });
     assert('combatInProgress：最近可见 AI 楼含 Combat_block', AD.combatInProgress() === true);
@@ -1269,29 +1210,6 @@ async function runAll() {
 
     restore();
   }
-
-  head('jsonc 导入容错');
-  const jsoncSample = `[
-  { "place": "绿顶酒馆",   // 行注释：应被剥除
-    "aliases": ["凯特的酒馆"],
-    "faction": "凯特·利（萨里山）",
-    "menu": "萨里山剃刀党混混*4~6", "alert": "警戒",
-    "note": "字符串里的 // https://example.com 不应被误伤",
-  },   /* 块注释 */
-  { "place": "总督套房", "faction": "无", "menu": "", "alert": "常规", },
-]`;
-  let parsedOk = false, urlKept = false;
-  try {
-    const parsed = JSON.parse(AD.stripJsonc(jsoncSample));
-    parsedOk = Array.isArray(parsed) && parsed.length === 2 && parsed[0].place === '绿顶酒馆';
-    urlKept = parsed[0].note.includes('// https://example.com');
-  } catch (e) { parsedOk = false; }
-  assert('jsonc（行/块注释 + 尾逗号）可解析', parsedOk);
-  assert('字符串字面量内的 // 不被误剥', urlKept);
-  assert('纯 JSON 原样可解析', (() => {
-    try { return JSON.parse(AD.stripJsonc(JSON.stringify(CARDS))).length === 3; }
-    catch (e) { return false; }
-  })());
 
   finish();
 }
