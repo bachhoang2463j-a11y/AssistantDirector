@@ -273,7 +273,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.7（设置 UI 双路分流）', json.content.includes("@version      0.3.7"));
+  assert('版本 v0.3.8（类型表仿世界书行 + 空池提示词瘦身）', json.content.includes("@version      0.3.8"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -498,7 +498,8 @@ async function runAll() {
     && s.randomCombatEnabled === true && s.randomCombatOncePerCycle === true
     && s.randomCombatCooldown === true && s.randomCombatCooldownFloors === 3 && s.directorFloors === 20
     && s.regionalIncidentEnabled === true && s.regionalIncidentChance === 1
-    && s.regionalIncidentDuration === 5 && s.regionalIncidentCooldown === 5 && s.regionalIncidentTypes === '');
+    && s.regionalIncidentDuration === 5 && s.regionalIncidentCooldown === 5
+    && Array.isArray(s.regionalIncidentTypes) && s.regionalIncidentTypes.length === 8);
   s.director.baseUrl = 'https://api.example.com/v1'; s.enabledDirector = false;
   AD.saveSettings(s);
   assert('设置保存到 localStorage 并读回', AD.loadSettings().director.baseUrl === 'https://api.example.com/v1'
@@ -750,6 +751,7 @@ async function runAll() {
     s7.extraRules = '灰瘟与邪教无任何关系，禁止关联';
     s7.enemyPool = '达令港码头武装打手，萨里山剃刀党混混';
     s7.debug = true;
+    s7.regionalIncidentEnabled = false;   // S7 段禁区域事件：floorStep 的 1% 真随机会偶发 busy 顶掉心跳断言（S9 段自行开启）
     AD.saveSettings(s7);
     MOCK.reset(); AD.loadRuntimeState();
     window.insertOrAssignVariables({ $ad_roster: { factions: ['伦道夫船运（黑法老触点）'], tombstones: ['墓碑派系'] } }, { type: 'chat' });
@@ -1409,13 +1411,17 @@ async function runAll() {
   /* ——— S9：区域突发事件（类型表/轮盘/状态机/回执合并/指令注入/总开关）——— */
   head('S9 区域突发事件');
   {
-    // 纯函数：类型表解析
+    // 纯函数：类型表解析（V0.3.8 结构化数组为主；旧版字符串行格式兼容保留）
     const types1 = AD.parseIncidentTypes('治安恶化 | 引导A | 18\n火灾 | 引导B | 14\n\n坏事 | 引导C | abc\n零权 | 引导D | 0');
-    assert('I1 类型表解析（合法行/空行跳过/非法权重跳过/权重0禁用）', types1.length === 2
+    assert('I1 旧版字符串行解析（合法/空行/非法权重/权重0）', types1.length === 2
       && types1[0].type === '治安恶化' && types1[0].weight === 18 && types1[1].type === '火灾');
-    assert('I2 空文本回落默认表（8 类轻量中性，无灾变类）', AD.parseIncidentTypes('').length === 8
-      && AD.parseIncidentTypes('').some(t => t.type === '火灾')
-      && !AD.parseIncidentTypes('').some(t => /雪灾|地震|饥荒|叛乱/.test(t.type)));
+    assert('I2 默认表（结构化 8 类轻量中性，无灾变类；enabled/custom 标记）', (() => {
+      const def = AD.normalizeIncidentTypes(undefined);
+      return def.length === 8 && def.every(t => t.enabled === true && t.custom === false)
+        && def.some(t => t.label === '火灾')
+        && !def.some(t => /雪灾|地震|饥荒|叛乱/.test(t.label))
+        && AD.parseIncidentTypes(def).length === 8;
+    })());
     const picked1 = AD.weightedPickIncident(types1, () => 0);
     const picked2 = AD.weightedPickIncident(types1, () => 0.99);
     assert('I3 权重轮盘（roll 极小取首项 / 极大取尾项）', picked1.type === '治安恶化' && picked2.type === '火灾');
@@ -1541,9 +1547,12 @@ async function runAll() {
     assert('I15 重试优先：pending 存在时跳过掷骰直接触发（概率未中也触发，同类型指令）', retried
       && s9LastPrompt.includes('本轮必须生成区域突发事件') && s9LastPrompt.includes('火灾'));
 
-    // 总开关：掷骰静默但活跃事件状态机照常
-    const s9z = AD.loadSettings();
-    s9z.regionalIncidentEnabled = false; AD.saveSettings(s9z);
+    // 总开关：掷骰静默但活跃事件状态机照常（显式构造活跃事件，防前置异步残留干扰）
+    const wI16 = JSON.parse(JSON.stringify(MOCK.chat['$ad_world']));
+    wI16.incident = { active: true, title: '开关测试', type: '火灾', zone: '', impact: '', duration: 2, cooldown: 0 };
+    window.insertOrAssignVariables({ $ad_world: wI16 }, { type: 'chat' });
+    const s9z2 = AD.loadSettings();
+    s9z2.regionalIncidentEnabled = false; AD.saveSettings(s9z2);
     MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
     Math.random = () => 0;
     AD.rollRegionalIncident();
@@ -1553,10 +1562,11 @@ async function runAll() {
       return AD.state.pendingIncident === null && w.incident.active === true && w.incident.duration === 1;
     })());
     // 清理
-    s9z.regionalIncidentEnabled = true; s9z.regionalIncidentChance = 1;
-    s9z.regionalIncidentDuration = 5; s9z.regionalIncidentCooldown = 5; s9z.directorEveryX = 3;
-    s9z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
-    AD.saveSettings(s9z);
+    s9z2.regionalIncidentEnabled = true;
+    s9z2.regionalIncidentChance = 1;
+    s9z2.regionalIncidentDuration = 5; s9z2.regionalIncidentCooldown = 5; s9z2.directorEveryX = 3;
+    s9z2.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
+    AD.saveSettings(s9z2);
     MOCK.reset();
   }
 
@@ -1582,13 +1592,14 @@ async function runAll() {
       return box.classList.contains('st-expanded') && navs.length === 8
         && navs[0].textContent.includes('电传通讯') && navs[7].textContent.includes('诊断');
     })());
-    assert('U4 PC 工作台字段齐全（API/心跳/遭遇/突发/铁律 data-k 全在场）', (() => {
+    assert('U4 PC 工作台字段齐全（API/心跳/遭遇/突发行/铁律 data-k 全在场）', (() => {
       const box = document.getElementById('ad-modal-box');
       const need = ['director.baseUrl', 'director.model', 'directorEveryX', 'enabledDirector',
         'randomCombatEnabled', 'randomCombatChance', 'randomCombatOncePerCycle', 'randomCombatCooldown', 'randomCombatCooldownFloors',
-        'regionalIncidentEnabled', 'regionalIncidentChance', 'regionalIncidentDuration', 'regionalIncidentCooldown', 'regionalIncidentTypes',
+        'regionalIncidentEnabled', 'regionalIncidentChance', 'regionalIncidentDuration', 'regionalIncidentCooldown',
         'coreTeam', 'enemyPool', 'extraRules', 'debug'];
-      return need.every(k => !!box.querySelector(`[data-k="${k}"]`));
+      return need.every(k => !!box.querySelector(`[data-k="${k}"]`))
+        && !!box.querySelector('#ad-inc-list .inc-row');   // 类型表已改行模式（textarea 废除）
     })());
     assert('U5 栏目切换（点导航 → 对应 pane 激活）', (() => {
       const box = document.getElementById('ad-modal-box');
@@ -1641,9 +1652,46 @@ async function runAll() {
         && AD.settings().randomCombatChance === 9;
     })());
     Object.defineProperty(navigator, 'userAgent', { value: realUA, configurable: true });   // 还原 UA
+
+    // ── V0.3.8：区域事件类型仿世界书行 + 空敌方池提示词瘦身 ──
+    assert('U12 PC 类型行渲染（默认 8 行：内置行无删除钮；工作副本与 SETTINGS 同源）', (() => {
+      AD.renderSettingsModal();
+      const rows = [...document.querySelectorAll('#ad-inc-list .inc-row')];
+      return rows.length === 8 && rows.every(r => !!r.querySelector('[data-inc-toggle]') && !!r.querySelector('[data-inc-label]'))
+        && rows.every(r => !r.querySelector('[data-inc-del]'));   // 内置行无删除
+    })());
+    assert('U13 ＋添加生成自定义行（可删除钮出现）+ 删除回收', (() => {
+      document.getElementById('ad-inc-add').click();
+      const rows1 = [...document.querySelectorAll('#ad-inc-list .inc-row')];
+      const addedCustom = rows1.length === 9 && !!rows1[8].querySelector('[data-inc-del]');
+      rows1[8].querySelector('[data-inc-del]').click();
+      const rows2 = document.querySelectorAll('#ad-inc-list .inc-row');
+      return addedCustom && rows2.length === 8;
+    })());
+    assert('U14 行开关关闭 → 即时序列化 SETTINGS（enabled=false 且 parse 剔除）', (() => {
+      const toggle = document.querySelector('#ad-inc-list [data-inc-toggle="0"]');
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+      const st = AD.settings().regionalIncidentTypes;
+      return st[0].enabled === false && AD.parseIncidentTypes(st).length === 7;
+    })());
+    assert('U15 旧版字符串迁移（textarea 时代存档 → 解析为自定义条目数组）', (() => {
+      localStorage.setItem('ad_settings_v1', JSON.stringify({ regionalIncidentTypes: '邪教活动 | 隐秘集会与献祭迹象 | 12' }));
+      const m = AD.loadSettings().regionalIncidentTypes;
+      return Array.isArray(m) && m.length === 1 && m[0].label === '邪教活动' && m[0].custom === true;
+    })());
+    assert('U16 空敌方池 → 推演提示词不含敌方阵营参考块（有池时注入）', (() => {
+      const mkCtx = pool => ({ worldSync: '', lwb: '', floorContext: '', statData: { '日期和时间': 'x', '地点': 'y' },
+        enemyPool: pool, coreTeam: [], knownFactions: [], roster: { tombstones: [] }, lastWorld: null, extraRules: '' });
+      const empty = AD.buildDirectorMessages(mkCtx([]));
+      const has = AD.buildDirectorMessages(mkCtx(['剃刀帮']));
+      return !empty[1].content.includes('敌方阵营参考')
+        && has[1].content.includes('敌方阵营参考') && has[1].content.includes('剃刀帮');
+    })());
     // 清理
     const sz = AD.loadSettings();
     sz.directorEveryX = 3; sz.randomCombatChance = 5;
+    sz.regionalIncidentTypes = AD.defaultIncidentTypes();
     AD.saveSettings(sz);
     MOCK.reset();
   }

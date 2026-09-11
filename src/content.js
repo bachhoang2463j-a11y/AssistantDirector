@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.7
+// @version      0.3.8
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.7';
+  const SCRIPT_VERSION = '0.3.8';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -68,19 +68,21 @@
   const WIND_LINEAR = 15;      // 每楼线性递增（%）
 
   // —— 区域突发事件（S9，仿世界引擎 REGIONAL_INCIDENT；类型本地掷骰 + 内容 LLM 生成）———
-  // 默认类型表（设置内 textarea 可编辑）：每行"标签 | 引导描述 | 权重"——
-  // 轻量中性城市级事件（灾变级默认不提供，按战役自行加行）；引导只给灵感方向，
-  // 事件具体内容（标题/范围/影响/风声/涉及派系）由推演 LLM 按当前世界观生成。
-  const DEFAULT_INCIDENT_TYPES_TEXT = [
-    '治安恶化 | 街面盗抢、斗殴、破坏等治安事件明显增多，警方或自治力量加强巡逻 | 18',
-    '火灾 | 某处发生区域性火灾，波及建筑、仓储、船只或设施，引发救援与围观 | 14',
-    '意外事故 | 坍塌、车祸、海难、机械故障等突发事故，造成伤亡或阻断通行 | 12',
-    '失踪案件 | 数人接连失踪，亲友报案，邻里不安，流言四起 | 12',
-    '恶性凶案 | 一宗足以引发区域恐慌的凶案，现场或手法异于常案 | 10',
-    '骚乱集会 | 人群聚集事件：抗议、械斗、踩踏、骚乱，军警介入 | 10',
-    '疫病苗头 | 原因不明的发热或皮疹病例出现，药房相关药品被抢购 | 9',
-    '物资波动 | 某类生活或工业物资突然紧缺或价格异动，囤积与抢购出现 | 8',
-  ].join('\n');
+  // 类型表为结构化数组（V0.3.8 仿世界书模式）：[{ label, guide, weight, enabled, custom }]——
+  // 默认 8 类轻量中性城市事件（custom:false 只可开关不可删）；玩家自定义行 custom:true 可删。
+  // 引导只给灵感方向，事件具体内容（标题/范围/影响/风声/涉及派系）由推演 LLM 按当前世界观生成。
+  function DEFAULT_INCIDENT_TYPES() {
+    return [
+      { label: '治安恶化', guide: '街面盗抢、斗殴、破坏等治安事件明显增多，警方或自治力量加强巡逻', weight: 18 },
+      { label: '火灾', guide: '某处发生区域性火灾，波及建筑、仓储、船只或设施，引发救援与围观', weight: 14 },
+      { label: '意外事故', guide: '坍塌、车祸、海难、机械故障等突发事故，造成伤亡或阻断通行', weight: 12 },
+      { label: '失踪案件', guide: '数人接连失踪，亲友报案，邻里不安，流言四起', weight: 12 },
+      { label: '恶性凶案', guide: '一宗足以引发区域恐慌的凶案，现场或手法异于常案', weight: 10 },
+      { label: '骚乱集会', guide: '人群聚集事件：抗议、械斗、踩踏、骚乱，军警介入', weight: 10 },
+      { label: '疫病苗头', guide: '原因不明的发热或皮疹病例出现，药房相关药品被抢购', weight: 9 },
+      { label: '物资波动', guide: '某类生活或工业物资突然紧缺或价格异动，囤积与抢购出现', weight: 8 },
+    ].map(t => ({ label: t.label, guide: t.guide, weight: t.weight, enabled: true, custom: false }));
+  }
 
   // ═════════════════════════════════════════════════════════════════════
   // 1. 设置管理（localStorage，AiRadio 模式）
@@ -108,7 +110,7 @@
       regionalIncidentChance: 1,     // 触发概率（百分比/楼）
       regionalIncidentDuration: 5,   // 事件持续楼数（期间推演延续余波）
       regionalIncidentCooldown: 5,   // 消散后冷却楼数
-      regionalIncidentTypes: '',     // 类型表（空串=用默认表；每行"标签 | 引导 | 权重"）
+      regionalIncidentTypes: DEFAULT_INCIDENT_TYPES(),   // 事件类型表（结构化数组，仿世界书行）
       debug: false,           // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
@@ -155,7 +157,7 @@
       regionalIncidentChance: Number.isFinite(saved.regionalIncidentChance) ? saved.regionalIncidentChance : 1,
       regionalIncidentDuration: Number.isFinite(saved.regionalIncidentDuration) && saved.regionalIncidentDuration >= 1 ? saved.regionalIncidentDuration : 5,
       regionalIncidentCooldown: Number.isFinite(saved.regionalIncidentCooldown) && saved.regionalIncidentCooldown >= 0 ? saved.regionalIncidentCooldown : 5,
-      regionalIncidentTypes: typeof saved.regionalIncidentTypes === 'string' ? saved.regionalIncidentTypes : '',
+      regionalIncidentTypes: normalizeIncidentTypes(saved.regionalIncidentTypes),
       debug: saved.debug === true,
     };
   }
@@ -839,19 +841,36 @@
   // → 回执校验写入 world.incident（全局单例）→ 活跃期推演延续余波 → 到期消散 → 冷却。
   // 挂起重试：pendingIncident 存在（生成中/生成失败）时跳过掷骰直接触发，推演自动并入指令。
 
-  // 类型表解析：每行"标签 | 引导 | 权重"；权重非法/0 跳过；空文本回落默认表
-  function parseIncidentTypes(text) {
-    const raw = String(text || '').trim();
-    const lines = (raw ? raw : DEFAULT_INCIDENT_TYPES_TEXT).split('\n');
-    const out = [];
-    for (const line of lines) {
-      const segs = line.split('|').map(s => s.trim());
-      if (segs.length < 3) continue;
-      const weight = Number(segs[2]);
-      if (!Number.isFinite(weight) || weight <= 0 || !segs[0]) continue;
-      out.push({ type: segs[0], guide: segs[1] || '', weight });
+  // 类型表归一化（V0.3.8 结构化数组）：数组 → 规范条目（custom 默认 true）；旧版字符串（textarea
+  // 时代）→ 按行解析为自定义条目；空/损坏 → 默认表
+  function normalizeIncidentTypes(v) {
+    const norm = t => ({
+      label: String(t.label || '').trim(),
+      guide: String(t.guide || '').trim(),
+      weight: Number.isFinite(Number(t.weight)) ? Number(t.weight) : 0,
+      enabled: t.enabled !== false,
+      custom: t.custom !== false,
+    });
+    if (Array.isArray(v)) {
+      const list = v.map(norm).filter(t => t.label);
+      return list.length ? list : DEFAULT_INCIDENT_TYPES();
     }
-    return out;
+    if (typeof v === 'string' && v.trim()) {
+      const list = v.split('\n').map(line => {
+        const segs = line.split('|').map(x => x.trim());
+        if (segs.length < 3 || !segs[0]) return null;
+        return norm({ label: segs[0], guide: segs[1], weight: Number(segs[2]), enabled: true, custom: true });
+      }).filter(Boolean);
+      return list.length ? list : DEFAULT_INCIDENT_TYPES();
+    }
+    return DEFAULT_INCIDENT_TYPES();
+  }
+
+  // 类型表解析：结构化数组 → 可用类型（enabled 且 weight>0；权重 0 = 单类禁用）
+  function parseIncidentTypes(list) {
+    return normalizeIncidentTypes(list)
+      .filter(t => t.enabled !== false && t.weight > 0)
+      .map(t => ({ type: t.label, guide: t.guide, weight: t.weight }));
   }
 
   // 权重轮盘（世界引擎 weightedPick 同款）
@@ -1555,7 +1574,8 @@
         '地点': ctx.statData['地点'],
         '敌方动向': (ctx.statData['人物'] && ctx.statData['人物']['敌人']) || [],
       }, null, 1)}`,
-      `【敌方阵营参考（仅供推演参考，具体敌人由正文AI自选）】\n${(ctx.enemyPool || []).join(' / ') || '（无）'}`,
+      // 敌方阵营参考（可选——为空时整块不显示，不给推演多余的"（无）"噪音）
+      ...((ctx.enemyPool || []).length ? [`【敌方阵营参考（仅供推演参考，具体敌人由正文AI自选）】\n${ctx.enemyPool.join(' / ')}`] : []),
       `【主角核心白名单（绝不背叛、绝不可能是间谍）】\n${(ctx.coreTeam || []).join(' / ') || '（未设置——正文长期塑造的核心同伴也可能被指定为间谍，建议在设置中填写）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
@@ -2229,7 +2249,7 @@
   .st-stepper button { background: var(--ad-input-bg); border: none; color: var(--ad-ink);
     width: 24px; height: 100%; font-size: 13px; font-weight: bold; cursor: pointer; }
   .st-stepper button:hover { background: var(--ad-accent); color: #fff; }
-  .st-stepper input { width: 48px; height: 100%; border: none; border-left: 1px solid var(--ad-line);
+  .st-stepper input { width: 64px; height: 100%; border: none; border-left: 1px solid var(--ad-line);
     border-right: 1px solid var(--ad-line); text-align: center; background: transparent;
     color: var(--ad-ink-strong); font-size: 11.5px; font-weight: 700; outline: none; }
   .st-input, .st-select, .st-textarea { width: 100%; background: var(--ad-box-bg); border: 1px solid var(--ad-line-strong);
@@ -2239,6 +2259,18 @@
   .st-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .st-chip { background: var(--ad-input-bg); border: 1px solid var(--ad-line-strong);
     font-size: 10px; padding: 2px 6px; color: var(--ad-ink); }
+  /* 区域事件类型行（仿世界书条目：开关/名称/引导/权重/删除） */
+  .inc-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin-bottom: 4px;
+    background: var(--ad-box-bg); border: 1px solid var(--ad-line); }
+  .inc-row input[type="text"] { background: transparent; border: 1px solid var(--ad-line);
+    color: var(--ad-ink-strong); font-family: inherit; font-size: 11px; padding: 3px 6px; outline: none; }
+  .inc-row input:focus { border-color: var(--ad-accent); }
+  .inc-row .inc-label { width: 96px; flex: none; font-weight: 700; }
+  .inc-row .inc-guide { flex: 1; min-width: 0; }
+  .inc-row .inc-weight { width: 52px; flex: none; text-align: center; }
+  .inc-row .inc-del { flex: none; border: 1px solid var(--ad-line-strong); background: none;
+    color: var(--ad-ink-dim); cursor: pointer; font-size: 10px; padding: 2px 7px; }
+  .inc-row .inc-del:hover { color: var(--ad-accent); border-color: var(--ad-accent); }
   /* 移动端面板内切设置视图（#ad-panel 内，零弹窗） */
   #panel-view-news { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
   #panel-view-settings { flex: 1; display: none; flex-direction: column; overflow: hidden; min-height: 0; }
@@ -2601,11 +2633,64 @@
 
   // —— 设置弹窗（可重渲染：世界书同步的增删/选书操作不丢其他输入）———————————
 
-  let editSync = null;   // 编辑中的 worldSync 副本 { world: [] }
+  let editSync = null;        // 编辑中的 worldSync 副本 { world: [] }
+  let editIncidentTypes = null;   // 编辑中的事件类型表副本（结构化数组，仿世界书行模式）
 
   function openSettingsModal() {
     editSync = { world: JSON.parse(JSON.stringify(SETTINGS.worldSync || [])) };
+    editIncidentTypes = normalizeIncidentTypes(SETTINGS.regionalIncidentTypes);
     renderSettingsModal();
+  }
+
+  // 事件类型行渲染（仿世界书条目：开关启停所有行；删除仅自定义行；权重 0 = 单类禁用）
+  function renderIncidentRows(list) {
+    return (list || []).map((t, i) => `
+      <div class="inc-row" data-inc-i="${i}">
+        <label class="st-switch-label"><input type="checkbox" class="st-switch-hidden" data-inc-toggle="${i}" ${t.enabled !== false ? 'checked' : ''}><span class="st-switch"></span></label>
+        <input type="text" class="inc-label" data-inc-label="${i}" value="${esc(t.label)}" placeholder="类型名">
+        <input type="text" class="inc-guide" data-inc-guide="${i}" value="${esc(t.guide || '')}" placeholder="引导描述（推演灵感方向）">
+        <input type="number" class="inc-weight" data-inc-weight="${i}" value="${t.weight}" min="0" step="1" title="权重（0=禁用）">
+        ${t.custom ? `<button type="button" class="inc-del" data-inc-del="${i}">✕</button>` : '<span class="st-desc" title="内置类型不可删除">内置</span>'}
+      </div>`).join('') || '<div class="st-desc">类型表为空——点右上"＋ 添加事件类型"建行。</div>';
+  }
+
+  // 类型行操作绑定（事件委托到容器；任何改动即时序列化进 SETTINGS 并保存）
+  function bindIncidentOps(root) {
+    const persist = () => {
+      SETTINGS.regionalIncidentTypes = JSON.parse(JSON.stringify(editIncidentTypes));
+      saveSettings(SETTINGS);
+    };
+    const listEl = root.querySelector('#ad-inc-list');
+    if (!listEl) return;
+    const readRow = (i) => {
+      const row = listEl.querySelector(`[data-inc-i="${i}"]`);
+      const t = editIncidentTypes[i];
+      t.label = row.querySelector('[data-inc-label]').value.trim();
+      t.guide = row.querySelector('[data-inc-guide]').value.trim();
+      t.weight = Number(row.querySelector('[data-inc-weight]').value) || 0;
+      t.enabled = row.querySelector('[data-inc-toggle]').checked;
+    };
+    listEl.addEventListener('change', e => {
+      const target = e.target;
+      const i = Number(target.getAttribute('data-inc-toggle') || target.getAttribute('data-inc-label')
+        || target.getAttribute('data-inc-guide') || target.getAttribute('data-inc-weight'));
+      if (!Number.isFinite(i) || !editIncidentTypes[i]) return;
+      readRow(i);
+      persist();
+    });
+    const addBtn = root.querySelector('#ad-inc-add');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      editIncidentTypes.push({ label: '新事件类型', guide: '', weight: 10, enabled: true, custom: true });
+      persist();
+      renderSettingsModal();   // 重渲保持行内输入现场（值已在 editIncidentTypes）
+    });
+    listEl.addEventListener('click', e => {
+      const del = e.target.closest('[data-inc-del]');
+      if (!del) return;
+      editIncidentTypes.splice(Number(del.getAttribute('data-inc-del')), 1);
+      persist();
+      renderSettingsModal();
+    });
   }
 
   // worldSync 即时持久化：选书/勾词条/增删立即写回（不依赖"保存"按钮）；
@@ -2761,6 +2846,7 @@
   function renderSettingsModal() {
     const s = SETTINGS;
     if (!editSync) editSync = { world: JSON.parse(JSON.stringify(SETTINGS.worldSync || [])) };   // 防御：直渲（不经 openSettingsModal）也有现场
+    if (!editIncidentTypes) editIncidentTypes = normalizeIncidentTypes(SETTINGS.regionalIncidentTypes);
     syncSectionHtml.bookNames = (IS_LIVE && typeof getWorldbookNames === 'function') ? getWorldbookNames() : [];
     const navItems = [
       ['l-api', '📡 电传通讯', '01'], ['l-rhythm', '⚙ 推演律动', '02'], ['l-combat', '🎲 街头遭遇', '03'],
@@ -2825,7 +2911,8 @@
           </div>
           <div class="st-pane" id="l-incidents">
             <div class="st-card">
-              <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件总控（S9）</span></div>
+              <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件总控（S9）</span>
+                <button id="ad-inc-add" class="ad-row-btn">＋ 添加事件类型</button></div>
               ${stRow('本地事件掷骰总开关', '每楼掷骰定类型，推演 LLM 按世界观生成具体内容', stSwitch('regionalIncidentEnabled', s.regionalIncidentEnabled))}
               <hr class="st-hr">
               <div class="st-grid3">
@@ -2833,9 +2920,9 @@
                 <div class="st-field"><span class="st-label">持续楼数</span>${stNum('regionalIncidentDuration', s.regionalIncidentDuration, 1, 1)}</div>
                 <div class="st-field"><span class="st-label">冷却楼数</span>${stNum('regionalIncidentCooldown', s.regionalIncidentCooldown, 1, 0)}</div>
               </div>
-              <div class="st-field"><span class="st-label">事件类型与权重表</span>
-                ${stArea('regionalIncidentTypes', s.regionalIncidentTypes, 7, '每行：标签 | 引导描述 | 权重（留空用默认城市级表；权重 0 或非法行跳过）')}
-                <div class="st-desc" style="margin-top:3px">默认表：治安恶化/火灾/意外事故/失踪案件/恶性凶案/骚乱集会/疫病苗头/物资波动——灾变类按战役自行加行（如"邪教活动 | 隐秘集会与献祭迹象 | 12"）</div>
+              <div class="st-field"><span class="st-label">事件类型（仿世界书：开关启停；自定义行可删除；权重 0 = 单类禁用）</span>
+                <div id="ad-inc-list">${renderIncidentRows(editIncidentTypes)}</div>
+                <div class="st-desc" style="margin-top:4px">引导描述只给推演灵感方向——事件具体内容（标题/范围/影响/风声）由推演 LLM 按当前世界观生成</div>
               </div>
             </div>
           </div>
@@ -2940,6 +3027,7 @@
       });
     };
     bindSyncOps();
+    bindIncidentOps(els.modalBox);
     bindPromptOps({ director: DirectorPrompt });
 
     els.modalBox.querySelector('#ad-debug-open').addEventListener('click', () => {
@@ -3025,15 +3113,16 @@
             ${stRow('冷却楼数', '', stStepper('randomCombatCooldownFloors', s.randomCombatCooldownFloors, 1, 0))}
           </div>
           <div class="st-card">
-            <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件</span></div>
+            <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件</span>
+              <button id="ad-m-inc-add" class="ad-row-btn">＋ 添加</button></div>
             ${stSwitchRow('本地事件掷骰', '类型掷骰本地定，内容推演生成', 'regionalIncidentEnabled', s.regionalIncidentEnabled)}
             <div class="st-grid3">
               <div class="st-field"><span class="st-label">概率(%/楼)</span>${stNum('regionalIncidentChance', s.regionalIncidentChance, 0.5, 0, 100)}</div>
               <div class="st-field"><span class="st-label">持续楼数</span>${stNum('regionalIncidentDuration', s.regionalIncidentDuration, 1, 1)}</div>
               <div class="st-field"><span class="st-label">冷却楼数</span>${stNum('regionalIncidentCooldown', s.regionalIncidentCooldown, 1, 0)}</div>
             </div>
-            <div class="st-field"><span class="st-label">类型与权重表</span>
-              ${stArea('regionalIncidentTypes', s.regionalIncidentTypes, 4, '每行：标签 | 引导 | 权重（留空用默认表）')}</div>
+            <div class="st-field"><span class="st-label">事件类型（开关/名称/权重；引导描述编辑请用 PC 端）</span>
+              <div id="ad-m-inc-list">${renderIncidentRows(SETTINGS.regionalIncidentTypes)}</div></div>
           </div>
         </div>
         <div class="mv-pane${mobileTab === 'm-dossier' ? ' active' : ''}" id="m-dossier">
@@ -3107,6 +3196,40 @@
     if (mDebug) mDebug.addEventListener('click', () => { collectFormToSettings(root); openDebugModal(); });
     const mHistory = root.querySelector('#ad-m-history');
     if (mHistory) mHistory.addEventListener('click', () => { collectFormToSettings(root); openHistoryModal(); });
+    // 区域事件类型行（移动端简化：直接改 SETTINGS 数组并保存；引导描述 PC 端编辑）
+    const mIncList = root.querySelector('#ad-m-inc-list');
+    if (mIncList) {
+      const persistInc = () => { saveSettings(SETTINGS); };
+      const readRow = (i) => {
+        const row = mIncList.querySelector(`[data-inc-i="${i}"]`);
+        const t = SETTINGS.regionalIncidentTypes[i];
+        if (!t) return;
+        t.label = row.querySelector('[data-inc-label]').value.trim();
+        t.weight = Number(row.querySelector('[data-inc-weight]').value) || 0;
+        t.enabled = row.querySelector('[data-inc-toggle]').checked;
+      };
+      mIncList.addEventListener('change', e => {
+        const target = e.target;
+        const i = Number(target.getAttribute('data-inc-toggle') || target.getAttribute('data-inc-label')
+          || target.getAttribute('data-inc-weight'));
+        if (!Number.isFinite(i)) return;
+        readRow(i);
+        persistInc();
+      });
+      const mAdd = root.querySelector('#ad-m-inc-add');
+      if (mAdd) mAdd.addEventListener('click', () => {
+        SETTINGS.regionalIncidentTypes.push({ label: '新事件类型', guide: '', weight: 10, enabled: true, custom: true });
+        persistInc();
+        renderMobileSettings();
+      });
+      mIncList.addEventListener('click', e => {
+        const del = e.target.closest('[data-inc-del]');
+        if (!del) return;
+        SETTINGS.regionalIncidentTypes.splice(Number(del.getAttribute('data-inc-del')), 1);
+        persistInc();
+        renderMobileSettings();
+      });
+    }
     root.querySelector('#ad-m-back').addEventListener('click', closeMobileSettings);
     root.querySelector('#ad-m-save').addEventListener('click', () => {
       collectFormToSettings(root);
@@ -3403,7 +3526,7 @@
     // 历史记录（V0.3.5）与区域突发事件（S9）
     getHistory, pushHistory, clearHistory, diffWorld, openHistoryModal,
     parseIncidentTypes, weightedPickIncident, rollRegionalIncident,
-    buildIncidentDirective, buildIncidentOngoing, mergeIncident, DEFAULT_INCIDENT_TYPES_TEXT,
+    buildIncidentDirective, buildIncidentOngoing, mergeIncident, defaultIncidentTypes: DEFAULT_INCIDENT_TYPES, normalizeIncidentTypes,
     // 设置 UI 双路分流（V0.3.7）
     isMobileDevice, toggleMobileSettings, closeMobileSettings, renderSettingsModal,
     EV_STAGES, STAGE_SCORE, clamp,
