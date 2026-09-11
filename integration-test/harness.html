@@ -273,7 +273,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.3（checkpoint 完整回滚）', json.content.includes("@version      0.3.3"));
+  assert('版本 v0.3.4（战斗结束冷却）', json.content.includes("@version      0.3.4"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -494,8 +494,9 @@ async function runAll() {
   MOCK.reset();
   assert('运行时状态持久化 $ad_state（含 wbLast.director 上次纯内容）', (() => { AD.persistRuntimeState(); return MOCK.chat.$ad_state && typeof MOCK.chat.$ad_state.wbLast === 'object' && typeof MOCK.chat.$ad_state.wbLast.director === 'string' && typeof MOCK.chat.$ad_state.lastLocationText === 'string' && typeof MOCK.chat.$ad_state.randomCombatFired === 'boolean'; })());
   const s = AD.loadSettings();
-  assert('设置默认结构（单副导演端点 + 推演开关 + 心跳 + 防连战锁）', s.enabledDirector === true && s.director && s.directorEveryX === 3
-    && s.randomCombatEnabled === true && s.randomCombatOncePerCycle === true && s.directorFloors === 20);
+  assert('设置默认结构（单副导演端点 + 推演开关 + 心跳 + 防连战锁 + 战斗冷却）', s.enabledDirector === true && s.director && s.directorEveryX === 3
+    && s.randomCombatEnabled === true && s.randomCombatOncePerCycle === true
+    && s.randomCombatCooldown === true && s.randomCombatCooldownFloors === 3 && s.directorFloors === 20);
   s.director.baseUrl = 'https://api.example.com/v1'; s.enabledDirector = false;
   AD.saveSettings(s);
   assert('设置保存到 localStorage 并读回', AD.loadSettings().director.baseUrl === 'https://api.example.com/v1'
@@ -1256,6 +1257,32 @@ async function runAll() {
     Math.random = () => 0;
     MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
     assert('战斗进行中 → 跳过掷骰', !lastMes().includes(AD.RC_MARKER));
+
+    // ── V0.3.4 战斗结束冷却：任意战斗结束后 N 楼内不掷随机（只拦本插件掷骰）──
+    stChat.pop(); stChat.pop();   // 移除战斗楼与用户楼，构造"战后叙事楼"
+    stChat.push({ mes: '硝烟散尽，警笛远去。', is_user: false, is_system: false });
+    AD.state.combatLastSeen = true;   // 模拟上楼在战（跳变检测起点）
+    const endFloor = AD.currentFloorId();
+    AD.trackCombatEnd();
+    assert('CD1 战斗结束检测：记录结束楼层 + 在战状态复位', AD.state.combatLastSeen === false
+      && AD.state.combatEndFloorId === endFloor);
+    stChat.push({ mes: '搜刮战场。', is_user: true, is_system: false });
+    setWorld(Object.assign(JSON.parse(JSON.stringify(WORLD)), { encounter: { heat: { value: 0, why: '' }, spots: [{ match: '澳大利亚酒店', chance: 100, why: '' }], districts: [] } }));
+    Math.random = () => 0;
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('CD2 冷却窗口内不掷（spots chance=100 也拦）', !lastMes().includes(AD.RC_MARKER));
+    for (let i = 0; i < 3; i++) MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // 楼层推进 3 楼
+    setWorld(Object.assign(JSON.parse(JSON.stringify(WORLD)), { encounter: { heat: { value: 0, why: '' }, spots: [{ match: '绿顶酒馆', chance: 100, why: '' }], districts: [] } }));
+    stChat.push({ mes: '久候的下一战。', is_user: true, is_system: false });
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('CD3 冷却到期解除（推进 3 楼后恢复掷骰）', lastMes().includes(AD.RC_MARKER));
+    AD.state.combatEndFloorId = AD.currentFloorId();   // 重新进入冷却窗口（差 0）
+    AD.state.randomCombatFired = false;   // CD3 注入已上防连战锁——解除后单测冷却开关
+    s6.randomCombatCooldown = false;
+    stChat.push({ mes: '关冷却再试。', is_user: true, is_system: false });
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', {}, false);
+    assert('CD4 冷却开关关闭 → 不拦', lastMes().includes(AD.RC_MARKER));
+    s6.randomCombatCooldown = true;
 
     restore();
     assert('combatInProgress：无战斗楼时为 false', AD.combatInProgress() === false);

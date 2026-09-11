@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.3
+// @version      0.3.4
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.3';
+  const SCRIPT_VERSION = '0.3.4';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -86,6 +86,8 @@
       randomCombatEnabled: true,      // 随机遭遇开关：每楼本地掷骰，命中即在用户本楼输入末尾追加强制开战指令
       randomCombatChance: 5,          // 遇敌概率基线（百分比/楼）——兜底值，世界状态命中 spots/districts 时被覆盖
       randomCombatOncePerCycle: true, // 防连战锁：每个推演周期（两次推演之间）最多一场随机战斗
+      randomCombatCooldown: true,     // 战斗结束冷却开关：任意战斗（含剧情战）结束后 N 楼内不掷随机——只拦本插件掷骰
+      randomCombatCooldownFloors: 3,  // 冷却楼数（战斗结束楼起算）
       debug: false,           // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
@@ -126,6 +128,8 @@
       randomCombatEnabled: saved.randomCombatEnabled !== undefined ? saved.randomCombatEnabled !== false : true,
       randomCombatChance: Number.isFinite(saved.randomCombatChance) ? saved.randomCombatChance : 5,
       randomCombatOncePerCycle: saved.randomCombatOncePerCycle !== undefined ? saved.randomCombatOncePerCycle !== false : true,
+      randomCombatCooldown: saved.randomCombatCooldown !== undefined ? saved.randomCombatCooldown !== false : true,
+      randomCombatCooldownFloors: Number.isFinite(saved.randomCombatCooldownFloors) && saved.randomCombatCooldownFloors >= 0 ? saved.randomCombatCooldownFloors : 3,
       debug: saved.debug === true,
     };
   }
@@ -548,6 +552,32 @@
     return { chance: clamp(0, 100, chance + mod), safe: false, via, heat, tension, why: hit.why || '', heatWhy };
   }
 
+  // 战斗结束检测（V0.3.4）：每楼 dispatch 时比对——上楼在战（最近可见 AI 楼含
+  // <Combat_block>）而本楼无块 = 战斗结束，记录结束楼层号（随机遭遇冷却窗口起点）。
+  // 任意战斗都算（随机遭遇/剧情开战/用户命令——RpgCombat 统一用 Combat_block 续写）。
+  function trackCombatEnd() {
+    const inCombat = combatInProgress();
+    if (State.combatLastSeen && !inCombat) {
+      const floorId = currentFloorId();
+      if (floorId >= 0) {
+        State.combatEndFloorId = floorId;
+        persistRuntimeState();
+        log(`战斗结束检测（楼层 ${floorId}）——随机遭遇冷却 ${SETTINGS.randomCombatCooldown ? SETTINGS.randomCombatCooldownFloors + ' 楼' : '已关闭'}`);
+      }
+    }
+    State.combatLastSeen = inCombat;
+  }
+
+  // 战斗结束冷却判定：当前楼层距结束楼 < N → 冷却中（只拦本插件随机掷骰——
+  // 用户输入命令与正文 AI 自行输出战斗不经此路径，天然不受影响）
+  function combatCooldownActive() {
+    if (!SETTINGS.randomCombatCooldown) return false;
+    const n = Math.max(0, Number(SETTINGS.randomCombatCooldownFloors) || 0);
+    if (!n || State.combatEndFloorId < 0) return false;
+    const floorId = currentFloorId();
+    return floorId >= 0 && (floorId - State.combatEndFloorId) < n;
+  }
+
   function onGenerationStarted(type, _opts, dryRun) {
     if (!SETTINGS.randomCombatEnabled) return;
     if (dryRun || type === 'swipe' || type === 'regenerate') return;
@@ -558,6 +588,7 @@
     const mes = String(last.mes || '');
     if (mes.includes(RC_MARKER)) return;                // 防重复追加（含 swipe 后重跑）
     if (combatInProgress()) return;                     // 战斗进行中不触发
+    if (combatCooldownActive()) return;                 // 任意战斗结束后 N 楼冷却（只拦随机掷骰）
     // 动态概率：取最新状态栏地点（ GENERATION_STARTED 时最新 stat 快照即当前场景）
     const stat = readLatestStatData();
     const locationText = String((stat && stat['地点']) || State.lastLocationText || '').trim();
@@ -585,6 +616,8 @@
     lastLandmarkKey: '',      // 当前地标键（大区后首字段）
     lastDiceFloorId: -1,      // 本地骰已推进到的楼层号（swipe/重roll 同楼不重复掷骰）
     randomCombatFired: false, // 防连战锁：本推演周期内已触发过随机战斗（推演成功解锁）
+    combatLastSeen: false,    // 上楼检测时是否处于战斗中（true→false 跳变 = 战斗结束）
+    combatEndFloorId: -1,     // 最近一次战斗结束的楼层号（其后 N 楼为随机遭遇冷却窗口）
     tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
     pendingTimer: null,
   };
@@ -597,6 +630,8 @@
     State.lastLandmarkKey = s.lastLandmarkKey || '';
     State.lastDiceFloorId = Number.isFinite(s.lastDiceFloorId) ? s.lastDiceFloorId : -1;
     State.randomCombatFired = s.randomCombatFired === true;
+    State.combatLastSeen = s.combatLastSeen === true;
+    State.combatEndFloorId = Number.isFinite(s.combatEndFloorId) ? s.combatEndFloorId : -1;
     State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
   }
   function persistRuntimeState() {
@@ -606,6 +641,8 @@
       lastLandmarkKey: State.lastLandmarkKey,
       lastDiceFloorId: State.lastDiceFloorId,
       randomCombatFired: State.randomCombatFired,
+      combatLastSeen: State.combatLastSeen,
+      combatEndFloorId: State.combatEndFloorId,
       tickerHeads: State.tickerHeads,
       savedAt: Date.now(),
     });
@@ -633,6 +670,8 @@
     State.lastLandmarkKey = '';
     State.lastDiceFloorId = -1;
     State.randomCombatFired = false;
+    State.combatLastSeen = false;
+    State.combatEndFloorId = -1;
     State.tickerHeads = [];
     Trigger.lastDateKey = '';               // 换聊天：触发基线重建（首次 dispatch 记基线不触发）
     Trigger.lastStage = '';
@@ -807,6 +846,7 @@
       return;
     }
     maybeRollbackWorld();   // S8：楼层回退检测（删楼/回退编辑 → 回滚到上一推演点）
+    trackCombatEnd();       // V0.3.4：战斗结束检测（冷却窗口起点）
     runLocalDice();   // 本地骰（事件链/风声）——在构建注入前推进
     const world = readChatVar(CV.world) || null;
 
@@ -2355,6 +2395,8 @@
       <div class="ad-form-row" style="align-items:flex-start"><label style="padding-top:5px">🎲 随机遭遇</label><div style="display:flex;flex-direction:column;gap:4px">
         <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatEnabled" ${s.randomCombatEnabled ? 'checked' : ''}> 每楼掷骰，命中即在用户本楼输入末尾追加"强制开战"指令</label>
         <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatOncePerCycle" ${s.randomCombatOncePerCycle ? 'checked' : ''}> 防连战锁：每个推演周期（两次推演之间）最多一场随机战斗</label>
+        <label style="width:auto;color:var(--ad-ink-strong)"><input type="checkbox" data-k="randomCombatCooldown" ${s.randomCombatCooldown ? 'checked' : ''}> 战斗结束冷却：任意战斗（含剧情战）结束后
+          <input type="number" step="1" min="0" data-k="randomCombatCooldownFloors" value="${s.randomCombatCooldownFloors}" style="width:52px"> 楼内不掷随机（只拦随机掷骰，不影响剧情开战）</label>
         <div style="display:flex;align-items:center;gap:6px">
           <input type="number" step="1" min="0" max="100" data-k="randomCombatChance" value="${s.randomCombatChance}" style="width:64px">
           <span class="dim" style="font-size:9.5px;color:var(--ad-ink-faint)">% / 楼 · 基线兜底值（世界状态 spots/districts 命中时被覆盖）· 安全区与战斗进行中不掷骰</span>
@@ -2623,8 +2665,9 @@
     norm, zoneMatch, zoneHit, landmarkKey, statDateKey, statStage, statCity,
     buildDirectorSituationText, buildDirectorInjection,
     shortLoc, renderTicker, renderWire, applyTheme,
-    // 本地骰（S7）与 checkpoint 回滚（S8）
+    // 本地骰（S7）与 checkpoint 回滚（S8）与战斗冷却（V0.3.4）
     rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension, maybeRollbackWorld,
+    trackCombatEnd, combatCooldownActive,
     EV_STAGES, STAGE_SCORE, clamp,
     // LLM 客户端与推演层
     callLLM, extractJson,

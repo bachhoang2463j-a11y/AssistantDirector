@@ -15,6 +15,7 @@
 > **V0.3.1 变更摘要**：主面板 tab 化——报头下栏目导航条（📰 报纸=原版派系征兆流·默认 / ⚡ 事件链 / 📣 风声 三栏分立），`renderWire` 按 `activeTab` 分流渲染，当前态势简报为各 tab 共有头部，activeTab 持久化（ad_ui_v1）。
 > **V0.3.2 变更摘要**：真机首推实证修订——① **zoneHit 三通道**（整串包含/压缩通道/切段分段）修复 LLM 真实 zone 写法失配（复合"A至B"/括号注记/无分隔 spot，5 派系 zone 有 4 个漏报、安全区 spot 失效）；② **态势简报几率化**：标题=地点·遇敌几率 N%（最终生效值）/安全区，正文=区域氛围（驻守+爆发警告+副导演 why/heat 理由）；百分比不进正文注入（程序掷骼执行）。
 > **V0.3.3 变更摘要**：**S8 checkpoint 完整回滚**——推演写入新世界前快照旧世界到 `$ad_world_checkpoint`，新世界记 `floorId` 锚点；每楼 dispatch 检测楼层回退（`world.floorId > 当前楼层` = 删楼/回退编辑）→ 回滚到上一推演点（本地骰的推进随之丢弃——事件链不会因删楼而越推越快）；单级回滚（锚点重置为当前楼层，继续删楼不再回退）；无更早快照时回到未推演状态；防连战锁随周期重置；swipe 不回滚（楼层号不变，心跳内重推覆盖）。同轮修复 harness mock 两缺陷（replaceVariables 重新赋值致 MOCK.chat 引用脱钩 / eventEmit 包装漏转发参数致 S6 的 swipe/dryRun 守卫失效、真随机 5% 间歇假失败）。
+> **V0.3.4 变更摘要**：**战斗结束冷却**——任意战斗（随机遭遇/剧情开战/用户命令，RpgCombat 统一 Combat_block 续写）结束后 `randomCombatCooldownFloors`（默认 3，开关 `randomCombatCooldown` 可关、数字可调）楼内不掷随机遭遇——只拦本插件掷骰，用户输入命令与正文 AI 自行输出战斗不受影响；检测机制为每楼 dispatch 的 `combatLastSeen→false` 跳变（上楼在战本楼无块），`combatEndFloorId` 持久化（页面重载/换聊天重置）。
 
 ---
 
@@ -175,7 +176,7 @@ $rpg_combat_result（RpgCombat 程序写 MMS）→ 副导演监听 → 强制推
 
 **区块匹配 zoneHit（V0.3.2 三通道，对抗 LLM 真实写法）**：①整串互相包含 ②压缩通道（两边去 `·-—` 空白括号后再包含——"澳大利亚酒店总督套房"↔"澳大利亚酒店 - 总督套房"）③切段通道（zone 按连接词 至/与/、/，/和 切段，每段与地点各分段互相包含，分段 ≥3 字防"悉尼"两字段误报——"悉尼港码头区至禧市排污管网"/"萨里山核心区（绿顶酒馆）"/"达令赫斯特区"等真机实证写法全命中）。驻守信号/爆发提醒/eventTension/spots/districts 全部使用。
 
-**随机遭遇掷骰（S6）**：`GENERATION_STARTED`（用户已发送、提示词未组装）本地掷骰，命中即把强制开战指令（`【🎲随机遭遇】本轮用户触发随机战斗，按【战斗轮规则】输出 Combat_block 块`）以**用户身份**追加进本楼输入末尾——随楼层生成自然持久化，swipe 重roll 指令仍在（防重复标记防二次追加）。豁免：`combatInProgress`（最近可见 AI 楼含 `<Combat_block>`）/ swipe / regenerate / dryRun / 末楼非用户楼 / 安全区。**防连战锁**：命中上锁（`State.randomCombatFired`，持久化）→ 下一次推演成功解锁——每个推演周期最多一场随机战斗；注意锁只约束**随机注入**这一路，剧情开战（正文 AI 自行决定）不触发锁；未首推（无 $ad_world）时锁不生效（周期无边界）。战斗进行中掷骰本身就被 combatInProgress 拦截——锁是"刚打完随机战、正文已收尾但新推演未到"间隙的防护。
+**随机遭遇掷骰（S6）**：`GENERATION_STARTED`（用户已发送、提示词未组装）本地掷骰，命中即把强制开战指令（`【🎲随机遭遇】本轮用户触发随机战斗，按【战斗轮规则】输出 Combat_block 块`）以**用户身份**追加进本楼输入末尾——随楼层生成自然持久化，swipe 重roll 指令仍在（防重复标记防二次追加）。豁免：`combatInProgress`（最近可见 AI 楼含 `<Combat_block>`）/ swipe / regenerate / dryRun / 末楼非用户楼 / 安全区。**防连战锁**：命中上锁（`State.randomCombatFired`，持久化）→ 下一次推演成功解锁——每个推演周期最多一场随机战斗；注意锁只约束**随机注入**这一路，剧情开战（正文 AI 自行决定）不触发锁；未首推（无 $ad_world）时锁不生效（周期无边界）。**战斗结束冷却（V0.3.4）**：每楼 dispatch 用 `combatLastSeen→false` 跳变检测任意战斗结束（随机/剧情/用户命令——RpgCombat 统一用 Combat_block 续写），记录 `combatEndFloorId`，其后 `randomCombatCooldownFloors`（默认 3，可开关可调）楼内不掷随机——同样只拦本插件掷骰，用户输入命令与正文 AI 自行输出战斗不经此路径。战斗进行中掷骰本身就被 combatInProgress 拦截——锁与冷却分别是"随机战刚打完、新推演未到"与"任意战斗刚结束"两个间隙的防护。
 
 ### 4.3 世界推演（单一副导演 API）
 
