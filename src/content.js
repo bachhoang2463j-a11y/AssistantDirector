@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.2
+// @version      0.3.3
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.2';
+  const SCRIPT_VERSION = '0.3.3';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -51,7 +51,8 @@
   };
   // 聊天变量键（$ 前缀对 LLM 隐形，随聊天文件走）
   const CV = {
-    world: '$ad_world',    // S7：世界状态（派系暗线/事件链/风声/encounter，取代 $ad_report）
+    world: '$ad_world',             // S7：世界状态（派系暗线/事件链/风声/encounter，取代 $ad_report）
+    worldCheckpoint: '$ad_world_checkpoint',   // S8：上一推演点的世界快照（楼层回退时回滚）
     state: '$ad_state',    // 运行时状态（上次注入文本/骰子楼层/防连战锁等）
     roster: '$ad_roster',  // 名册+墓碑
   };
@@ -760,6 +761,35 @@
     return false;
   }
 
+  // —— checkpoint 完整回滚（S8，仿世界引擎存档点）—————————————————————
+  // 推演写入新世界前把旧世界快照到 $ad_world_checkpoint，并在新世界记 floorId 锚点
+  // （该状态对应的楼层号）。每楼 dispatch 检测：楼层回退（删楼/回退编辑——当前楼层号
+  // 小于世界锚点）→ 回滚到上一推演点（本地骰的推进随之丢弃，事件链不会因删楼而越推越快）。
+  // 单级回滚：回滚后锚点重置为当前楼层（继续删楼不再回退——更深的快照不存在）。
+  // swipe 不回滚（楼层号不变，重 roll 后 3 楼心跳内会重推覆盖）。
+  function maybeRollbackWorld() {
+    const world = readChatVar(CV.world);
+    if (!world || !Number.isFinite(world.floorId) || world.floorId < 0) return false;
+    const floorId = currentFloorId();
+    if (floorId < 0 || world.floorId <= floorId) return false;   // 楼层未回退
+    const checkpoint = readChatVar(CV.worldCheckpoint);
+    if (checkpoint && Array.isArray(checkpoint.factions)) {
+      checkpoint.floorId = floorId;   // 以当前楼层为新基线（单级回滚）
+      writeChatVar(CV.world, checkpoint);
+      log(`楼层回退（${world.floorId} → ${floorId}）：世界状态回滚到上一推演点（round ${checkpoint.round || '?'}）`);
+      toast('↩ 楼层回退——世界状态已回滚到上一推演点');
+    } else {
+      // 首推后即被删楼（无更早快照）：回退到无世界状态
+      writeChatVar(CV.world, null);
+      log(`楼层回退（${world.floorId} → ${floorId}）：无更早快照，回到未推演状态`);
+      toast('↩ 楼层回退——无更早推演快照，世界状态已清空');
+    }
+    Trigger.floorsSinceEvolve = 0;
+    State.lastDiceFloorId = floorId;   // 回滚后本地骰以新楼层为基线（不立即补掷）
+    if (State.randomCombatFired) { State.randomCombatFired = false; persistRuntimeState(); }   // 推演周期随回滚重置
+    return true;
+  }
+
   // —— 主配发流程（纯程序，零 LLM；每楼重算注入，幂等写入）———————————
 
   function dispatchNow(reason) {
@@ -776,6 +806,7 @@
       logWarn('stat_data 缺少地点字段，跳过');
       return;
     }
+    maybeRollbackWorld();   // S8：楼层回退检测（删楼/回退编辑 → 回滚到上一推演点）
     runLocalDice();   // 本地骰（事件链/风声）——在构建注入前推进
     const world = readChatVar(CV.world) || null;
 
@@ -1490,6 +1521,10 @@
       if (errs.length) logWarn('推演宽容提示（条目已保留）：', errs.join('；'));
       if (!world) { toast('世界推演失败：输出结构异常', 6000); return; }
       if (!world.factions.length) logWarn('推演 factions 为空——已存档落地（不重试不丢弃）');
+      // S8 checkpoint：写入新世界前快照旧世界（楼层回退时回滚）；新世界记楼层锚点
+      const prevWorld = readChatVar(CV.world);
+      if (prevWorld && Array.isArray(prevWorld.factions)) writeChatVar(CV.worldCheckpoint, prevWorld);
+      world.floorId = currentFloorId();   // 回滚检测锚点（-1=拿不到楼号 → 永不触发回滚，安全）
       // 存档 + 分发
       writeChatVar(CV.world, world);
       // 名册自动注册（新派系轻量登场；墓碑派系绝不回册——即使模型违反铁律输出）
@@ -2588,8 +2623,8 @@
     norm, zoneMatch, zoneHit, landmarkKey, statDateKey, statStage, statCity,
     buildDirectorSituationText, buildDirectorInjection,
     shortLoc, renderTicker, renderWire, applyTheme,
-    // 本地骰（S7）
-    rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension,
+    // 本地骰（S7）与 checkpoint 回滚（S8）
+    rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension, maybeRollbackWorld,
     EV_STAGES, STAGE_SCORE, clamp,
     // LLM 客户端与推演层
     callLLM, extractJson,
