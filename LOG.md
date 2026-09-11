@@ -617,3 +617,15 @@
 **测试要点**：I8 的 dispatchNow 会消费首楼掷骰（lastDiceFloorId -1→0，incident 提前递减一次）——I10/I11 断言按实际状态机计数修正；I15 手动构造 pending 前须先置 incident 为消散态（真实流中 pending 存在 ⇒ 事件必已消散，掷骰只在非活跃非冷却时进入）；S9 段设 directorEveryX=99 防心跳触发干扰。首轮 5 失败均为测试时序问题，产品逻辑无返工。
 
 **验收依据**：IAB harness 193/193；真机验证留给用户（触发 toast"⚡ 区域事件"→ ⚡事件链 tab 见新事件 → 🕘 历史 🎯 tab 有记录 → 5 楼后消散提示）。
+
+## 2026-09-12 ｜ V0.3.7 设置 UI 双路分流（PC 960px 工作台 / 移动端面板内切）（业务提交 `07fece5`）
+
+**变更行为**：用户给出 demo（demo_settings_newspaper.html + SETTINGS_UI_MIGRATION_GUIDE.md）要求重构设置 UI 并做移动端兼容——① **设备检测**：`isMobileDevice()` 严格按 UA 标识（Android|iPhone|iPad...），绝不用屏幕宽度/比例；② **PC 端**：⚙ → 居中 960px 宽屏工作台弹窗（`.st-expanded` 壳：左侧 220px 八栏目导读索引「电传通讯/推演律动/街头遭遇/区域突发/阵营与铁律/档案库同步/导演社论母版/诊断与回溯」+ 右侧社论卡片网格 `.st-card` + 底部 ✓保存生效/关闭；数字字段配 ± 步进器 `stepSyncValue`；皮肤选择移入"诊断与回溯"栏）；③ **移动端**：⚙ → 390px 面板内**原位切换**简版设置（`#panel-view-settings` 4-Tab：📡电传步调（API+推演调度）/🎲遭遇突发（随机遭遇+区域突发）/📜人事档案（白名单/敌方池/铁律/世界书 chips 只读）/✍母版日志（提示词预设+诊断按钮+调试开关），底部 ←返回增刊/✓保存生效），报头标题切"⚙ 设定增刊·PREFERENCES"、阶段切"设置中"（返回还原）；零弹窗；④ `#ad-panel` 拆双视图（`#panel-view-news` 包裹原 tabs/wire/colophon + `#panel-view-settings`）；⑤ `collectFormToSettings(root)` 参数化——只收当前活跃容器（防另一视图陈旧输入覆盖）；`openModal` 清 st-expanded 类（其他弹窗不受 960 壳污染）；⑥ 窄屏兼容：`@media (max-width:480px)` 面板满宽（width:100vw）；⑦ 面板收起时自动退出设置视图回报纸态。@version 0.3.7；harness 204/204（+11：U1 UA 检测/U2 双视图骨架/U3-U6 PC 工作台（8 栏目/字段齐全/栏目切换/即时持久化）/U7-U11 移动端（UA stub 面板内切/4-Tab 字段/tab 切换/表单持久化/保存返回还原））。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策依据**：用户 demo 定稿（UA 双路分流/PC 方案1 侧栏索引/移动端方案2 4-Tab 内切不弹窗）；移动端世界书同步与类型表降级为只读展示（"编辑请使用 PC 端"——复杂编辑器不塞进 390px 简版，符合 demo 的 chips 展示基因）；排障一例：renderSettingsModal 直渲时 editSync 为 null（旧流程由 openSettingsModal 先置）→ 加防御性初始化。
+
+**测试要点**：U2 断言用 computed display（内联 style 为空、隐藏靠 CSS）；U7 用 Object.defineProperty stub navigator.userAgent 模拟 iPhone（测完还原）；U10 移动端表单修改验证 root 参数化收集（5→9 落 SETTINGS）+ U11 保存后返回报纸态且值保持。视觉目检：PC 工作台 8 栏目/卡片/步进器与 demo 对齐（slate 主题下渲染正常）。
+
+**验收依据**：IAB harness 204/204（干净复跑确认）；真机验证留给用户（手机酒馆 ⚙ 内切手感、PC 弹窗观感、窄屏面板满宽）。
