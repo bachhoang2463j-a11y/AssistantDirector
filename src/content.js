@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.0
+// @version      0.3.1
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.0';
+  const SCRIPT_VERSION = '0.3.1';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -143,8 +143,9 @@
     try {
       const p = JSON.parse(localStorage.getItem(LS.ui) || '{}') || {};
       if (!p.theme) p.theme = 'paper';
+      if (!['paper', 'events', 'winds'].includes(p.activeTab)) p.activeTab = 'paper';
       return p;
-    } catch (e) { return { theme: 'paper' }; }
+    } catch (e) { return { theme: 'paper', activeTab: 'paper' }; }
   }
   function saveUiPrefs(p) {
     try { localStorage.setItem(LS.ui, JSON.stringify(p)); } catch (e) { /* 忽略 */ }
@@ -1681,6 +1682,12 @@
     background: rgba(244, 238, 219, 0.95); flex: none; font-family: 'Courier Prime', 'Courier New', monospace;
   }
   .ad-theme-paper .ad-colophon b { color: var(--ad-accent); font-weight: bold; }
+  /* paper 报纸栏目导航：报头双线下的一行栏目签，激活项红底白字（老报纸栏目感） */
+  .ad-theme-paper .ad-tabs { border-bottom: 2px double var(--ad-line-strong); background: rgba(244, 238, 219, 0.95); }
+  .ad-theme-paper .ad-tab { font-family: 'Courier Prime', 'Courier New', monospace; text-transform: uppercase;
+    letter-spacing: 2px; font-size: 9px; padding: 5px 4px 4px; }
+  .ad-theme-paper .ad-tab.active { background: var(--ad-accent); color: #fff; box-shadow: none; }
+  .ad-theme-paper .ad-tab.active:hover { background: var(--ad-accent-bright); }
   .ad-theme-paper .ad-modal-box h3 { letter-spacing: 6px; border-bottom: 2px solid var(--ad-line-strong); }
 
   #ad-rail { position: fixed; right: 0; top: 28%; width: 32px; z-index: 99990;
@@ -1727,6 +1734,14 @@
   .ad-head-btns button { background: none; color: var(--ad-ink-dim); border: none; cursor: pointer;
     font-family: inherit; font-size: 12px; padding: 2px 4px; line-height: 1; transition: color .2s; }
   .ad-head-btns button:hover { color: var(--ad-accent); }
+  /* 栏目导航 tab 栏：报纸/事件链/风声 三栏分立（V0.3.1） */
+  .ad-tabs { flex: none; display: flex; border-bottom: 1px solid var(--ad-line-strong); }
+  .ad-tab { flex: 1; padding: 6px 4px 5px; font-size: 10.5px; letter-spacing: 1px; background: none;
+    border: none; border-right: 1px solid var(--ad-line); color: var(--ad-ink-dim); cursor: pointer;
+    font-family: inherit; line-height: 1.2; transition: color .15s, background .15s; }
+  .ad-tab:last-child { border-right: none; }
+  .ad-tab:hover { color: var(--ad-ink-strong); }
+  .ad-tab.active { color: var(--ad-accent); font-weight: bold; box-shadow: inset 0 -2px 0 var(--ad-accent); background: var(--ad-hit); }
   /* 当前态势行/头条 */
   .ad-nowline { flex: none; padding: 7px 12px; font-size: 11px; letter-spacing: 1px;
     color: var(--ad-ink); border-bottom: 1px solid var(--ad-line);
@@ -1856,7 +1871,7 @@
       <div class="ad-rail-ticker"><ul id="ad-ticker"></ul></div>`);
     UI_DOC.body.appendChild(rail);
 
-    // 展开态面板：双耳古典大报头 → 当前态势通栏行 → 纵向连续情报流 → 报尾底注
+    // 展开态面板：双耳古典大报头 → 栏目导航 tab → 纵向连续情报流 → 报尾底注
     const panel = el('aside', { id: 'ad-panel' }, `
       <div class="ad-head">
         <div class="ad-head-ears">
@@ -1880,6 +1895,11 @@
           <span class="stage" id="ad-mast-stage">—</span>
         </div>
       </div>
+      <div class="ad-tabs" id="ad-tabs">
+        <button class="ad-tab" data-tab="paper" title="《悉尼宪报》派系公开征兆（灰卡揭幕体系）">📰 报纸</button>
+        <button class="ad-tab" data-tab="events" title="进行中的事件链（本地骰每楼推进）">⚡ 事件链</button>
+        <button class="ad-tab" data-tab="winds" title="风声与舆论（安静超时按概率消散）">📣 风声</button>
+      </div>
       <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>
       <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达</div>`);
     UI_DOC.body.appendChild(panel);
@@ -1889,7 +1909,7 @@
     UI_DOC.body.appendChild(modal);
 
     els = { rail, panel, dot: rail.querySelector('#ad-rail-dot'), ticker: rail.querySelector('#ad-ticker'),
-      wireBody: panel.querySelector('#ad-wire-body'),
+      wireBody: panel.querySelector('#ad-wire-body'), tabs: panel.querySelector('#ad-tabs'),
       mastDate: panel.querySelector('#ad-mast-date'), mastStage: panel.querySelector('#ad-mast-stage'),
       mastDateSlate: panel.querySelector('#ad-mast-date-slate'), mastStageSlate: panel.querySelector('#ad-mast-stage-slate'),
       modal, modalBox: modal.querySelector('#ad-modal-box') };
@@ -1917,6 +1937,16 @@
     });
     panel.querySelector('#ad-btn-roster').addEventListener('click', openRosterModal);
     panel.querySelector('#ad-btn-settings').addEventListener('click', openSettingsModal);
+    // 栏目切换：activeTab 持久化（localStorage），即时重渲染
+    if (els.tabs) els.tabs.addEventListener('click', e => {
+      const btn = e.target.closest('.ad-tab');
+      if (!btn) return;
+      const tab = btn.getAttribute('data-tab');
+      const p = loadUiPrefs();
+      if (p.activeTab === tab) return;
+      p.activeTab = tab; saveUiPrefs(p);
+      renderWire();
+    });
 
     if (loadUiPrefs().panelOpen) togglePanel(true, true);
     applyTheme(loadUiPrefs().theme);
@@ -1953,12 +1983,18 @@
   }
 
   // 面板主体：当前态势行 + 世界情报流（事件卡/风声卡/派系灰卡揭幕体系）
+  // 栏目渲染（V0.3.1 tab 化）：当前所在地 lead 为各 tab 共有的上下文头，
+  // 其下按 activeTab 分流——📰 报纸（原版派系征兆流）/ ⚡ 事件链 / 📣 风声。
   function renderWire() {
     if (!els.wireBody) return;
     const world = readChatVar(CV.world);
+    const tab = loadUiPrefs().activeTab || 'paper';
+    // tab 栏 active 态同步（切主题/重挂载后自愈）
+    if (els.tabs) els.tabs.querySelectorAll('.ad-tab').forEach(b =>
+      b.classList.toggle('active', b.getAttribute('data-tab') === tab));
     let html = '';
 
-    // 首段 lead：驻守信号（世界状态 zone 命中当前地点的派系）
+    // 首段 lead：驻守信号（世界状态 zone 命中当前地点的派系）——各 tab 共有
     if (State.lastLocationText) {
       const locShort = shortLoc(State.lastLocationText);
       let leadTitle = '';
@@ -1987,38 +2023,59 @@
     }
 
     if (!world || !Array.isArray(world.factions)) {
-      html += `<div class="ad-empty">情报流为空——等待副导演首次世界推演（📡 手动触发，或每 ${SETTINGS.directorEveryX} 楼心跳自动推演）。</div>`;
+      const emptyByTab = {
+        paper: '报纸尚无印张——等待副导演首次世界推演（📡 手动触发，或每 N 楼心跳自动推演）。',
+        events: '事件链空栏——世界暂时平静，等待首次推演后由副导演建立事件。',
+        winds: '风声版面暂无消息——等待首次推演后由副导演建立风声。',
+      };
+      html += `<div class="ad-empty">${emptyByTab[tab] || emptyByTab.paper}</div>`;
       els.wireBody.innerHTML = html;
       return;
     }
 
-    // 事件卡：阶段徽标 + 进度（平息不显示）
     const worldDate = world.generatedAt ? new Date(world.generatedAt).toLocaleDateString() : '';
-    for (const ev of (world.events || [])) {
-      if (!ev || ev.stage === '平息') continue;
-      const stageCls = ev.stage === '爆发' ? 'hot' : (ev.stage === '逼近' ? 'hot' : '');
-      html += `<div class="ad-item${ev.stage === '爆发' ? ' hit' : ''}">
-        <div class="ad-item-header">
-          <span class="ad-item-kicker">⚡ 事件链 · ${esc(worldDate)}</span>
-          <span class="ad-item-alert ${stageCls}">${esc(ev.stage)} ${ev.stageRound}/9</span>
-        </div>
-        <div class="ad-item-title"><span class="ad-item-place">${esc(ev.name)}</span><span class="menu"> · ${ev.type === 'progress' ? '进展' : '冲突'}</span></div>
-        <div class="ad-item-reaction">${esc(ev.desc || '')}</div>
-      </div>`;
+
+    if (tab === 'events') {
+      // ⚡ 事件链：阶段徽标 + 进度（平息不显示）
+      const events = (world.events || []).filter(ev => ev && ev.stage !== '平息');
+      if (!events.length) {
+        html += `<div class="ad-empty">世界暂时平静——暂无进行中的事件。新事件在前文出现具体迹象时由副导演创建。</div>`;
+      }
+      for (const ev of events) {
+        const stageCls = ev.stage === '爆发' || ev.stage === '逼近' ? 'hot' : '';
+        html += `<div class="ad-item${ev.stage === '爆发' ? ' hit' : ''}">
+          <div class="ad-item-header">
+            <span class="ad-item-kicker">⚡ 事件链 · ${esc(worldDate)}</span>
+            <span class="ad-item-alert ${stageCls}">${esc(ev.stage)} ${ev.stageRound}/9</span>
+          </div>
+          <div class="ad-item-title"><span class="ad-item-place">${esc(ev.name)}</span><span class="menu"> · ${ev.type === 'progress' ? '进展' : '冲突'}</span></div>
+          <div class="ad-item-reaction">${esc(ev.desc || '')}</div>
+        </div>`;
+      }
+      els.wireBody.innerHTML = html;
+      return;
     }
 
-    // 风声卡：传播等级
-    for (const w of (world.winds || [])) {
-      if (!w) continue;
-      html += `<div class="ad-item">
-        <div class="ad-item-header">
-          <span class="ad-item-kicker">📣 风声 · ${esc(w.spread || '流传')}</span>
-        </div>
-        <div class="ad-item-reaction">${esc(w.content || '')}${w.source ? `<div class="ad-item-sub-wire">——${esc(w.source)}</div>` : ''}</div>
-      </div>`;
+    if (tab === 'winds') {
+      // 📣 风声：传播等级 + 来源
+      const winds = (world.winds || []).filter(Boolean);
+      if (!winds.length) {
+        html += `<div class="ad-empty">街头暂无风声——旧风声已消散，或副导演尚未建立舆论动向。</div>`;
+      }
+      for (const w of winds) {
+        html += `<div class="ad-item">
+          <div class="ad-item-header">
+            <span class="ad-item-kicker">📣 风声 · ${esc(w.spread || '流传')}</span>
+          </div>
+          <div class="ad-item-reaction">${esc(w.content || '')}${w.source ? `<div class="ad-item-sub-wire">——${esc(w.source)}</div>` : ''}</div>
+        </div>`;
+      }
+      els.wireBody.innerHTML = html;
+      return;
     }
 
-    // 派系灰卡（S4 揭幕体系全保留）：未接触派系 ？？？ 遮名（只可见征兆）；已接触署名 + 三态徽标；
+    // 📰 报纸（默认 tab，原版形态）：派系灰卡（S4 揭幕体系全保留）——
+    // 未接触派系 ？？？ 遮名（只可见征兆）；已接触署名 + 三态徽标；
     // 新面孔标记；新揭示首拍金色揭幕闪动；已接触但本轮无条目的名册派系给平静占位卡。
     const { roster, newly } = syncRevealState();
     for (const f of (world.factions || [])) {

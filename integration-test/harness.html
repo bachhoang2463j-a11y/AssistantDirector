@@ -269,7 +269,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.0（世界引擎化重构）', json.content.includes("@version      0.3.0"));
+  assert('版本 v0.3.1（世界引擎化重构 + tab 栏）', json.content.includes("@version      0.3.1"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -497,6 +497,7 @@ async function runAll() {
   /* ——— UI 数据驱动 ——— */
   head('UI 数据驱动');
   MOCK.reset(); AD.loadRuntimeState();
+  localStorage.setItem('ad_ui_v1', JSON.stringify({ theme: 'paper', activeTab: 'paper', panelOpen: true }));   // tab/皮肤状态隔离（防上轮回归残留）
   window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
   MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
   AD.state.wbLast.director = '';   // 下一拍 dispatch 重写词条 → 点亮未读提醒
@@ -510,15 +511,45 @@ async function runAll() {
     const now = document.querySelector('#ad-wire .ad-nowline');
     return now && now.textContent.includes('凯特·利') && now.textContent.includes('士气高涨');
   })());
-  assert('事件卡渲染（阶段徽标 + stageRound 进度）', (() => {
+  // 栏目导航（V0.3.1 tab 化）：报纸（默认/原版派系流）/ 事件链 / 风声 三栏分立
+  assert('tab 栏渲染（📰报纸/⚡事件链/📣风声 三栏）', (() => {
+    const tabs = [...document.querySelectorAll('#ad-tabs .ad-tab')];
+    return tabs.length === 3 && tabs[0].dataset.tab === 'paper' && tabs[1].dataset.tab === 'events' && tabs[2].dataset.tab === 'winds';
+  })());
+  const wireText = () => document.getElementById('ad-wire').innerText;
+  const clickTab = name => document.querySelector(`#ad-tabs .ad-tab[data-tab="${name}"]`).click();
+  assert('默认报纸 tab：派系灰卡流在，事件/风声内容不在', (() => {
+    AD.renderWire();
+    return document.querySelector('#ad-tabs .ad-tab[data-tab="paper"]').classList.contains('active')
+      && wireText().includes('？？？') && !wireText().includes('仓库冲突') && !wireText().includes('达令港夜里');
+  })());
+  clickTab('events');
+  assert('事件链 tab：事件卡（阶段徽标 + stageRound 进度），派系卡不在', (() => {
     const items = [...document.querySelectorAll('#ad-wire .ad-item')];
     const ev = items.find(n => n.textContent.includes('仓库冲突'));
-    return ev && ev.textContent.includes('逼近') && /\d\/9/.test(ev.textContent);
+    return document.querySelector('#ad-tabs .ad-tab[data-tab="events"]').classList.contains('active')
+      && ev && ev.textContent.includes('逼近') && /\d\/9/.test(ev.textContent)
+      && !wireText().includes('？？？');
   })());
-  assert('风声卡渲染（传播等级）', (() => {
+  clickTab('winds');
+  assert('风声 tab：风声卡（传播等级），事件卡不在', (() => {
     const items = [...document.querySelectorAll('#ad-wire .ad-item')];
     const w = items.find(n => n.textContent.includes('达令港夜里能听见仓库方向的枪声'));
-    return w && w.textContent.includes('流传');
+    return w && w.textContent.includes('流传') && !wireText().includes('仓库冲突');
+  })());
+  assert('tab 持久化（localStorage activeTab）+ 重渲染保持', (() => {
+    AD.renderWire();
+    const kept = document.querySelector('#ad-tabs .ad-tab[data-tab="winds"]').classList.contains('active')
+      && wireText().includes('达令港夜里');
+    clickTab('paper');   // 还原默认
+    return kept && document.querySelector('#ad-tabs .ad-tab[data-tab="paper"]').classList.contains('active');
+  })());
+  assert('lead 为各 tab 共有上下文头（切 tab 后仍在顶部）', (() => {
+    clickTab('events');
+    const now = document.querySelector('#ad-wire .ad-nowline');
+    const kept = now && now.textContent.includes('凯特·利');
+    clickTab('paper');
+    return kept;
   })());
   assert('工具按钮内联报头（无底部工具条）', (() => {
     return document.querySelectorAll('.ad-head-btns button').length === 5
@@ -535,10 +566,10 @@ async function runAll() {
       && document.querySelectorAll('#ad-ticker li').length === 0;
   })());
   AD.state.tickerHeads = ['仓库冲突·逼近']; AD.renderTicker();   // 恢复演示态
-  assert('无世界状态空态（等待首推提示）', (() => {
+  assert('无世界状态空态（等待首推提示，按 tab 语义）', (() => {
     delete MOCK.chat.$ad_world;
     AD.renderWire();
-    const ok = document.getElementById('ad-wire').innerText.includes('情报流为空') && document.getElementById('ad-wire').innerText.includes('心跳');
+    const ok = document.getElementById('ad-wire').innerText.includes('报纸尚无印张') && document.getElementById('ad-wire').innerText.includes('心跳');
     window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
     AD.renderWire();   // 还原
     return ok;
