@@ -629,3 +629,15 @@
 **测试要点**：U2 断言用 computed display（内联 style 为空、隐藏靠 CSS）；U7 用 Object.defineProperty stub navigator.userAgent 模拟 iPhone（测完还原）；U10 移动端表单修改验证 root 参数化收集（5→9 落 SETTINGS）+ U11 保存后返回报纸态且值保持。视觉目检：PC 工作台 8 栏目/卡片/步进器与 demo 对齐（slate 主题下渲染正常）。
 
 **验收依据**：IAB harness 204/204（干净复跑确认）；真机验证留给用户（手机酒馆 ⚙ 内切手感、PC 弹窗观感、窄屏面板满宽）。
+
+## 2026-09-12 ｜ V0.3.8 真机反馈三连（步进器裁切/类型表仿世界书/空池瘦身）（业务提交 `f8ea785`）
+
+**变更行为**：用户真机截图三处反馈——① **步进器数字裁切**：`.st-stepper input` 48→64px（MaxTokens 8192 等四位数被裁）；② **区域事件类型表仿世界书化**（用户指示"每个事件可开关…右上添加按钮自动生成一列填名称和权重，默认只可开关，自定义可删除"）：数据模型从 textarea 字符串改为**结构化数组** `[{label, guide, weight, enabled, custom}]`——默认 8 类 `custom:false` 只可开关不可删，自定义行 `custom:true` 可删，权重 0=单类禁用；`normalizeIncidentTypes` 迁移（数组规范/旧字符串按行解析为 custom 条目/空值回落默认工厂）；UI 为行列表（开关/名称/引导/权重/删除 + 右上 ＋添加；PC 含引导列，移动端简化行无引导列并注明"引导编辑请用 PC"）；`parseIncidentTypes` 改收数组（字符串分支保留兼容）；操作即时序列化进 SETTINGS（PC 用 editIncidentTypes 工作副本 + 重渲保持现场，移动端直改数组）；③ **空敌方池提示词瘦身**：enemyPool 为空时【敌方阵营参考】块整体不注入（原显示"（无）"）。@version 0.3.8；harness 209/209（+6：I2 改结构化默认表断言、U4 字段清单更新（textarea→行列表）、U12 默认 8 行渲染/内置无删除、U13 ＋添加自定义行/删除回收、U14 行开关关闭即时序列化且 parse 剔除、U15 旧字符串迁移、U16 空池无参考块有池注入）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`
+
+**决策依据**：用户三点真机反馈。类型行数据结构对齐世界书条目心智（开关=蓝灯、权重=优先级、删除=GM 权限仅限自定义）。顺带修复 harness 测试自污染：S7 段 floorStep 的 1% 区域事件真随机会偶发 busy 顶掉 T7 心跳断言（v28 的 T7/T7b/T7c 三连失败即此，非产品 bug）→ S7 段显式关区域事件（S9 段自行开启）；I16 加显式事件状态构造防前置异步残留。
+
+**测试要点**：U12 内置行无删除钮（custom:false）；U13 添加→custom 行带删除→删除回收；U14 开关关闭即时序列化且 parseIncidentTypes 剔除该类（权重轮盘不再抽中）；U15 旧字符串存档迁移为 custom:true 数组；U16 空池断言只查"敌方阵营参考"块不查全文"（无）"（名册/墓碑等合法空标记不误伤）。
+
+**验收依据**：IAB harness 209/209；真机验证留给用户（步进器完整显示、类型行增删开关手感、空敌方池推演输入）。
