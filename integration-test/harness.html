@@ -94,6 +94,7 @@ const MOCK = (function () {
     MESSAGE_RECEIVED: 'MESSAGE_RECEIVED',
     MESSAGE_UPDATED: 'MESSAGE_UPDATED',
     MESSAGE_SWIPED: 'MESSAGE_SWIPED',
+    MESSAGE_DELETED: 'MESSAGE_DELETED',
     CHAT_CHANGED: 'CHAT_CHANGED',
   };
   window.getVariables = function (opt) {
@@ -273,7 +274,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.3.8（类型表仿世界书行 + 空池提示词瘦身）', json.content.includes("@version      0.3.8"));
+  assert('版本 v0.4.0（账本 + 远方回响 + 触发链路强化 + 跳屏修复）', json.content.includes("@version      0.4.0"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -540,9 +541,9 @@ async function runAll() {
     return ok;
   })());
   // 栏目导航（V0.3.1 tab 化）：报纸（默认/原版派系流）/ 事件链 / 风声 三栏分立
-  assert('tab 栏渲染（📰报纸/⚡事件链/📣风声 三栏）', (() => {
+  assert('tab 栏渲染（📰报纸/⚡事件链/📣风声/📜旧档 四栏）', (() => {
     const tabs = [...document.querySelectorAll('#ad-tabs .ad-tab')];
-    return tabs.length === 3 && tabs[0].dataset.tab === 'paper' && tabs[1].dataset.tab === 'events' && tabs[2].dataset.tab === 'winds';
+    return tabs.length === 4 && tabs[0].dataset.tab === 'paper' && tabs[1].dataset.tab === 'events' && tabs[2].dataset.tab === 'winds' && tabs[3].dataset.tab === 'ledger';
   })());
   const wireText = () => document.getElementById('ad-wire').innerText;
   const clickTab = name => document.querySelector(`#ad-tabs .ad-tab[data-tab="${name}"]`).click();
@@ -1567,6 +1568,297 @@ async function runAll() {
     s9z2.regionalIncidentDuration = 5; s9z2.regionalIncidentCooldown = 5; s9z2.directorEveryX = 3;
     s9z2.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
     AD.saveSettings(s9z2);
+    MOCK.reset();
+  }
+
+  /* ——— V0.4.0：触发链路强化（尾楼身份校验 / 删楼补挂 / 生成上下文记录）——— */
+  head('V0.4.0 触发链路强化');
+  {
+    const stChat = SillyTavern.getContext().chat;   // 与 ST_MOCK.chat 同引用
+    const BASE_LEN = stChat.length;   // S8 段可能遗留用户尾楼——本段显式构造尾楼身份，段末复原不越权清理
+    const clearTimer = () => { if (AD.state.pendingTimer) { clearTimeout(AD.state.pendingTimer); AD.state.pendingTimer = null; } };
+    MOCK.reset(); AD.loadRuntimeState(); clearTimer();
+    const sv = AD.settings();   // SETTINGS 同引用，就地改即时生效
+    sv.enabledDirector = true;
+
+    // 生成上下文记录（只记不拦——quiet/dryRun 均记录，供 dispatch 日志诊断）
+    MOCK.eventEmit('GENERATION_STARTED', 'normal', { quiet_prompt: '静默提示词' }, false);
+    assert('A1 生成上下文记录（quiet_prompt 识别 → quiet=true，只记不拦）',
+      AD.state.lastGeneration && AD.state.lastGeneration.type === 'normal'
+      && AD.state.lastGeneration.quiet === true && AD.state.lastGeneration.dryRun === false);
+    MOCK.eventEmit('GENERATION_STARTED', 'quiet', {}, true);
+    assert('A2 dryRun 上下文记录 + dispatch 日志后缀格式',
+      AD.state.lastGeneration.type === 'quiet' && AD.state.lastGeneration.dryRun === true
+      && AD.state.lastGeneration.quiet === false && AD.genContextSuffix().includes('dryRun'));
+
+    // 尾楼身份校验：用户楼事件跳过，AI 楼照常（对齐 ACU is_user 校验思路）
+    stChat.push({ mes: '用户编辑自己的楼层', is_user: true, is_system: false });
+    MOCK.eventEmit('MESSAGE_UPDATED');
+    assert('A3 尾楼为用户楼（编辑自己楼层）→ 跳过不调度', AD.state.pendingTimer === null);
+    stChat.pop();
+    stChat.push({ mes: 'AI 叙事楼（A4 构造）', is_user: false, is_system: false });   // 显式造 AI 尾楼——不依赖前段遗留
+    MOCK.eventEmit('MESSAGE_UPDATED');
+    assert('A4 尾楼为 AI 楼 → 照常去抖调度', AD.state.pendingTimer !== null);
+    clearTimer();
+    stChat.pop();
+
+    // 删楼补挂：不走 is_user 校验（删楼后尾楼可能是用户楼，仍需回滚检测）
+    stChat.push({ mes: '删楼后的用户尾楼', is_user: true, is_system: false });
+    MOCK.eventEmit('MESSAGE_DELETED');
+    assert('A5 删楼补挂：MESSAGE_DELETED → 调度回滚检测（用户尾楼也调度）', AD.state.pendingTimer !== null);
+    clearTimer();
+    stChat.pop();
+    sv.enabledDirector = false;
+    MOCK.eventEmit('MESSAGE_DELETED');
+    assert('A6 推演开关关 → 删楼补挂静默', AD.state.pendingTimer === null);
+    sv.enabledDirector = true;
+    while (stChat.length > BASE_LEN) stChat.pop();   // 复原本段推入的楼层（含 S8 遗留之上者）
+    MOCK.reset();
+  }
+
+  /* ——— V0.4.0：账本（diff 入账：Lv3+/终局/风声 + 覆盖截断）与远方回响（采样/掷骰/指令段/回执）——— */
+  head('V0.4.0 账本与远方回响');
+  {
+    const rv = Math.random;
+
+    // ── 账本 diff：纯函数（recordLedger 直写 $ad_ledger）──
+    MOCK.reset();
+    const prevW = JSON.parse(JSON.stringify(WORLD));   // 仓库冲突Lv2/逼近 + 警方收网Lv3/发酵 + 风声Lv2
+    const nextW1 = JSON.parse(JSON.stringify(prevW));
+    nextW1.events.push({ name: '远海封锁', type: 'conflict', stage: '萌芽', stageRound: 1, level: 3, factions: [], zone: '外海', desc: '航线受阻' });
+    nextW1.events.push({ name: '小事', type: 'conflict', stage: '萌芽', stageRound: 1, level: 2, factions: [], zone: '', desc: '' });
+    nextW1.winds.push({ content: '墨尔本报纸头版刊载封锁令', source: '墨尔本先驱报', spread: '公开', level: 3, quietRounds: 0 });
+    AD.recordLedger(prevW, nextW1, 10);
+    let lg = AD.getLedger();
+    assert('G1 Lv3 新事件入账（event_new 带 zone/desc）+ Lv3 新风声入账；Lv2 不入账', lg.length === 1 && lg[0].floor === 10
+      && lg[0].changes.some(c => c.type === 'event_new' && c.name === '远海封锁' && c.zone === '外海')
+      && lg[0].changes.some(c => c.type === 'wind_new' && c.level === 3)
+      && !lg[0].changes.some(c => c.name === '小事'));
+    const nextW2 = JSON.parse(JSON.stringify(prevW));
+    nextW2.events[1].stage = '逼近';   // 警方收网 Lv3 发酵→逼近 → advance
+    nextW2.events[0].stage = '爆发';   // 仓库冲突 Lv2 → 爆发 → terminal（终局不限等级）
+    AD.recordLedger(prevW, nextW2, 11);
+    lg = AD.getLedger();
+    assert('G2 推进入账（Lv3 fromStage→toStage）+ 终局入账（Lv2 爆发不限等级）', lg[0].floor === 11
+      && lg[0].changes.some(c => c.type === 'event_advance' && c.name === '警方收网筹备' && c.fromStage === '发酵' && c.toStage === '逼近')
+      && lg[0].changes.some(c => c.type === 'event_terminal' && c.name === '仓库冲突'));
+    AD.recordLedger(prevW, JSON.parse(JSON.stringify(prevW)), 12);
+    assert('G3 无重大变化不入账（条数不变）', AD.getLedger().length === 2);
+    AD.recordLedger(prevW, nextW2, 11);
+    assert('G4 同楼覆盖（重roll 不重复入账）', AD.getLedger().length === 2);
+    AD.recordLedger(prevW, nextW1, 5);
+    lg = AD.getLedger();
+    assert('G5 楼层回退截断（未来条目被剔除，仅剩回退后条目）', lg.length === 1 && lg[0].floor === 5);
+    const nextW3 = JSON.parse(JSON.stringify(prevW));
+    nextW3.winds[0].content = '达令港夜里能听见仓库方向的枪声（续报）';   // 内容互相包含 → 延续
+    AD.recordLedger(prevW, nextW3, 6);
+    assert('G6 风声延续（内容互相包含）不入账', AD.getLedger().length === 1);
+
+    // ── 采样：结构（最近 1/4 必选 + 旧账洗牌补足总量一半；世界引擎 sampleDistantLedger 同款）──
+    {
+      const many = [];
+      for (let i = 11; i >= 0; i--) many.push({ floor: i, round: i + 1, changes: [{ type: 'event_new', name: `旧账${i}`, level: 3 }] });
+      window.insertOrAssignVariables({ $ad_ledger: many }, { type: 'chat' });
+      Math.random = () => 0;   // 洗牌确定性（j 恒 0）
+      const smp = AD.sampleDistantLedger(Math.random);
+      Math.random = rv;
+      assert('G7 采样：12 条 → 最近 3 必选 + 补足总量 6（最新在前，确定性洗牌序）', smp.length === 6
+        && smp[0].floor === 11 && smp[2].floor === 9 && smp[3].floor === 7);
+    }
+
+    // ── 远方回响掷骰分支 + 指令段 + 回执校验（mock LLM 端到端）──
+    let v4Responder = null, v4LastPrompt = '';
+    window.fetch = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      v4LastPrompt = (body.messages && body.messages[1] && body.messages[1].content) || '';
+      const content = v4Responder ? v4Responder() : '{}';
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+    };
+    const v4s = AD.loadSettings();
+    v4s.director = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+    v4s.regionalIncidentEnabled = true; v4s.regionalIncidentChance = 0;   // 区域事件掷骰静默（互斥用例单独构造）
+    v4s.directorEveryX = 99;   // 心跳不触发
+    v4s.distantEchoEnabled = true; v4s.distantEchoLedgerThreshold = 10; v4s.distantEchoChance = 20; v4s.distantEchoCooldown = 5;
+    AD.saveSettings(v4s);
+    MOCK.reset(); AD.loadRuntimeState();
+    AD.Trigger.busy = false; AD.Trigger.lastDateKey = ''; AD.Trigger.lastStage = '';
+    AD.Trigger.lastCombatResult = ''; AD.Trigger.lastFloorId = -1; AD.Trigger.floorsSinceEvolve = 0;
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=0
+    window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+    const mkLedger = n => { const a = []; for (let i = n - 1; i >= 0; i--) a.push({ floor: i, round: i + 1, changes: [{ type: 'event_new', name: `旧账${i}`, level: 3, zone: 'x', desc: '' }] }); return a; };
+
+    window.insertOrAssignVariables({ $ad_ledger: mkLedger(9) }, { type: 'chat' });   // 9 < 阈值 10
+    AD.rollDistantEcho();
+    assert('R1 账本阈值不足（9<10）不掷骰', !(MOCK.chat['$ad_world'].distant && MOCK.chat['$ad_world'].distant.pending));
+
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=1（幂等守卫：新楼恢复评估）
+    window.insertOrAssignVariables({ $ad_ledger: mkLedger(12) }, { type: 'chat' });   // 12 ≥ 10
+    Math.random = () => 0.999;   // 20% 概率未中
+    AD.rollDistantEcho();
+    Math.random = rv;
+    assert('R2 概率未中（20% 骰 99.9）不掷', !(MOCK.chat['$ad_world'].distant && MOCK.chat['$ad_world'].distant.pending));
+
+    // 命中 → 强制推演 → 回执落地（distance 标记 + 冷却 + 历史）
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=2
+    v4Responder = () => JSON.stringify({
+      digest: '远方世界', factions: WORLD.factions,
+      events: WORLD.events.concat([{ name: '墨尔本码头罢工', type: 'conflict', stage: '萌芽', stageRound: 1, level: 2, factions: [], zone: '墨尔本', desc: '码头工人围堵船坞', _distanceGenerated: true }]),
+      winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [],
+    });
+    Math.random = () => 0;   // 概率骰中 + requestedType=event（0<0.5）+ 采样洗牌确定性
+    AD.rollDistantEcho();
+    Math.random = rv;
+    assert('R3 掷中置位 pending（requestedType=event + 采样入 world.distant）', (() => {
+      const d = MOCK.chat['$ad_world'].distant;
+      return d && d.pending === true && d.requestedType === 'event' && Array.isArray(d.sample) && d.sample.length === 6;
+    })());
+    const r4landed = await waitFor(() => {
+      const w = MOCK.chat['$ad_world'];
+      const ev = (w.events || []).find(e => e.name === '墨尔本码头罢工');
+      return ev && ev.distance === true && w.distant && w.distant.pending === false && w.distant.cooldown === 5;
+    }, 8000);
+    assert('R4 回执落地：distance:true 持久标记 + pending 清 + 冷却 5', r4landed);
+    assert('R5 指令段（强制远方动态 + 采样账本注入 + 标记与防复刻/远方区域要求）', v4LastPrompt.includes('本轮必须生成一条远方动态')
+      && v4LastPrompt.includes('_distanceGenerated') && v4LastPrompt.includes('不得复刻') && v4LastPrompt.includes('远方区域')
+      && v4LastPrompt.includes('旧账'));
+    assert('R6 历史入档（system 类 distant-echo 落地记录）', AD.getHistory().system.some(e => e.type === 'distant-echo' && (e.note || '').includes('墨尔本码头罢工')));
+
+    MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=3
+    AD.rollDistantEcho();
+    assert('R7 生成成功后冷却递减（5→4，冷却期不掷新骰）', MOCK.chat['$ad_world'].distant.cooldown === 4
+      && MOCK.chat['$ad_world'].distant.pending === false);
+
+    // 回执校验失败：类型不匹配 → 剔除标记对象 + pending 保持重试
+    {
+      const wNow = JSON.parse(JSON.stringify(MOCK.chat['$ad_world']));
+      wNow.distant = { pending: true, cooldown: 0, sample: [], requestedFloor: 3, requestedType: 'wind' };
+      window.insertOrAssignVariables({ $ad_world: wNow }, { type: 'chat' });
+      const roundBefore = wNow.round;
+      v4Responder = () => JSON.stringify({
+        digest: '失败世界', factions: WORLD.factions,
+        events: WORLD.events.concat([{ name: '类型错误对象', type: 'conflict', stage: '萌芽', stageRound: 1, level: 2, factions: [], zone: 'x', desc: '', _distanceGenerated: true }]),
+        winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [],
+      });
+      MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=4
+      AD.rollDistantEcho();   // pending → 强制推演（要求 wind 但回执是 event → 校验失败）
+      const retried = await waitFor(() => {
+        const w = MOCK.chat['$ad_world'];
+        return w && w.round > roundBefore && w.distant && w.distant.pending === true
+          && !(w.events || []).some(e => e.name === '类型错误对象');
+      }, 8000);
+      assert('R8 校验失败（类型不匹配）：标记对象剔除 + pending 保持重试', retried);
+    }
+
+    // 互斥：区域事件占用指令段 → 远方顺延
+    {
+      const wNow = JSON.parse(JSON.stringify(MOCK.chat['$ad_world']));
+      wNow.incident = { active: true, title: '互斥测试', type: '火灾', zone: '', impact: '', duration: 3, cooldown: 0 };
+      wNow.distant = { pending: true, cooldown: 0, sample: [{ floor: 1, round: 1, changes: [] }], requestedFloor: 4, requestedType: 'event' };
+      window.insertOrAssignVariables({ $ad_world: wNow }, { type: 'chat' });
+      v4Responder = () => JSON.stringify({ digest: '互斥', factions: WORLD.factions, events: WORLD.events, winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [] });
+      MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=5
+      const busyBefore = AD.Trigger.busy;
+      AD.rollDistantEcho();
+      assert('R9 互斥：区域事件活跃占用指令段 → 远方顺延（不触发推演，pending 保持）', busyBefore === false && AD.Trigger.busy === false
+        && MOCK.chat['$ad_world'].distant.pending === true);
+      const wNow2 = JSON.parse(JSON.stringify(MOCK.chat['$ad_world']));
+      wNow2.incident = { active: false, title: '', type: '', zone: '', impact: '', duration: 0, cooldown: 0 };
+      window.insertOrAssignVariables({ $ad_world: wNow2 }, { type: 'chat' });
+      AD.state.pendingIncident = { type: '火灾', guide: '' };
+      MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });   // floorId=6
+      AD.rollDistantEcho();
+      AD.state.pendingIncident = null;
+      assert('R10 互斥：pendingIncident 挂起 → 同样顺延（pending 保持）', AD.Trigger.busy === false
+        && MOCK.chat['$ad_world'].distant.pending === true);
+    }
+
+    // validateWorld distance 继承（远方标记跨推演不掉标）
+    assert('R11 validateWorld distance 标记跨推演继承', (() => {
+      const prev = JSON.parse(JSON.stringify(WORLD));
+      prev.events[0].distance = true; prev.winds[0].distance = true;
+      const parsed = { digest: 'x', factions: WORLD.factions,
+        events: WORLD.events.map(e => Object.assign({}, e)), winds: WORLD.winds.map(w => Object.assign({}, w)),
+        encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [] };
+      const { world } = AD.validateWorld(parsed, { lastWorld: prev, roster: { tombstones: [] } });
+      const ev = world.events.find(e => e.name === '仓库冲突');
+      const wd = world.winds.find(w => w.content === '达令港夜里能听见仓库方向的枪声');
+      return ev && ev.distance === true && wd && wd.distance === true;
+    })());
+
+    // ── 报纸 UI：第四 tab「📜 旧档」+ 远方徽章 ──
+    MOCK.reset(); AD.loadRuntimeState();
+    localStorage.setItem('ad_ui_v1', JSON.stringify({ theme: 'paper', activeTab: 'ledger', panelOpen: true }));
+    {
+      const wUI = JSON.parse(JSON.stringify(WORLD));
+      wUI.events.push({ name: '墨尔本码头罢工', type: 'conflict', stage: '萌芽', stageRound: 1, level: 2, factions: [], zone: '墨尔本', desc: '围堵船坞', distance: true });
+      wUI.winds.push({ content: '墨尔本报纸头版刊载封锁令', source: '墨尔本先驱报', spread: '公开', level: 3, quietRounds: 0, distance: true });
+      window.insertOrAssignVariables({ $ad_world: wUI }, { type: 'chat' });
+      window.insertOrAssignVariables({ $ad_ledger: [{ floor: 42, round: 7, changes: [
+        { type: 'event_new', name: '远海封锁', level: 3, zone: '外海', desc: '航线受阻' },
+        { type: 'event_terminal', name: '仓库冲突', level: 2, toStage: '爆发', desc: '火并收场' },
+        { type: 'wind_new', level: 3, content: '墨尔本报纸头版刊载封锁令', source: '墨尔本先驱报' },
+      ] }] }, { type: 'chat' });
+      AD.state.lastLocationText = '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂';
+      AD.renderWire();
+      let wire = document.getElementById('ad-wire').innerText;
+      assert('V1 旧档 tab 渲染（楼层徽章 №42 + 新增/终局/风声行）',
+        document.querySelector('#ad-tabs .ad-tab[data-tab="ledger"]').classList.contains('active')
+        && wire.includes('№42') && wire.includes('远海封锁') && wire.includes('[终局]') && wire.includes('墨尔本报纸头版'));
+      document.querySelector('#ad-tabs .ad-tab[data-tab="events"]').click();
+      const evItem = [...document.querySelectorAll('#ad-wire .ad-item')].find(n => n.textContent.includes('墨尔本码头罢工'));
+      assert('V2 事件链 tab 远方徽章（🌏 远方 + zone 展示）', evItem && evItem.textContent.includes('🌏 远方') && evItem.textContent.includes('墨尔本'));
+      document.querySelector('#ad-tabs .ad-tab[data-tab="winds"]').click();
+      const wItem = [...document.querySelectorAll('#ad-wire .ad-item')].find(n => n.textContent.includes('墨尔本报纸头版'));
+      assert('V3 风声 tab 远方徽章', wItem && wItem.textContent.includes('🌏 远方'));
+      delete MOCK.chat['$ad_ledger'];
+      document.querySelector('#ad-tabs .ad-tab[data-tab="ledger"]').click();
+      assert('V4 旧档空态提示', document.getElementById('ad-wire').innerText.includes('尚无重大事件入账'));
+    }
+
+    // ── 设置：远方回响字段 + 跳屏修复（增删事件行不再回 API 首屏）──
+    const sd = AD.loadSettings();
+    assert('V5 远方回响设置默认值（开关/阈值/概率/冷却）', sd.distantEchoEnabled === true && sd.distantEchoLedgerThreshold === 10
+      && sd.distantEchoChance === 20 && sd.distantEchoCooldown === 5);
+    document.getElementById('ad-btn-settings').click();   // PC 路径 → openSettingsModal（回首屏）
+    assert('V6 新开设置回到 API 首屏', document.getElementById('l-api').classList.contains('active'));
+    document.querySelector('.st-nav-btn[data-stab="l-incidents"]').click();
+    document.getElementById('ad-inc-add').click();   // 全量重渲（原 bug：跳回 l-api）
+    const v7ok1 = document.getElementById('l-incidents').classList.contains('active')
+      && !document.getElementById('l-api').classList.contains('active');
+    const delBtn = document.querySelector('#ad-inc-list [data-inc-del]');
+    if (delBtn) delBtn.click();   // 删除自定义行（又一次全量重渲）
+    assert('V7 增/删自定义事件行不再跳回 API 首屏（当前栏保持，行数复原）', v7ok1
+      && document.getElementById('l-incidents').classList.contains('active')
+      && document.querySelectorAll('#ad-inc-list .inc-row').length === 8);
+    {
+      const box = document.getElementById('ad-modal-box');
+      const fieldsOk = ['distantEchoEnabled', 'distantEchoLedgerThreshold', 'distantEchoChance', 'distantEchoCooldown']
+        .every(k => !!box.querySelector(`[data-k="${k}"]`));
+      const inp = box.querySelector('[data-k="distantEchoChance"]');
+      inp.value = '33';
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+      assert('V8 PC 远方回响字段在场 + 修改即时持久化（概率 20→33）', fieldsOk && AD.settings().distantEchoChance === 33);
+    }
+    document.getElementById('ad-set-close').click();
+    // 移动端简版：远方回响卡片在场
+    const realUA = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile', configurable: true });
+    document.getElementById('ad-btn-settings').click();   // 移动 UA → 面板内切
+    assert('V9 移动端简版：远方回响卡片（开关 + 阈值/概率/冷却）', (() => {
+      const st = document.getElementById('panel-view-settings');
+      const ok = ['distantEchoEnabled', 'distantEchoLedgerThreshold', 'distantEchoChance', 'distantEchoCooldown']
+        .every(k => !!st.querySelector(`[data-k="${k}"]`));
+      document.getElementById('ad-m-save').click();   // 保存返回报纸视图
+      return ok;
+    })());
+    Object.defineProperty(navigator, 'userAgent', { value: realUA, configurable: true });   // 还原 UA
+
+    // 清理
+    const vz = AD.loadSettings();
+    vz.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
+    vz.directorEveryX = 3; vz.regionalIncidentEnabled = true; vz.regionalIncidentChance = 1;
+    vz.distantEchoEnabled = true; vz.distantEchoLedgerThreshold = 10; vz.distantEchoChance = 20; vz.distantEchoCooldown = 5;
+    AD.saveSettings(vz);
     MOCK.reset();
   }
 

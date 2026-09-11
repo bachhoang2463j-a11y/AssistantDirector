@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.3.8
+// @version      0.4.0
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.3.8';
+  const SCRIPT_VERSION = '0.4.0';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -56,6 +56,7 @@
     history: '$ad_history',         // V0.3.5：历史记录（推演/随机遭遇/系统事件，随聊天走）
     state: '$ad_state',    // 运行时状态（上次注入文本/骰子楼层/防连战锁等）
     roster: '$ad_roster',  // 名册+墓碑
+    ledger: '$ad_ledger',  // V0.4.0：重大事件账本（Lv3+ 事件与风声 diff 入账，远方回响的采样源）
   };
 
   const ALERT_LEVELS = ['松懈', '常规', '警戒', '严密'];
@@ -111,6 +112,10 @@
       regionalIncidentDuration: 5,   // 事件持续楼数（期间推演延续余波）
       regionalIncidentCooldown: 5,   // 消散后冷却楼数
       regionalIncidentTypes: DEFAULT_INCIDENT_TYPES(),   // 事件类型表（结构化数组，仿世界书行）
+      distantEchoEnabled: true,     // 远方回响总开关：账本驱动，在玩家所在大区之外生成远方动态
+      distantEchoLedgerThreshold: 10,  // 账本阈值：累积 N 条重大记录后开始掷骰
+      distantEchoChance: 20,        // 触发概率（百分比/楼）
+      distantEchoCooldown: 5,       // 生成成功后的冷却楼数
       debug: false,           // 调试模式：记录 LLM 请求/响应（环形日志 20 条 + 控制台输出）
     };
   }
@@ -158,6 +163,10 @@
       regionalIncidentDuration: Number.isFinite(saved.regionalIncidentDuration) && saved.regionalIncidentDuration >= 1 ? saved.regionalIncidentDuration : 5,
       regionalIncidentCooldown: Number.isFinite(saved.regionalIncidentCooldown) && saved.regionalIncidentCooldown >= 0 ? saved.regionalIncidentCooldown : 5,
       regionalIncidentTypes: normalizeIncidentTypes(saved.regionalIncidentTypes),
+      distantEchoEnabled: saved.distantEchoEnabled !== undefined ? saved.distantEchoEnabled !== false : true,
+      distantEchoLedgerThreshold: Number.isFinite(saved.distantEchoLedgerThreshold) && saved.distantEchoLedgerThreshold >= 1 ? saved.distantEchoLedgerThreshold : 10,
+      distantEchoChance: Number.isFinite(saved.distantEchoChance) ? saved.distantEchoChance : 20,
+      distantEchoCooldown: Number.isFinite(saved.distantEchoCooldown) && saved.distantEchoCooldown >= 0 ? saved.distantEchoCooldown : 5,
       debug: saved.debug === true,
     };
   }
@@ -176,7 +185,7 @@
     try {
       const p = JSON.parse(localStorage.getItem(LS.ui) || '{}') || {};
       if (!p.theme) p.theme = 'paper';
-      if (!['paper', 'events', 'winds'].includes(p.activeTab)) p.activeTab = 'paper';
+      if (!['paper', 'events', 'winds', 'ledger'].includes(p.activeTab)) p.activeTab = 'paper';
       return p;
     } catch (e) { return { theme: 'paper', activeTab: 'paper' }; }
   }
@@ -470,6 +479,7 @@
     received: 'MESSAGE_RECEIVED',
     updated: 'MESSAGE_UPDATED',
     swiped: 'MESSAGE_SWIPED',
+    deleted: 'MESSAGE_DELETED',
     chatChanged: 'CHAT_CHANGED',
   };
   function bindEvent(name, cb) {
@@ -609,6 +619,13 @@
   }
 
   function onGenerationStarted(type, _opts, dryRun) {
+    // V0.4.0 生成上下文诊断记录（只记不拦）：真机若出现"其他脚本静默追加楼层导致误触发"，
+    // dispatch 日志里的 type/dryRun/quiet 有据可依，再决定是否升级为门控
+    State.lastGeneration = {
+      type: String(type || ''),
+      dryRun: dryRun === true,
+      quiet: !!(_opts && typeof _opts.quiet_prompt === 'string' && _opts.quiet_prompt.trim()),
+    };
     if (!SETTINGS.randomCombatEnabled) return;
     if (dryRun || type === 'swipe' || type === 'regenerate') return;
     const chat = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext().chat : null;
@@ -651,6 +668,7 @@
     combatLastSeen: false,    // 上楼检测时是否处于战斗中（true→false 跳变 = 战斗结束）
     combatEndFloorId: -1,     // 最近一次战斗结束的楼层号（其后 N 楼为随机遭遇冷却窗口）
     pendingIncident: null,    // 区域突发事件挂起（{ type, guide }——掷中待生成/失败重试，推演成功回执后清除）
+    lastGeneration: null,     // 最近一次 GENERATION_STARTED 上下文（type/dryRun/quiet——诊断用，不持久化）
     tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
     pendingTimer: null,
   };
@@ -695,7 +713,16 @@
 
   function onFloorEvent() {
     if (!SETTINGS.enabledDirector) return;   // 随机遭遇独立于此开关（挂 GENERATION_STARTED）
+    // V0.4.0 尾楼身份校验（对齐 ACU 思路）：最后一楼是用户楼（编辑自己楼层）时不触发重算
+    const chat = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext().chat : null;
+    if (Array.isArray(chat) && chat.length && chat[chat.length - 1] && chat[chat.length - 1].is_user === true) return;
     scheduleDispatch('floor-event');
+  }
+  // V0.4.0 删楼补挂：删除楼层后及时跑回滚检测 + 注入重建（不走尾楼 is_user 校验——
+  // 删楼后尾楼可能是用户楼；此前要等下一次楼层事件，世界状态与楼层错位窗口过长）
+  function onMessageDeleted() {
+    if (!SETTINGS.enabledDirector) return;
+    scheduleDispatch('message-deleted');
   }
   function onChatChanged() {
     // 换聊天：运行时状态重置（情报流也清空），注入词条按新聊天重写。
@@ -993,6 +1020,218 @@
     if (parsed && parsed.incident) delete parsed.incident;   // 回执消费完毕，不进 world schema
   }
 
+  // —— 重大事件账本（V0.4.0，镜像世界引擎 ledger：diff 入账，远方回响的采样源）—————
+  // 推演后 diff（推演前世界 vs 推演后世界）：Lv≥3 新事件 / 推进至爆发·平息（终局，
+  // 不限等级）/ Lv≥3 新风声 → 合并为一条（按楼层键）。独立于 $ad_history 环形 50 条——
+  // 重大事件不随流水滚动丢失，形成"这方世界发生过什么大事"的编年档案。
+
+  const LEDGER_KEEP = 30;   // 保留条数上限（模块常量，暂不做设置项）
+
+  function getLedger() {
+    const v = readChatVar(CV.ledger);
+    return Array.isArray(v) ? v : [];
+  }
+
+  // 风声匹配（对齐 validateWorld 延续判定）：norm 后相等或互相包含 → 视为同一条（非新增）
+  function windSeen(winds, content) {
+    const nc = norm(content);
+    if (!nc) return true;
+    return (winds || []).some(x => x && norm(x.content)
+      && (norm(x.content) === nc || norm(x.content).includes(nc) || nc.includes(norm(x.content))));
+  }
+
+  function recordLedger(prevWorld, newWorld, floorId) {
+    const changes = [];
+    const prevEvents = (prevWorld && Array.isArray(prevWorld.events)) ? prevWorld.events : [];
+    const prevMap = new Map(prevEvents.filter(Boolean).map(e => [e.name, e]));
+    for (const ev of (newWorld.events || [])) {
+      if (!ev || !ev.name) continue;
+      const isTerminal = ev.stage === '爆发' || ev.stage === '平息';
+      if ((!ev.level || ev.level < 3) && !isTerminal) continue;
+      const prev = prevMap.get(ev.name);
+      if (!prev) {
+        changes.push({ type: isTerminal ? 'event_terminal' : 'event_new', name: ev.name,
+          level: ev.level, eventType: ev.type, stage: ev.stage, zone: ev.zone || '', desc: ev.desc || '' });
+      } else if (prev.stage !== ev.stage) {
+        changes.push({ type: isTerminal ? 'event_terminal' : 'event_advance', name: ev.name,
+          level: ev.level, fromStage: prev.stage, toStage: ev.stage, desc: ev.desc || '' });
+      }
+    }
+    const prevWinds = (prevWorld && Array.isArray(prevWorld.winds)) ? prevWorld.winds : [];
+    for (const w of (newWorld.winds || [])) {
+      if (!w || !w.content || !w.level || w.level < 3) continue;
+      if (!windSeen(prevWinds, w.content)) {
+        changes.push({ type: 'wind_new', level: w.level, content: w.content, source: w.source || '' });
+      }
+    }
+    if (!changes.length) return;
+    let entries = getLedger();
+    if (Number.isFinite(floorId) && floorId >= 0) {
+      entries = entries.filter(e => e && Number.isFinite(e.floor) && e.floor <= floorId   // 楼层回退：截掉未来条目
+        && e.floor !== floorId);   // 同楼重roll：覆盖
+    }
+    entries.unshift({ floor: Number.isFinite(floorId) ? floorId : 0, round: newWorld.round || 0, changes });
+    if (entries.length > LEDGER_KEEP) entries.length = LEDGER_KEEP;
+    writeChatVar(CV.ledger, entries);
+    log(`账本入账（楼层 ${floorId} · 第 ${newWorld.round || '?'} 轮）：${changes.length} 条变化`);
+  }
+
+  // —— 远方回响（V0.4.0，镜像世界引擎 distantEvent：账本驱动、本地骰、失败重试）—————
+  // 账本 ≥ 阈值 → 概率骰 → 采样旧账（防复刻参照）→ 强制推演生成 zone 不在玩家当前大区的
+  // Lv2/3 新事件/风声 → 回执 _distanceGenerated 校验 → distance:true 持久标记 + 冷却。
+  // 指令段与区域事件互斥：区域事件掷中/重试/活跃期优先，远方顺延。
+
+  function ensureDistant(world) {
+    if (!world.distant || typeof world.distant !== 'object') {
+      world.distant = { pending: false, cooldown: 0, sample: [], requestedFloor: 0, requestedType: '' };
+    }
+    world.distant.pending = world.distant.pending === true;
+    world.distant.cooldown = Math.max(0, parseInt(world.distant.cooldown, 10) || 0);
+    world.distant.sample = Array.isArray(world.distant.sample) ? world.distant.sample : [];
+    world.distant.requestedFloor = parseInt(world.distant.requestedFloor, 10) || 0;
+    world.distant.requestedType = world.distant.requestedType === 'event' || world.distant.requestedType === 'wind' ? world.distant.requestedType : '';
+    return world.distant;
+  }
+
+  // 采样（世界引擎 sampleDistantLedger 同款）：最近 1/4 必选 + 旧账 Fisher-Yates 洗牌补足总量一半
+  function sampleDistantLedger(rand) {
+    const entries = getLedger();
+    const recentCount = Math.floor(entries.length / 4);
+    const targetCount = Math.floor(entries.length / 2);
+    const recent = entries.slice(0, recentCount);
+    const older = entries.slice(recentCount);
+    for (let i = older.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [older[i], older[j]] = [older[j], older[i]];
+    }
+    return recent.concat(older.slice(0, Math.max(0, targetCount - recent.length)))
+      .map(e => ({ floor: e.floor, round: e.round, changes: Array.isArray(e.changes) ? e.changes : [] }));
+  }
+
+  // 强制指令段（世界引擎 buildDistantEventPrompt 铁律精华，适配副导演 schema）
+  function buildDistantDirective(d) {
+    const wantsEvent = d.requestedType === 'event';
+    return `【本地骰子强制指令：本轮必须生成一条远方动态】
+以下是历史账本采样，仅用于识别已经使用过的事件主题、冲突结构和风声内容。不得续写、改写、复刻或直接关联这些记录：
+${JSON.stringify(d.sample || [], null, 1)}
+
+本地系统已指定本轮远方动态的类型：${wantsEvent ? '事件链 events' : '风声 winds'}。
+结合当前世界状态与世界观，为本次远方动态独立新增一条${wantsEvent ? '事件（events 数组新增一项）' : '风声（winds 数组新增一项）'}（不影响你对其他已有世界状态的正常更新）。不得改成另一种类型。
+
+强制要求：
+- 新对象等级只能是 Lv2 或 Lv3。
+- 新对象必须额外携带临时标记 "_distanceGenerated": true（仅供本地确认生成成功，不得添加到其他对象）。
+- 玩家当前所在地：${State.lastLocationText || '未知'}——新对象不得发生在玩家当前大区，必须是远方区域（${wantsEvent ? 'zone 填远方大区' : '内容指向远方区域'}）。
+- 与 {{user}} 的当前行为、资产、名声、仇敌及所在场景没有直接因果关系，不得强行打断 {{user}} 当前行动。
+- 不得由上述账本中的既有事件、势力冲突或风声直接引发，也不得复刻其主题与结构。
+- 必须扎根于当前世界观，发生在合理存在的远方区域、群体或社会系统中，不能成为无因果的随机噪音。
+- 本次远方动态只能有一个带 "_distanceGenerated" 标记的新对象。`;
+  }
+
+  function triggerDistantEvolve() {
+    log('远方回响：触发强制推演（distant-echo）');
+    generateDirectorEvolve('distant-echo').catch(e => logWarn('远方回响推演异常', e));
+  }
+
+  // 每楼掷骰（挂 dispatchNow，区域事件之后、本地骰之前——幂等守卫读 lastDiceFloorId，更新留给 runLocalDice）
+  function rollDistantEcho() {
+    if (!SETTINGS.distantEchoEnabled) return false;
+    const world = readChatVar(CV.world);
+    if (!world || !Array.isArray(world.events)) return false;
+    const floorId = currentFloorId();
+    if (floorId < 0 || floorId <= State.lastDiceFloorId) return false;
+    const distant = ensureDistant(world);
+    const occupied = !!(State.pendingIncident || (world.incident && world.incident.active));   // 指令段被区域事件占用
+    let changed = false;
+    if (distant.pending) {
+      if (!occupied) triggerDistantEvolve();   // 挂起重试（同款 _retry，推演回执失败保留 pending）
+    } else if (distant.cooldown > 0) {
+      distant.cooldown -= 1;
+      changed = true;
+    } else if (!occupied) {
+      const entries = getLedger();
+      const threshold = clamp(1, 999, Number(SETTINGS.distantEchoLedgerThreshold) || 10);
+      const chance = clamp(0, 100, Number(SETTINGS.distantEchoChance) || 0);
+      if (entries.length >= threshold && chance > 0 && Math.random() * 100 < chance) {
+        distant.pending = true;
+        distant.sample = sampleDistantLedger(Math.random);
+        distant.requestedFloor = floorId;
+        distant.requestedType = Math.random() < 0.5 ? 'event' : 'wind';
+        changed = true;
+        triggerDistantEvolve();
+        log(`远方回响掷中（账本 ${entries.length} 条 ≥ 阈值 ${threshold}，${chance}% 骰中）——本轮要求生成${distant.requestedType === 'event' ? '事件链' : '风声'}`);
+      }
+    }
+    if (changed) writeChatVar(CV.world, world);
+    return changed;
+  }
+
+  // 回执处理（generateDirectorEvolve 合并段，读原始 parsed 的 _distanceGenerated 标记——
+  // validateWorld 会重建对象丢弃未知字段）：恰好一个 + 类型匹配 + Lv2/3 + 形状合法 + 确为新对象；
+  // 失败剔除标记对象、pending 保持下次推演重试；成功在已验证对象上落 distance:true 持久标记 + 冷却。
+  function acceptDistantEcho(world, prevWorld, parsed) {
+    const rawEvents = (parsed && Array.isArray(parsed.events)) ? parsed.events : [];
+    const rawWinds = (parsed && Array.isArray(parsed.winds)) ? parsed.winds : [];
+    const markedEvents = rawEvents.filter(x => x && typeof x === 'object' && x._distanceGenerated === true);
+    const markedWinds = rawWinds.filter(x => x && typeof x === 'object' && x._distanceGenerated === true);
+    const marked = markedEvents.concat(markedWinds);
+    const distant = (world.distant && typeof world.distant === 'object') ? world.distant : null;
+    if (!marked.length) {
+      if (distant && distant.pending) {
+        toast('远方回响生成未返回，下次推演将重试');
+        logWarn('远方回响：推演未返回 _distanceGenerated 标记对象，保留 pending 下次重试');
+      }
+      return;
+    }
+    if (!distant || !distant.pending) return;   // 未掷中：自发标记对象当普通条目放行（标记不进 schema）
+    const prevEvents = (prevWorld && Array.isArray(prevWorld.events)) ? prevWorld.events : [];
+    const prevWinds = (prevWorld && Array.isArray(prevWorld.winds)) ? prevWorld.winds : [];
+    const evName = x => String((x.name != null && x.name !== '') ? x.name : (x['事件'] || x['名称'] || '')).trim();
+    const windContent = x => String((x.content != null && x.content !== '') ? x.content : (x['风声'] || x['内容'] || '')).trim();
+    const candidate = marked.length === 1 ? marked[0] : null;
+    const isEvent = candidate ? markedEvents.includes(candidate) : false;
+    const typeMatches = !!candidate && ((distant.requestedType === 'event' && isEvent) || (distant.requestedType === 'wind' && !isEvent));
+    const level = candidate ? parseInt(candidate.level, 10) : 0;
+    const isNew = !!candidate && (isEvent
+      ? !prevEvents.some(x => x && x.name === evName(candidate))
+      : !windSeen(prevWinds, windContent(candidate)));
+    const validShape = !!candidate && (isEvent
+      ? !!evName(candidate) && ['conflict', 'progress'].includes(candidate.type)
+      : !!windContent(candidate));
+    if (!(candidate && typeMatches && (level === 2 || level === 3) && isNew && validShape)) {
+      // 剔除"新对象"级别的标记条目（名字/内容与上次世界重合的是续写对象，不剔防误删既有条目）
+      const badNames = new Set(markedEvents
+        .filter(x => !prevEvents.some(p => p && p.name === evName(x)))
+        .map(evName).filter(Boolean));
+      if (badNames.size) world.events = (world.events || []).filter(ev => !badNames.has(ev.name));
+      const badWinds = markedWinds
+        .filter(x => !windSeen(prevWinds, windContent(x)))
+        .map(x => norm(windContent(x))).filter(Boolean);
+      if (badWinds.length) world.winds = (world.winds || []).filter(w => !badWinds.includes(norm(w.content || '')));
+      logWarn('远方回响生成未通过校验，下次推演继续强制生成');
+      return;
+    }
+    // 成功：在已验证对象上落 distance 持久标记（validateWorld 重建对象——按 name/content 匹配）
+    let landed = false;
+    if (isEvent) {
+      const target = (world.events || []).find(x => x && x.name === evName(candidate));
+      if (target) { target.distance = true; landed = true; }
+    } else {
+      const nc = norm(windContent(candidate));
+      const target = (world.winds || []).find(x => x && norm(x.content) === nc);
+      if (target) { target.distance = true; landed = true; }
+    }
+    if (!landed) logWarn('远方回响落地但未匹配到已验证对象（distance 标记缺失）');
+    distant.pending = false;
+    distant.cooldown = Math.max(1, Number(SETTINGS.distantEchoCooldown) || 5);
+    distant.sample = [];
+    distant.requestedFloor = 0;
+    distant.requestedType = '';
+    pushHistory('system', { type: 'distant-echo', note: `远方回响落地：${isEvent ? evName(candidate) : '远方风声'}（Lv${level}）` });
+    toast(`🌏 远方回响：${isEvent ? evName(candidate) : windContent(candidate).slice(0, 18)}（Lv${level}）`);
+    log(`远方回响落地：${isEvent ? '事件 ' + evName(candidate) : '风声'}（Lv${level}，冷却 ${distant.cooldown} 楼）`);
+  }
+
   // —— 历史记录（V0.3.5，$ad_history 随聊天走）———————————————————————
   // 四类：evolve（世界推演）/ combat（随机遭遇触发）/ incident（区域突发事件）/ system（楼层回滚、战斗结束）。
   // 各类环形上限 50 条，最新在前。世界状态的演变过程从此前端可见。
@@ -1074,6 +1313,13 @@
 
   // —— 主配发流程（纯程序，零 LLM；每楼重算注入，幂等写入）———————————
 
+  // V0.4.0 dispatch 日志的生成上下文后缀（诊断：定位静默/后台生成导致的误触发）
+  function genContextSuffix() {
+    const g = State.lastGeneration;
+    if (!g) return '';
+    return ` · 上次生成 ${g.type || '?'}${g.dryRun ? ' dryRun' : ''}${g.quiet ? ' quiet' : ''}`;
+  }
+
   function dispatchNow(reason) {
     if (!SETTINGS.enabledDirector) return;   // 推演总开关关：完全静默（随机遭遇独立工作）
     const stat = readLatestStatData();
@@ -1091,6 +1337,7 @@
     maybeRollbackWorld();   // S8：楼层回退检测（删楼/回退编辑 → 回滚到上一推演点）
     trackCombatEnd();       // V0.3.4：战斗结束检测（冷却窗口起点）
     rollRegionalIncident(); // S9：区域突发事件状态机（活跃/消散/冷却/重试/掷骰——先于本地骰，幂等守卫共享）
+    rollDistantEcho();      // V0.4.0：远方回响掷骰（账本驱动，幂等守卫共享；指令段与区域事件互斥）
     runLocalDice();   // 本地骰（事件链/风声）——在构建注入前推进
     const world = readChatVar(CV.world) || null;
 
@@ -1106,9 +1353,9 @@
       State.forceDirectorWrite = false;   // 开关重开的一次性强写（词条见 disabled 会重新上灯）
       writeWbEntry(WB_ENTRY_DIRECTOR, text);   // 异步写词条（内部幂等 + merge3 用户改动兜底）
       if (els.dot) els.dot.classList.add('on');   // 更新提醒：展开后熄灭
-      log(`副导演注入已更新（${reason}）`);
+      log(`副导演注入已更新（${reason}${genContextSuffix()}）`);
     } else {
-      log(`副导演注入无变化，保持（${reason}）`);
+      log(`副导演注入无变化，保持（${reason}${genContextSuffix()}）`);
     }
     persistRuntimeState();
     updatePanelStatus(null, { locationText, world });
@@ -1533,6 +1780,10 @@
         const w = readChatVar(CV.world);
         return (w && w.incident && w.incident.active) ? w.incident : null;   // 活跃期（Ongoing 指令段）
       })(),
+      pendingDistant: (() => {
+        const w = readChatVar(CV.world);
+        return (w && w.distant && w.distant.pending) ? w.distant : null;   // V0.4.0：远方回响挂起（指令段，区域事件之后）
+      })(),
     };
   }
 
@@ -1584,6 +1835,8 @@
       // ⑨b 区域突发事件指令段（S9）：掷中/重试 → 强制生成指令；活跃期 → 延续余波指令（互斥）
       ...(ctx.pendingIncident ? [buildIncidentDirective(ctx.pendingIncident)]
         : (ctx.activeIncident ? [buildIncidentOngoing(ctx.activeIncident)] : [])),
+      // ⑨c 远方回响指令段（V0.4.0）：与区域事件指令段互斥（掷中/活跃期优先），远方顺延到空闲轮
+      ...(!(ctx.pendingIncident || ctx.activeIncident) && ctx.pendingDistant ? [buildDistantDirective(ctx.pendingDistant)] : []),
       // ⑩ 附加铁律（用户手输，最高优先级）——放文末：末尾注意力区块，压过前文的默认规则
       ...(ctx.extraRules ? [`【附加铁律（用户指定，优先级高于本文所有默认规则）】\n${ctx.extraRules}`] : []),
     ].join('\n\n');
@@ -1653,6 +1906,7 @@
         factions: (Array.isArray(ev.factions) ? ev.factions : []).map(String).filter(Boolean),
         zone: String(ev.zone || '').trim(),
         desc: String(pick(ev, 'desc', '描述', '现状') || ''),
+        distance: prev && prev.distance === true ? true : undefined,   // V0.4.0：远方标记继承（防 validateWorld 重建丢标）
       };
     }).filter(Boolean);
 
@@ -1669,6 +1923,7 @@
         spread: WIND_SPREADS.includes(w.spread) ? w.spread : '流传',
         level: clamp(1, 3, Number(w.level) || 1),
         quietRounds: prev ? (prev.quietRounds || 0) : 0,
+        distance: prev && prev.distance === true ? true : undefined,   // V0.4.0：远方标记继承
       };
     }).filter(Boolean);
 
@@ -1827,7 +2082,10 @@
       // S9：活跃区域事件从旧世界继承（validateWorld 构造的是全新对象——不继承会丢事件），
       // 随后 mergeIncident 决定覆盖（本次掷中回执）或保留
       if (prevWorld && prevWorld.incident) world.incident = prevWorld.incident;
+      if (prevWorld && prevWorld.distant) world.distant = prevWorld.distant;   // V0.4.0：远方回响状态继承
       mergeIncident(world, parsed);
+      acceptDistantEcho(world, prevWorld, parsed);   // V0.4.0：远方回响回执（读原始 parsed 的标记对象）
+      recordLedger(prevWorld, world, world.floorId);   // V0.4.0：账本 diff 入账
       pushHistory('evolve', { reason, round: world.round, digest: world.digest || '',
         factions: world.factions.length, events: world.events.length, winds: world.winds.length,
         changes: diffWorld(prevWorld, world) });
@@ -2368,6 +2626,7 @@
         <button class="ad-tab" data-tab="paper" title="《悉尼宪报》派系公开征兆（灰卡揭幕体系）">📰 报纸</button>
         <button class="ad-tab" data-tab="events" title="进行中的事件链（本地骰每楼推进）">⚡ 事件链</button>
         <button class="ad-tab" data-tab="winds" title="风声与舆论（安静超时按概率消散）">📣 风声</button>
+        <button class="ad-tab" data-tab="ledger" title="重大事件账本（Lv3+ 与终局自动归档——远方回响的采样源）">📜 旧档</button>
       </div>
       <div class="ad-wire" id="ad-wire"><div id="ad-wire-body"></div></div>
       <div class="ad-colophon">本报仅刊载 <b>街头可见之事与公开传闻</b> ｜ 幕后真相须由读者自行抵达</div>
@@ -2513,6 +2772,7 @@
         paper: '报纸尚无印张——等待副导演首次世界推演（📡 手动触发，或每 N 楼心跳自动推演）。',
         events: '事件链空栏——世界暂时平静，等待首次推演后由副导演建立事件。',
         winds: '风声版面暂无消息——等待首次推演后由副导演建立风声。',
+        ledger: '旧档尚无编年——Lv3 以上重大事件与风声将在推演中自动归档。',
       };
       html += `<div class="ad-empty">${emptyByTab[tab] || emptyByTab.paper}</div>`;
       els.wireBody.innerHTML = html;
@@ -2531,10 +2791,10 @@
         const stageCls = ev.stage === '爆发' || ev.stage === '逼近' ? 'hot' : '';
         html += `<div class="ad-item${ev.stage === '爆发' ? ' hit' : ''}">
           <div class="ad-item-header">
-            <span class="ad-item-kicker">⚡ 事件链 · ${esc(worldDate)}</span>
+            <span class="ad-item-kicker">⚡ 事件链${ev.distance ? ' · 🌏 远方' : ''} · ${esc(worldDate)}</span>
             <span class="ad-item-alert ${stageCls}">${esc(ev.stage)} ${ev.stageRound}/9</span>
           </div>
-          <div class="ad-item-title"><span class="ad-item-place">${esc(ev.name)}</span><span class="menu"> · ${ev.type === 'progress' ? '进展' : '冲突'}</span></div>
+          <div class="ad-item-title"><span class="ad-item-place">${esc(ev.name)}</span><span class="menu"> · ${ev.type === 'progress' ? '进展' : '冲突'}${ev.distance && ev.zone ? ' · ' + esc(ev.zone) : ''}</span></div>
           <div class="ad-item-reaction">${esc(ev.desc || '')}</div>
         </div>`;
       }
@@ -2551,9 +2811,36 @@
       for (const w of winds) {
         html += `<div class="ad-item">
           <div class="ad-item-header">
-            <span class="ad-item-kicker">📣 风声 · ${esc(w.spread || '流传')}</span>
+            <span class="ad-item-kicker">📣 风声 · ${esc(w.spread || '流传')}${w.distance ? ' · 🌏 远方' : ''}</span>
           </div>
           <div class="ad-item-reaction">${esc(w.content || '')}${w.source ? `<div class="ad-item-sub-wire">——${esc(w.source)}</div>` : ''}</div>
+        </div>`;
+      }
+      els.wireBody.innerHTML = html;
+      return;
+    }
+
+    if (tab === 'ledger') {
+      // 📜 旧档（V0.4.0）：重大事件账本编年（最新在前——Lv≥3 新事件/推进/终局/Lv≥3 风声）
+      const entries = getLedger();
+      if (!entries.length) {
+        html += `<div class="ad-empty">尚无重大事件入账——Lv3 以上事件与风声将在推演中自动归档。</div>`;
+      }
+      for (const e of entries) {
+        const lines = (Array.isArray(e.changes) ? e.changes : []).map(c => {
+          if (c.type === 'event_new') return `<span class="ad-item-alert">[新增Lv${c.level}]</span> ${esc(c.name)}${c.zone ? ` · ${esc(c.zone)}` : ''}${c.desc ? ` — ${esc(c.desc)}` : ''}`;
+          if (c.type === 'event_advance') return `<span class="ad-item-alert">[推进]</span> ${esc(c.name)}(Lv${c.level}) ${esc(c.fromStage || '?')}→${esc(c.toStage || '?')}${c.desc ? ` — ${esc(c.desc)}` : ''}`;
+          if (c.type === 'event_terminal') return `<span class="ad-item-alert hot">[终局]</span> ${esc(c.name)}(Lv${c.level}) → ${esc(c.toStage || c.stage || '?')}${c.desc ? ` — ${esc(c.desc)}` : ''}`;
+          if (c.type === 'wind_new') return `<span class="ad-item-alert">[风声Lv${c.level}]</span> ${esc(c.content || '')}${c.source ? `——${esc(c.source)}` : ''}`;
+          return '';
+        }).filter(Boolean);
+        if (!lines.length) continue;
+        html += `<div class="ad-item">
+          <div class="ad-item-header">
+            <span class="ad-item-kicker">📜 旧档 · 第 ${e.round || '?'} 轮</span>
+            <span class="ad-item-alert">№${e.floor}</span>
+          </div>
+          <div class="ad-item-reaction">${lines.join('<br>')}</div>
         </div>`;
       }
       els.wireBody.innerHTML = html;
@@ -2635,10 +2922,12 @@
 
   let editSync = null;        // 编辑中的 worldSync 副本 { world: [] }
   let editIncidentTypes = null;   // 编辑中的事件类型表副本（结构化数组，仿世界书行模式）
+  let settingsActiveTab = 'l-api';   // V0.4.0 当前激活设置栏——全量重渲保持栏目（修增删事件行跳回首屏）
 
   function openSettingsModal() {
     editSync = { world: JSON.parse(JSON.stringify(SETTINGS.worldSync || [])) };
     editIncidentTypes = normalizeIncidentTypes(SETTINGS.regionalIncidentTypes);
+    settingsActiveTab = 'l-api';   // 新开弹窗回到首屏
     renderSettingsModal();
   }
 
@@ -2845,12 +3134,13 @@
 
   function renderSettingsModal() {
     const s = SETTINGS;
+    const paneCls = id => `st-pane${settingsActiveTab === id ? ' active' : ''}`;   // V0.4.0 重渲保持激活栏
     if (!editSync) editSync = { world: JSON.parse(JSON.stringify(SETTINGS.worldSync || [])) };   // 防御：直渲（不经 openSettingsModal）也有现场
     if (!editIncidentTypes) editIncidentTypes = normalizeIncidentTypes(SETTINGS.regionalIncidentTypes);
     syncSectionHtml.bookNames = (IS_LIVE && typeof getWorldbookNames === 'function') ? getWorldbookNames() : [];
     const navItems = [
       ['l-api', '📡 电传通讯', '01'], ['l-rhythm', '⚙ 推演律动', '02'], ['l-combat', '🎲 街头遭遇', '03'],
-      ['l-incidents', '⚡ 区域突发', '04'], ['l-dossier', '📜 阵营与铁律', '05'], ['l-sync', '📖 档案库同步', '06'],
+      ['l-incidents', '⚡ 区域与远方', '04'], ['l-dossier', '📜 阵营与铁律', '05'], ['l-sync', '📖 档案库同步', '06'],
       ['l-prompt', '✍ 导演社论母版', '07'], ['l-diag', '🐞 诊断与回溯', '08'],
     ];
     openModal(`
@@ -2866,13 +3156,13 @@
           <div>
             <div class="st-nav-label">CONTENTS · 编务栏目</div>
             <ul class="st-nav-items">
-              ${navItems.map(([id, label, idx], i) => `<li class="st-nav-btn${i === 0 ? ' active' : ''}" data-stab="${id}"><span>${label}</span><span class="idx">${idx}</span></li>`).join('')}
+              ${navItems.map(([id, label, idx]) => `<li class="st-nav-btn${id === settingsActiveTab ? ' active' : ''}" data-stab="${id}"><span>${label}</span><span class="idx">${idx}</span></li>`).join('')}
             </ul>
           </div>
           <div style="padding:10px 14px;border-top:1px solid var(--ad-line);font-size:9.5px;color:var(--ad-ink-dim)">S7/S9 世界引擎全景管理</div>
         </aside>
         <section class="st-stage">
-          <div class="st-pane active" id="l-api">
+          <div class="${paneCls('l-api')}" id="l-api">
             <div class="st-card">
               <div class="st-card-head"><span class="st-card-title">电报线路端点（副导演 API）</span></div>
               <div class="st-field"><span class="st-label">Base URL（服务地址）</span>${stInput('director.baseUrl', s.director.baseUrl, 'https://…/v1')}</div>
@@ -2890,14 +3180,14 @@
               </div>
             </div>
           </div>
-          <div class="st-pane" id="l-rhythm">
+          <div class="${paneCls('l-rhythm')}" id="l-rhythm">
             <div class="st-card">${stRow('<span style="font-size:13px">世界推演引擎总开关</span>', '推演 $ad_world 并写入词条；关→词条下灯', stSwitch('enabledDirector', s.enabledDirector))}</div>
             <div class="st-card">
               <div class="st-card-head"><span class="st-card-title">常规心跳与触发节奏</span></div>
               ${stRow('常态推演心跳（楼数）', '每隔 N 楼自动增量修订世界状态；战斗结算/跨日/阶段变化强制推', stStepper('directorEveryX', s.directorEveryX, 1, 1))}
             </div>
           </div>
-          <div class="st-pane" id="l-combat">
+          <div class="${paneCls('l-combat')}" id="l-combat">
             <div class="st-card">
               ${stRow('<span style="font-size:13px">每楼随机遭遇掷骰</span>', '用户发送输入时本地掷骰，命中即追加开战指令', stSwitch('randomCombatEnabled', s.randomCombatEnabled))}
               <hr class="st-hr">
@@ -2909,7 +3199,7 @@
               ${stRow('战斗结束冷却', `任意战斗（含剧情战）结束后 N 楼内不掷随机（只拦随机掷骰）`, `<div style="display:flex;align-items:center;gap:8px">${stSwitch('randomCombatCooldown', s.randomCombatCooldown)}${stStepper('randomCombatCooldownFloors', s.randomCombatCooldownFloors, 1, 0)}<span class="st-desc">楼</span></div>`)}
             </div>
           </div>
-          <div class="st-pane" id="l-incidents">
+          <div class="${paneCls('l-incidents')}" id="l-incidents">
             <div class="st-card">
               <div class="st-card-head"><span class="st-card-title">⚡ 区域突发事件总控（S9）</span>
                 <button id="ad-inc-add" class="ad-row-btn">＋ 添加事件类型</button></div>
@@ -2925,8 +3215,19 @@
                 <div class="st-desc" style="margin-top:4px">引导描述只给推演灵感方向——事件具体内容（标题/范围/影响/风声）由推演 LLM 按当前世界观生成</div>
               </div>
             </div>
+            <div class="st-card">
+              <div class="st-card-head"><span class="st-card-title">🌏 远方回响（账本驱动）</span></div>
+              ${stRow('<span style="font-size:13px">远方动态掷骰</span>', '账本累积重大事件后，按概率在玩家所在大区之外生成远方事件链萌芽或风声——世界在别处继续', stSwitch('distantEchoEnabled', s.distantEchoEnabled))}
+              <hr class="st-hr">
+              <div class="st-grid3">
+                <div class="st-field"><span class="st-label">账本阈值（条）</span>${stNum('distantEchoLedgerThreshold', s.distantEchoLedgerThreshold, 1, 1)}</div>
+                <div class="st-field"><span class="st-label">触发概率（%/楼）</span>${stNum('distantEchoChance', s.distantEchoChance, 1, 0, 100)}</div>
+                <div class="st-field"><span class="st-label">冷却楼数</span>${stNum('distantEchoCooldown', s.distantEchoCooldown, 1, 0)}</div>
+              </div>
+              <div class="st-desc" style="margin-top:4px">📜 旧档累积 Lv3+ 重大记录达阈值后开始掷骰；生成成功后冷却 N 楼（与区域事件互斥顺延）</div>
+            </div>
           </div>
-          <div class="st-pane" id="l-dossier">
+          <div class="${paneCls('l-dossier')}" id="l-dossier">
             <div class="st-card"><span class="st-label">主角核心白名单（绝不背叛、绝不可能是间谍）</span>
               ${stArea('coreTeam', s.coreTeam, 2, '逗号/换行分隔；留空则任何人都可能是间谍')}</div>
             <div class="st-card"><span class="st-label">敌方阵营候选池（推演参考，具体敌人正文 AI 自选）</span>
@@ -2934,13 +3235,13 @@
             <div class="st-card"><span class="st-label">最高附加铁律（拼到推演输入文末，压过默认规则）</span>
               ${stArea('extraRules', s.extraRules, 3, '例：灰瘟与邪教无任何关系，禁止关联')}</div>
           </div>
-          <div class="st-pane" id="l-sync">
+          <div class="${paneCls('l-sync')}" id="l-sync">
             ${syncSectionHtml('world', '世界书同步（→ 推演输入）')}
           </div>
-          <div class="st-pane" id="l-prompt">
+          <div class="${paneCls('l-prompt')}" id="l-prompt">
             ${promptSectionHtml('director', '导演社论母版（推演 system 提示词）', DirectorPrompt)}
           </div>
-          <div class="st-pane" id="l-diag">
+          <div class="${paneCls('l-diag')}" id="l-diag">
             <div class="st-card">
               <div class="st-card-head"><span class="st-card-title">通讯诊断与档案回溯</span></div>
               <div class="ad-btnrow" style="margin-top:0">
@@ -2970,6 +3271,7 @@
     // 栏目导航切换
     els.modalBox.querySelectorAll('.st-nav-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        settingsActiveTab = btn.getAttribute('data-stab');   // V0.4.0 记住当前栏——重渲（增删事件行等）不再跳回首屏
         els.modalBox.querySelectorAll('.st-nav-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         els.modalBox.querySelectorAll('.st-pane').forEach(p => p.classList.remove('active'));
@@ -3123,6 +3425,15 @@
             </div>
             <div class="st-field"><span class="st-label">事件类型（开关/名称/权重；引导描述编辑请用 PC 端）</span>
               <div id="ad-m-inc-list">${renderIncidentRows(SETTINGS.regionalIncidentTypes)}</div></div>
+          </div>
+          <div class="st-card">
+            <div class="st-card-head"><span class="st-card-title">🌏 远方回响</span></div>
+            ${stSwitchRow('远方动态掷骰', '账本驱动，玩家所在大区之外生成远方事件/风声', 'distantEchoEnabled', s.distantEchoEnabled)}
+            <div class="st-grid3">
+              <div class="st-field"><span class="st-label">阈值(条)</span>${stNum('distantEchoLedgerThreshold', s.distantEchoLedgerThreshold, 1, 1)}</div>
+              <div class="st-field"><span class="st-label">概率(%/楼)</span>${stNum('distantEchoChance', s.distantEchoChance, 1, 0, 100)}</div>
+              <div class="st-field"><span class="st-label">冷却楼数</span>${stNum('distantEchoCooldown', s.distantEchoCooldown, 1, 0)}</div>
+            </div>
           </div>
         </div>
         <div class="mv-pane${mobileTab === 'm-dossier' ? ' active' : ''}" id="m-dossier">
@@ -3496,6 +3807,7 @@
       bindEvent(EVT.received, onFloorEvent);
       bindEvent(EVT.updated, onFloorEvent);
       bindEvent(EVT.swiped, onFloorEvent);
+      bindEvent(EVT.deleted, onMessageDeleted);
       bindEvent(EVT.chatChanged, onChatChanged);
       log(`已挂载（LIVE · v${SCRIPT_VERSION}），等待楼层事件`);
       if (SETTINGS.enabledDirector) {
@@ -3523,10 +3835,13 @@
     // 本地骰（S7）与 checkpoint 回滚（S8）与战斗冷却（V0.3.4）
     rollEvents, rollWinds, runLocalDice, currentFloorId, eventZones, eventTension, maybeRollbackWorld,
     trackCombatEnd, combatCooldownActive,
-    // 历史记录（V0.3.5）与区域突发事件（S9）
+    // 历史记录（V0.3.5）与区域突发事件（S9）与账本/远方回响（V0.4.0）
     getHistory, pushHistory, clearHistory, diffWorld, openHistoryModal,
     parseIncidentTypes, weightedPickIncident, rollRegionalIncident,
     buildIncidentDirective, buildIncidentOngoing, mergeIncident, defaultIncidentTypes: DEFAULT_INCIDENT_TYPES, normalizeIncidentTypes,
+    getLedger, recordLedger, windSeen, LEDGER_KEEP,
+    ensureDistant, sampleDistantLedger, buildDistantDirective, rollDistantEcho, acceptDistantEcho, triggerDistantEvolve,
+    onFloorEvent, onMessageDeleted, genContextSuffix,
     // 设置 UI 双路分流（V0.3.7）
     isMobileDevice, toggleMobileSettings, closeMobileSettings, renderSettingsModal,
     EV_STAGES, STAGE_SCORE, clamp,
