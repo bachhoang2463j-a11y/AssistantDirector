@@ -52,3 +52,4 @@
 | 2026-09-12 | feat：V0.3.8 步进器裁切修复 + 类型表仿世界书行（结构化/开关/可删/添加）+ 空池提示词瘦身 harness 209/209 | 661 | `f8ea785` |
 | 2026-09-12 | feat：V0.4.0 账本（$ad_ledger diff 入账 + 📜旧档 tab）+ 远方回响（采样掷骰/指令段互斥/_distanceGenerated 校验/🌏徽章）+ 触发安全三件套 + 设置跳屏修复 harness 242/242 | 645 | `f6ecb30` |
 | 2026-09-12 | feat：V0.4.1 注入提示词拼接优化（态势极简 why 三级/备忘在前态势收尾/标签去括号）+ 修 merge3 潜伏 bug（diffEdits const head）harness 244/244 | 663 | `329fb1c` |
+| 2026-09-12 | feat：V0.4.2 折叠栏头条渲染修复（V0.3.0 丢失的 dispatchNow renderTicker，重载/换聊天后空胶囊）+ 备忘小说作者视角提醒 harness 246/246 | 677 | `610da6d` |

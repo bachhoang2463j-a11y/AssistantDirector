@@ -665,3 +665,13 @@
 **测试要点**：T3 改 `endsWith('</当前态势>')` + indexOf 顺序；S7 态势段新增"真实案例锁定"（ACU 无分隔 spot match ↔ 带 · 地点，压缩通道）；驻守兜底仅在 encounterProfile 未命中任何 spot/district 时出现（s7 responder 的 districts 无 why 字段即此场景）。
 
 **验收依据**：IAB harness 244/244；真机验证留给用户（态势词条两行极简形态、高危 spot why 显示、备忘在前态势收尾的注意力布局）。
+
+## 2026-09-12 ｜ V0.4.2 折叠栏头条渲染修复 + 备忘小说作者视角提醒（业务提交 `610da6d`）
+
+**变更行为**：用户两项反馈——① **备忘引导语补充**：`buildDirectorInjection` 引导语后新增一行「注意：像专业的小说作者一样自然融入故事，不要以上帝视角告知玩家。」；② **折叠栏（缩略栏）不显示内容 debug**：用户实机截图折叠栏只剩星形胶囊。IAB 连真机酒馆（127.0.0.1:8000）检查：rail 处于 `empty` 态（CSS `#ad-rail.empty .ad-rail-ticker{display:none}`）、`State.tickerHeads=[]`、聊天变量无 `$ad_state`。git 考古定位回归点：**V0.3.0 世界引擎化重构（4ebc462）拆卡片池时把 dispatchNow 里的 `renderTicker()` 调用丢了**（早期 S0~S1 版本每楼 dispatch 都刷 ticker）——后果：tickerHeads 只在推演成功那一瞬渲染，而 `init()` 的 buildUI（renderTicker 空）先于 loadRuntimeState（恢复 $ad_state 历史头条）且恢复后无人再刷，**页面重载/换聊天后折叠栏永远空胶囊直到下一次推演**。修复：dispatchNow 每楼恢复 `renderTicker()`（幂等，覆盖 init 恢复与换聊天两条路径）+ onChatChanged 清空 tickerHeads 后即时 renderTicker（防 DOM 残留旧聊天头条）。harness +2：T-t1（预置 $ad_state.tickerHeads → dispatchNow → empty 态解除且头条渲染）、T-t2（CHAT_CHANGED → 即时清空回 empty 态）。@version 0.4.2；harness 246/246。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`LOG.md`、`LOG-INDEX.md`、`HANDOFF.md`
+
+**决策依据**：用户实机截图 + IAB 真机检查（browser-use 连 127.0.0.1:8000，脚本 iframe 的 `__AD__` 状态 + 聊天变量）。真机排查附带发现：IAB 页面会被宿主随机重置成空白页（同 tab 反复发生，重开标签即可）；聊天变量必须 await `getVariables`（TavernHelper 返回 Promise，同步读得到空对象）。
+
+**验收依据**：IAB harness 246/246；真机验证留给用户（导入 v0.4.2 后重载页面/换聊天，折叠栏应显示历史头条滚动——前提是该聊天推演过；从未推演的聊天维持星形胶囊为设计行为）。
