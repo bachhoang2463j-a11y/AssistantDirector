@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.4.2
+// @version      0.4.3
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.4.2';
+  const SCRIPT_VERSION = '0.4.3';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -667,7 +667,8 @@
     combatEndFloorId: -1,     // 最近一次战斗结束的楼层号（其后 N 楼为随机遭遇冷却窗口）
     pendingIncident: null,    // 区域突发事件挂起（{ type, guide }——掷中待生成/失败重试，推演成功回执后清除）
     lastGeneration: null,     // 最近一次 GENERATION_STARTED 上下文（type/dryRun/quiet——诊断用，不持久化）
-    tickerHeads: [],          // 折叠态情报轮播头条（最近 ≤3 条，最新在前）
+    tickerItems: [],          // V0.4.3：折叠态四类轮播条目 [{cat,text}]——态势/报纸/事件/风声 固定顺序
+    tickerPins: [],           // V0.4.3：推演中已更新类别——下次推演前优先播放
     pendingTimer: null,
   };
 
@@ -682,7 +683,9 @@
     State.combatLastSeen = s.combatLastSeen === true;
     State.combatEndFloorId = Number.isFinite(s.combatEndFloorId) ? s.combatEndFloorId : -1;
     State.pendingIncident = (s.pendingIncident && s.pendingIncident.type) ? s.pendingIncident : null;
-    State.tickerHeads = Array.isArray(s.tickerHeads) ? s.tickerHeads : [];
+    const ti = s.tickerItems;
+    State.tickerItems = Array.isArray(ti) ? ti.filter(x => x && typeof x === 'object' && typeof x.text === 'string') : [];
+    State.tickerPins = Array.isArray(s.tickerPins) ? s.tickerPins.filter(x => typeof x === 'string') : [];
   }
   function persistRuntimeState() {
     writeChatVar(CV.state, {
@@ -694,7 +697,8 @@
       combatLastSeen: State.combatLastSeen,
       combatEndFloorId: State.combatEndFloorId,
       pendingIncident: State.pendingIncident || null,
-      tickerHeads: State.tickerHeads,
+      tickerItems: State.tickerItems,
+      tickerPins: State.tickerPins,
       savedAt: Date.now(),
     });
   }
@@ -733,7 +737,8 @@
     State.combatLastSeen = false;
     State.combatEndFloorId = -1;
     State.pendingIncident = null;
-    State.tickerHeads = [];
+    State.tickerItems = [];
+    State.tickerPins = [];
     renderTicker();   // V0.4.2：清空即时反映（否则换聊天后 DOM 还挂旧聊天头条）
     Trigger.lastDateKey = '';               // 换聊天：触发基线重建（首次 dispatch 记基线不触发）
     Trigger.lastStage = '';
@@ -1349,7 +1354,8 @@ ${JSON.stringify(d.sample || [], null, 1)}
     persistRuntimeState();
     updatePanelStatus(null, { locationText, world });
     updatePanelMeta(stat);
-    renderTicker();   // V0.4.2 修复：折叠栏头条每楼刷新（V0.3.0 重构时丢失——页面重载/换聊天后 loadRuntimeState 恢复的历史头条永不渲染，折叠栏一直空胶囊）
+    State.tickerItems = buildTickerItems(world, locationText, State.tickerPins);   // V0.4.3：每楼从当前世界状态派生四类条目（重载/换聊天后即恢复）
+    renderTicker();
     if (IS_LIVE) checkTriggers(stat);   // S7：心跳 + 强制推触发矩阵
   }
 
@@ -2096,18 +2102,22 @@ ${JSON.stringify(d.sample || [], null, 1)}
       Trigger.floorsSinceEvolve = 0;
       Trigger.lastDateKey = statDateKey(stat) || Trigger.lastDateKey;
       Trigger.lastStage = statStage(stat) || Trigger.lastStage;
-      // ticker：事件/风声/派系征兆上轮播（最新 ≤3 条）
-      const heads = [];
-      for (const ev of (world.events || []).slice(0, 1)) heads.push(`⚔${String(ev.name || '').slice(0, 7)}·${ev.stage}`);
-      for (const w of (world.winds || []).slice(0, 1)) heads.push(`📣${String(w.content || '').slice(0, 9)}`);
-      for (const f of (world.factions || []).slice(0, 2)) heads.push(`${String(f.name || '').slice(0, 5)}：${String(f.surface || '').slice(0, 10)}`);
-      for (const h of heads.reverse()) {
-        if (State.tickerHeads[0] !== h) {
-          State.tickerHeads.unshift(h);
-          State.tickerHeads = State.tickerHeads.slice(0, 3);
+      // ticker：四类轮播条目重建 + 已更新类别置顶（V0.4.3：优先播放已更新内容）
+      {
+        const pins = [];
+        const changed = (a, b, keyFn) => JSON.stringify((a || []).map(keyFn)) !== JSON.stringify((b || []).map(keyFn));
+        if (!prevWorld) pins.push('situation', 'paper', 'events', 'winds');   // 首推全更新
+        else {
+          if ((prevWorld.digest || '') !== (world.digest || '')) pins.push('situation');
+          if (changed(prevWorld.factions, world.factions, f => [f && f.name, f && f.surface, f && f.state])) pins.push('paper');
+          if (changed(prevWorld.events, world.events, e => [e && e.name, e && e.stage, e && e.stageRound])) pins.push('events');
+          if (changed(prevWorld.winds, world.winds, w => w && w.content)) pins.push('winds');
         }
+        State.tickerPins = pins;
+        State.tickerItems = buildTickerItems(world, locationText, pins);
+        persistRuntimeState();   // 推演产生的 pins/条目立即落盘（V0.4.2 教训：不能等下一次 dispatch）
+        renderTicker();
       }
-      renderTicker();
       renderWire();   // 事件/风声/灰卡即时上报纸
       if (els.dot) els.dot.classList.add('on');
       toast(`世界状态已更新（${reason}）：${world.factions.length} 派系 · ${world.events.length} 事件 · ${world.winds.length} 风声`);
@@ -2705,9 +2715,30 @@ ${JSON.stringify(d.sample || [], null, 1)}
 
   function renderTicker() {
     if (!els.rail || !els.ticker) return;
-    const heads = (State.tickerHeads || []).slice(0, 3);
-    els.rail.classList.toggle('empty', heads.length === 0);
-    els.ticker.innerHTML = heads.concat(heads).map(t => `<li>${esc(t)}</li>`).join('');
+    const items = (State.tickerItems || []).slice(0, 8);
+    els.rail.classList.toggle('empty', items.length === 0);
+    els.ticker.innerHTML = items.concat(items).map(it => `<li>${esc(it.text)}</li>`).join('');
+  }
+
+  // —— 折叠态四类轮播条目（V0.4.3）—————————————————————————————
+  // 固定类别顺序：📍态势（地点）→ 📰报纸（最新派系征兆）→ ⚔事件链 → 📣风声；
+  // tickerPins（推演中已更新类别）的组整体提前——优先播放已更新内容。
+  const TICKER_ORDER = ['situation', 'paper', 'events', 'winds'];
+
+  function buildTickerItems(world, locationText, pins) {
+    const groups = { situation: [], paper: [], events: [], winds: [] };
+    if (locationText) groups.situation.push({ cat: 'situation', text: `📍${shortLoc(locationText)}` });
+    if (world) {
+      for (const f of (world.factions || []).filter(x => x && x.surface).slice(0, 2))
+        groups.paper.push({ cat: 'paper', text: `📰${String(f.surface).slice(0, 10)}` });
+      for (const ev of (world.events || []).filter(x => x && x.stage !== '平息').slice(0, 2))
+        groups.events.push({ cat: 'events', text: `⚔${String(ev.name || '').slice(0, 7)}·${ev.stage}` });
+      for (const w of (world.winds || []).slice(0, 2))
+        groups.winds.push({ cat: 'winds', text: `📣${String(w.content || '').slice(0, 9)}` });
+    }
+    const pinned = TICKER_ORDER.filter(c => (pins || []).includes(c));
+    const rest = TICKER_ORDER.filter(c => !pinned.includes(c));
+    return pinned.concat(rest).flatMap(c => groups[c]);
   }
 
   // 面板主体：当前态势行 + 世界情报流（事件卡/风声卡/派系灰卡揭幕体系）
@@ -3833,6 +3864,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     getLedger, recordLedger, windSeen, LEDGER_KEEP,
     ensureDistant, sampleDistantLedger, buildDistantDirective, rollDistantEcho, acceptDistantEcho, triggerDistantEvolve,
     onFloorEvent, onMessageDeleted, genContextSuffix,
+    buildTickerItems, TICKER_ORDER,
     // 设置 UI 双路分流（V0.3.7）
     isMobileDevice, toggleMobileSettings, closeMobileSettings, renderSettingsModal,
     EV_STAGES, STAGE_SCORE, clamp,

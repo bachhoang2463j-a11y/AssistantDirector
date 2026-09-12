@@ -274,7 +274,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.4.2（折叠栏头条渲染修复 + 备忘小说作者视角提醒）', json.content.includes("@version      0.4.2"));
+  assert('版本 v0.4.3（折叠栏四类轮播：态势/报纸/事件/风声 + 已更新类别优先）', json.content.includes("@version      0.4.3"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -594,12 +594,12 @@ async function runAll() {
     return !rail.querySelector('.ad-rail-label') && !rail.querySelector('.ad-rail-fold')
       && !!rail.querySelector('.ad-rail-star') && rail.title.includes('点击展开');
   })());
-  assert('空态收缩（tickerHeads 清空 → empty 类 + ticker 清空）', (() => {
-    AD.state.tickerHeads = []; AD.renderTicker();
+  assert('空态收缩（tickerItems 清空 → empty 类 + ticker 清空）', (() => {
+    AD.state.tickerItems = []; AD.renderTicker();
     return document.getElementById('ad-rail').classList.contains('empty')
       && document.querySelectorAll('#ad-ticker li').length === 0;
   })());
-  AD.state.tickerHeads = ['仓库冲突·逼近']; AD.renderTicker();   // 恢复演示态
+  AD.state.tickerItems = [{ cat: 'events', text: '⚔仓库冲突·逼近' }]; AD.renderTicker();   // 恢复演示态
   assert('无世界状态空态（等待首推提示，按 tab 语义）', (() => {
     delete MOCK.chat.$ad_world;
     AD.renderWire();
@@ -824,9 +824,10 @@ async function runAll() {
       && s7LastSys.includes('floor(N/2)') && s7LastSys.includes('事件链')
       && s7LastSys.includes('风声') && s7LastSys.includes('encounter')
       && s7LastSys.includes('0 是显式安全标记') && s7LastSys.includes('墓碑'));
-    assert('T12 事件/风声上 ticker（轮播头条）', (() => {
+    assert('T12 事件/风声上 ticker（四类轮播条目）', (() => {
       const lis = [...document.querySelectorAll('#ad-ticker li')].map(n => n.textContent);
-      return lis.some(t => t.includes('仓库冲突')) || lis.some(t => t.includes('枪声'));
+      return lis.some(t => t.includes('仓库冲突')) || lis.some(t => t.includes('枪声'))
+        || (AD.state.tickerItems || []).some(x => x.text.includes('仓库冲突'));
     })());
 
     // T7 心跳：每 directorEveryX(3) 楼自动推演
@@ -1823,23 +1824,65 @@ async function runAll() {
       assert('V4 旧档空态提示', document.getElementById('ad-wire').innerText.includes('尚无重大事件入账'));
     }
 
-    // ── V0.4.2：折叠栏头条渲染修复（dispatchNow 每楼刷 ticker，换聊天即时清空）──
+    // ── V0.4.3：折叠栏四类轮播（态势/报纸/事件/风声固定顺序 + 已更新类别优先）──
     {
+      // 纯函数：类别顺序与内容裁剪
+      const wT = { digest: 'd', factions: [{ name: '凯特', surface: '绿顶酒馆谢绝散客' }, { name: '麦凯', surface: '克利夫兰街设卡' }],
+        events: [{ name: '炸药交割死局', stage: '逼近' }, { name: '灰瘟蔓延', stage: '发酵' }, { name: '平息事件', stage: '平息' }],
+        winds: [{ content: '码头夜半枪声传闻四起' }, { content: '第二条风声' }] };
+      const noPin = AD.buildTickerItems(wT, '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', []);
+      assert('T-k1 四类固定顺序（态势→报纸→事件→风声）+ 前缀 emoji + 平息事件剔除 + 每类 ≤2 条', (() => {
+        const cats = noPin.map(x => Array.from(x.text)[0]);   // Array.from 按 code point 取——emoji 是代理对，text[0]/slice(0,2) 只取到半个字符
+        return JSON.stringify(cats) === JSON.stringify(['📍', '📰', '📰', '⚔', '⚔', '📣', '📣'])
+          && noPin[0].text.includes('绿顶酒馆') && !noPin.some(x => x.text.includes('平息事件'))
+          && noPin[3].text.includes('逼近');
+      })());
+      const pinned = AD.buildTickerItems(wT, '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂', ['winds', 'events']);
+      assert('T-k2 已更新类别优先（pins 组整体提前，组内保持类别相对序）', (() => {
+        const cats = pinned.map(x => x.cat);
+        return JSON.stringify(cats) === JSON.stringify(['events', 'events', 'winds', 'winds', 'situation', 'paper', 'paper']);
+      })());
+      // dispatch 接线：world 存在时每楼派生渲染
       MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
-      window.insertOrAssignVariables({ $ad_state: { tickerHeads: ['⚔测试头条A', '📣测试头条B'] } }, { type: 'chat' });
-      AD.loadRuntimeState();
-      AD.dispatchNow('v42-ticker');
-      assert('T-t1 dispatchNow 刷新折叠栏头条（页面重载后恢复历史 tickerHeads，empty 态解除）', await waitFor(() => {
+      window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
+      AD.dispatchNow('v43-ticker');
+      assert('T-t1 dispatchNow 派生四类轮播（页面重载后即恢复，empty 态解除）', await waitFor(() => {
         const rail = document.getElementById('ad-rail');
         const lis = [...document.querySelectorAll('#ad-ticker li')];
-        return rail && !rail.classList.contains('empty') && lis.length >= 2
-          && lis.some(l => l.textContent.includes('测试头条A'));
+        return rail && !rail.classList.contains('empty') && lis.some(l => l.textContent.includes('📍'))
+          && lis.some(l => l.textContent.includes('📰')) && lis.some(l => l.textContent.includes('⚔'))
+          && lis.some(l => l.textContent.includes('📣'));
       }, 4000));
+      // 推演路径：pins 计算与条目立即落盘
+      let t43Responder = () => JSON.stringify({ digest: '轮播测试', factions: WORLD.factions, events: WORLD.events, winds: WORLD.winds, encounter: WORLD.encounter, resistance: WORLD.resistance, roster_ops: [] });
+      const rfetch43 = window.fetch;
+      window.fetch = async (url, opts) => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: t43Responder() } }] }) });
+      const sv43 = AD.loadSettings();
+      sv43.director = { baseUrl: 'https://mock.local/v1', apiKey: 'k', model: 'smart', temperature: 0.4, maxTokens: 8000 };
+      sv43.regionalIncidentEnabled = false; sv43.distantEchoEnabled = false; sv43.directorEveryX = 99;
+      AD.saveSettings(sv43);
+      AD.Trigger.busy = false; AD.Trigger.lastFloorId = -1; AD.Trigger.floorsSinceEvolve = 0;
+      await AD.generateDirectorEvolve('manual');
+      window.fetch = rfetch43;
+      assert('T-t2 推演后 pins/条目立即落盘（$ad_state 持久化）+ digest 变化置顶态势', await waitFor(() => {
+        const st = MOCK.chat.$ad_state;
+        return st && Array.isArray(st.tickerItems) && st.tickerItems.length > 0
+          && Array.isArray(st.tickerPins) && st.tickerPins.includes('situation')
+          && AD.state.tickerItems[0].text.includes('📍');
+      }, 8000));
+      // 换聊天即时清空
       MOCK.eventEmit('CHAT_CHANGED');
-      assert('T-t2 换聊天即时清空折叠栏头条（empty 态恢复，不留旧聊天内容）', await waitFor(() => {
+      assert('T-t3 换聊天即时清空轮播（empty 态恢复，不留旧聊天内容）', await waitFor(() => {
         const rail = document.getElementById('ad-rail');
         return rail && rail.classList.contains('empty') && document.querySelectorAll('#ad-ticker li').length === 0;
       }, 8000));
+      // 清理（防脏值泄漏到下一轮断言——设置默认结构等读存档）
+      const sz43 = AD.loadSettings();
+      sz43.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };
+      sz43.directorEveryX = 3; sz43.regionalIncidentEnabled = true; sz43.regionalIncidentChance = 1;
+      sz43.distantEchoEnabled = true; sz43.distantEchoLedgerThreshold = 10; sz43.distantEchoChance = 20; sz43.distantEchoCooldown = 5;
+      AD.saveSettings(sz43);
+      MOCK.reset();
     }
 
     // ── 设置：远方回响字段 + 跳屏修复（增删事件行不再回 API 首屏）──
