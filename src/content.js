@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.4.0
+// @version      0.4.1
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.4.0';
+  const SCRIPT_VERSION = '0.4.1';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -35,13 +35,10 @@
   const WB_ENTRY_LEGACY = ['副导演-态势', '副导演-暗线'];   // V0.2.x 旧词条：仅 disable
   const WB_ORDER = 15;
   // 注入模板：XML 标签分段 + 两空格缩进列表——LLM 注意力分区友好，人工维护直观
-  const MEMO_OPEN = '<内部导演备忘（禁止以任何形式向玩家展示）>';
+  const MEMO_OPEN = '<内部导演备忘>';
   const MEMO_CLOSE = '</内部导演备忘>';
-  const SIT_OPEN = '<当前态势（禁止以任何形式向玩家展示）>';
+  const SIT_OPEN = '<当前态势>';
   const SIT_CLOSE = '</当前态势>';
-  // 信号级战斗提醒：敌方构成由正文 AI 自选（世界书图鉴），程序不再安排 menu
-  const COMBAT_RULE_HINT =
-    '【若本楼冲突升级 → 开战】按【战斗轮规则】输出 <Combat_block>：我方/敌方各只写名字；敌方从世界书图鉴中按剧情合理性选择（可加 *N 与 [变种]）。';
 
   // localStorage 键（设置与 UI 偏好，随浏览器走）
   const LS = {
@@ -328,7 +325,8 @@
   // 把 x 相对 base 的行级改动解析成编辑脚本：mod（改行 baseIdx→新行）/ del（删行）/ ins（某 base 行后插入）/ head（行首前插入）
   function diffEdits(base, x) {
     const mX = lcsMatches(base, x);
-    const mod = new Map(), del = new Set(), ins = new Map(), head = [];
+    const mod = new Map(), del = new Set(), ins = new Map();
+    let head = [];   // V0.4.1 修复：原 const 声明却在行首插入分支被重赋值（TypeError 静默吞掉写入）——旧拼接顺序下 base 首行恒等于 ours 首行从未触发，备忘前置后暴露
     const n = base.length, m = x.length;
     let i = 0, j = 0;
     while (i < n || j < m) {
@@ -568,9 +566,9 @@
   //   区域基值三级兜底：spots（地标级）> districts（大区级）> SETTINGS.randomCombatChance（玩家设置）
   //   显式安全标记：命中 spots/districts 且 chance===0 → 直接安全区，不叠修正
   //   spots/districts 都对整段地点串匹配（zoneHit 三通道：LLM 写法鲁棒）；spots 更具体、先查，精度由优先级保证
-  function encounterProfile(locationText) {
+  function encounterProfile(locationText, worldArg) {
     const base = { chance: clamp(0, 100, Number(SETTINGS.randomCombatChance) || 0), safe: false, via: 'settings', heat: 0, tension: 0, why: '', heatWhy: '' };
-    const world = readChatVar(CV.world);
+    const world = (worldArg !== undefined) ? worldArg : readChatVar(CV.world);   // V0.4.1：可选显式传入（态势注入与配发读同一份，防两次读不一致）
     if (!world || !world.encounter) return base;   // 无世界状态（未首推）：与 S6 原行为一致
     const enc = world.encounter;
     const heatWhy = (enc.heat && enc.heat.why) ? String(enc.heat.why) : '';
@@ -761,31 +759,21 @@
       .trim();
   }
 
-  // —— 信号级态势文本（V0.3.0：无敌人菜单——敌方构成由正文 AI 自选）—————————
-  // 驻守信号 = 世界状态里 zone 命中当前大区的派系（名称/士气/对我方立场）；
-  // 临近冲突 = conflict 类事件推进到"爆发"阶段且归属当前大区（取代旧预约引爆）。
+  // —— 信号级态势文本（V0.4.1 极简化：地点 + 副导演对该地的一句话判断）—————————
+  // why 三级：spots（地标级最具体）> districts（大区级）> 驻守信号兜底（zone 命中派系）；
+  // 都没有时仅地点行。开战提示已删除（战斗轮规则由用户世界书常驻承载——V0.2 决策）。
 
   function buildDirectorSituationText(locationText, world) {
     const lines = [SIT_OPEN, `  ${locationText}`];
-    if (world && Array.isArray(world.factions)) {
+    const profile = encounterProfile(locationText, world);
+    if (profile.why) {
+      lines.push(`  ${profile.why}`);
+    } else if (world && Array.isArray(world.factions)) {
       const stationed = world.factions.filter(f => f && f.zone && zoneHit(f.zone, locationText));
-      if (stationed.length) {
-        for (const f of stationed.slice(0, 3)) {
-          lines.push(`  驻守信号：${f.name}（${f.zone}）${f.morale ? '，士气：' + f.morale : ''}${f.stance ? '，对我方：' + f.stance : ''}`);
-        }
-      } else {
-        lines.push('  此地无已知派系驻防——敌方构成由你按世界书图鉴与剧情合理性决定。');
+      for (const f of stationed.slice(0, 3)) {
+        lines.push(`  驻守信号：${f.name}（${f.zone}）${f.morale ? '，士气：' + f.morale : ''}${f.stance ? '，对我方：' + f.stance : ''}`);
       }
-      const hot = (Array.isArray(world.events) ? world.events : [])
-        .filter(ev => ev && ev.type === 'conflict' && ev.stage === '爆发'
-          && eventZones(ev, world).some(z => zoneHit(z, locationText)));
-      for (const ev of hot) {
-        lines.push(`  【⚠ 临近冲突】${ev.name}已推进到爆发阶段${ev.desc ? '——' + ev.desc : ''}——本楼冲突极易触发，戒备拉满。`);
-      }
-    } else {
-      lines.push('  尚无世界态势档案——敌方构成由你按世界书图鉴与剧情合理性决定。');
     }
-    lines.push(`  ${COMBAT_RULE_HINT}`);
     lines.push(SIT_CLOSE);
     return lines.join('\n');
   }
@@ -1347,7 +1335,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
 
     // 词条内容 = 信号级当前态势 + 世界动态（事件/风声/派系暗线三态）
     const text = world
-      ? buildDirectorSituationText(locationText, world) + '\n\n' + buildDirectorInjection(world, locationText)
+      ? buildDirectorInjection(world, locationText) + '\n\n' + buildDirectorSituationText(locationText, world)   // V0.4.1：当前态势移到备忘之后（末尾注意力位）
       : buildDirectorSituationText(locationText, null);
     if (HAS_WB && (State.forceDirectorWrite || text !== State.wbLast.director)) {
       State.forceDirectorWrite = false;   // 开关重开的一次性强写（词条见 disabled 会重新上灯）
@@ -1988,11 +1976,11 @@ ${JSON.stringify(d.sample || [], null, 1)}
     }
     const events = (world.events || []).filter(ev => ev && ev.stage !== '平息');
     if (events.length) {
-      sections.push(['进行中的事件（程序每楼掷骰推进，阶段与进度可能已变化）', events.map(ev =>
+      sections.push(['进行中的事件', events.map(ev =>
         `  - ${ev.name}【${ev.type === 'progress' ? '进展' : '冲突'}·${ev.stage}·${ev.stageRound}/9】${ev.desc || ''}`)]);
     }
     if (world.winds && world.winds.length) {
-      sections.push(['风声（市民舆论，可经报纸/闲谈自然提及）', world.winds.map(w =>
+      sections.push(['风声', world.winds.map(w =>
         `  - ${w.content}（${w.spread}${w.source ? '·' + w.source : ''}）`)]);
     }
     const facts = (world.factions || []).filter(f => f.state !== '推断中');
@@ -2002,21 +1990,21 @@ ${JSON.stringify(d.sample || [], null, 1)}
     }
     const infers = (world.factions || []).filter(f => f.state === '推断中');
     if (infers.length) {
-      sections.push(['幕后动向（推断中·仅可环境渗透，禁止直接揭示）', infers.map(f =>
+      sections.push(['幕后动向', infers.map(f =>
         `  - ${f.truth}【推断·${(f.causes || [])[0] || ''}】${extra(f)}`)]);
     }
     const forbidden = (world.resistance && world.resistance.forbidden) || [];
     if (forbidden.length) {
-      sections.push(['禁泄清单（调查未抵达前禁止揭示）', forbidden.map(x =>
+      sections.push(['禁泄清单', forbidden.map(x =>
         `  - ${x.truth}【途径：${x.path}】`)]);
     }
     const partial = (world.resistance && world.resistance.partial) || [];
     if (partial.length) {
-      sections.push(['调查阻力（强行调查只应得到以下层级的信息）', partial.map(p => `  - ${p}`)]);
+      sections.push(['调查阻力', partial.map(p => `  - ${p}`)]);
     }
     const friction = (world.resistance && world.resistance.friction) || [];
     if (friction.length) {
-      sections.push(['环境阻力（当前环境对行动的客观影响）', friction.map(f => `  - ${f}`)]);
+      sections.push(['环境阻力', friction.map(f => `  - ${f}`)]);
     }
     const body = sections.map(([tag, items]) => `<${tag}>\n${items.join('\n')}\n</${tag}>`).join('\n\n');
     return [
@@ -2100,7 +2088,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
       if (State.randomCombatFired) { State.randomCombatFired = false; persistRuntimeState(); }
       // 提炼注入（信号级态势 + 世界动态；用户改过词条内容走 merge3 合并兜底）
       if (locationText) {
-        writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorSituationText(locationText, world) + '\n\n' + buildDirectorInjection(world, locationText));
+        writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorInjection(world, locationText) + '\n\n' + buildDirectorSituationText(locationText, world));
       }
       Trigger.floorsSinceEvolve = 0;
       Trigger.lastDateKey = statDateKey(stat) || Trigger.lastDateKey;

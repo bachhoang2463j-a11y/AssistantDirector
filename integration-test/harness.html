@@ -274,7 +274,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.4.0（账本 + 远方回响 + 触发链路强化 + 跳屏修复）', json.content.includes("@version      0.4.0"));
+  assert('版本 v0.4.1（态势极简化：why 三级 + 备忘/态势重排 + 标签去括号）', json.content.includes("@version      0.4.1"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -304,36 +304,38 @@ async function runAll() {
   assert('L2 地标键：房间级变化不改变键', AD.landmarkKey('📍 悉尼 · 澳大利亚酒店 - 总督套房 · 玄关') === '澳大利亚酒店 - 总督套房');
   assert('L3 地标键：单段地点', AD.landmarkKey('📍 某独立地标') === '某独立地标');
 
-  /* ——— S7 信号级态势文本（驻守信号 + 临近冲突提醒）——— */
-  head('S7 信号级态势文本');
+  /* ——— S7 信号级态势文本（V0.4.1 极简化：why 三级 + 驻守兜底）——— */
+  head('S7 信号级态势文本（极简版）');
   {
     const locGreen = '📍 悉尼 · 萨里山 · 绿顶酒馆 · 大堂';
     let text = AD.buildDirectorSituationText(locGreen, null);
-    assert('无世界状态：尚无档案提示 + 敌方由正文AI自选 + XML 包裹', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE)
-      && text.includes('尚无世界态势档案') && text.includes('世界书图鉴与剧情合理性决定')
-      && text.includes('<Combat_block>'));
+    assert('无世界状态：XML 包裹 + 仅地点行（冗余提示词已删）', text.startsWith(AD.SIT_OPEN) && text.endsWith(AD.SIT_CLOSE)
+      && text.includes(locGreen) && !text.includes('敌方构成') && !text.includes('<Combat_block>'));
     text = AD.buildDirectorSituationText(locGreen, WORLD);
-    assert('有世界状态：大区命中派系驻守信号（名称/大区/士气）', text.includes('驻守信号：凯特·利（萨里山）（萨里山）')
-      && text.includes('士气：士气高涨') && text.includes('对我方：觊觎主角团的爆破能力'));
-    assert('有世界状态：无敌人菜单（正文 AI 自选，不再列词条）', !text.includes('词条*') && !text.includes('驻守：'));
+    assert('district why 显示（spots 未命中时大区级兜底）', text.includes('帮派混战区'));
+    assert('极简：不再输出驻守信号/开战提示（why 优先，标签无括号）', !text.includes('驻守信号') && !text.includes('<Combat_block>')
+      && text.startsWith('<当前态势>'));
     const locRnd = '📍 悉尼 · 达令港 · 伦道夫船运仓库 · 禁区';
     text = AD.buildDirectorSituationText(locRnd, WORLD);
-    assert('冲突事件爆发阶段 → 临近冲突提醒行', (() => {
+    assert('spot why 优先（地标级命中最具体）', text.includes('黑法老触点盘踞'));
+    assert('真实案例锁定：无分隔 spot 命中带 · 分隔地点（诺兰花园洗衣房，压缩通道）', AD.zoneMatch('诺兰花园西侧废弃洗衣房', '📍 悉尼 · 诺兰花园西侧 · 废弃洗衣房') === true);
+    assert('爆发事件不再输出临近冲突行（威胁提示由 spots why 承担）', (() => {
       const hot = JSON.parse(JSON.stringify(WORLD));
       hot.events[0].stage = '爆发';
       hot.events[0].zone = '达令港';   // 事件归属当前大区（无派系关联时自带 zone）
       hot.events[0].factions = [];
-      return AD.buildDirectorSituationText(locRnd, hot).includes('【⚠ 临近冲突】仓库冲突已推进到爆发阶段');
+      return !AD.buildDirectorSituationText(locRnd, hot).includes('临近冲突');
     })());
-    assert('跨大区爆发事件不提醒（萨里山的事件不警示达令港）', (() => {
-      const hot = JSON.parse(JSON.stringify(WORLD));
-      hot.events[0].stage = '爆发';   // zone 经派系=凯特（萨里山），不命中达令港
-      return !AD.buildDirectorSituationText(locRnd, hot).includes('【⚠ 临近冲突】');
-    })());
-    // 麦凯 zone=悉尼：地点大区=悉尼 时其驻守信号也命中（zoneMatch 双向包含）
     const locHotel = '📍 悉尼 · 澳大利亚酒店 - 总督套房 · 客厅';
     text = AD.buildDirectorSituationText(locHotel, WORLD);
-    assert('多派系命中时最多列 3 条（悉尼/萨里山双命中）', text.includes('麦凯探长（飞行小队）') || text.includes('此地无已知派系驻防'));
+    assert('安全区 spot why（chance=0 的 why 说明为何安全）', text.includes('己方据点'));
+    assert('驻守信号兜底（无 encounter 档案时 zone 命中派系，≤3 条）', (() => {
+      const noEnc = JSON.parse(JSON.stringify(WORLD));
+      delete noEnc.encounter;
+      const t = AD.buildDirectorSituationText(locGreen, noEnc);
+      return t.includes('驻守信号：凯特·利（萨里山）') && t.includes('麦凯探长（飞行小队）')
+        && (t.match(/驻守信号/g) || []).length <= 3;
+    })());
   }
 
   /* ——— S7 本地骰（事件链推进 / 风声衰减 / swipe 幂等）——— */
@@ -451,24 +453,26 @@ async function runAll() {
       && e.position && e.position.type === 'at_depth' && e.position.role === 'system'
       && e.position.depth === 0 && e.position.order === 15;
   }, 4000));
-  assert('无世界状态：注入含"尚无世界态势档案" + 图鉴自选提示', (WB_MOCK.entry('副导演') || '').includes('尚无世界态势档案')
-    && (WB_MOCK.entry('副导演') || '').includes('世界书图鉴与剧情合理性决定'));
+  assert('无世界状态：注入仅含当前地点态势块（极简，无冗余提示）', (WB_MOCK.entry('副导演') || '').includes('<当前态势>')
+    && (WB_MOCK.entry('副导演') || '').includes('绿顶酒馆') && !(WB_MOCK.entry('副导演') || '').includes('敌方构成'));
   AD.dispatchNow('test-again');
   await sleep(150);   // 第二次写入走微任务链，静置后查幂等
   assert('幂等：同地点同状态不重写词条', WB_MOCK.writes('副导演') === 1
-    && AD.state.wbLast.director.includes('尚无世界态势档案'));
+    && AD.state.wbLast.director.includes('绿顶酒馆'));
 
-  // 有世界状态：注入 = 信号级态势 + 世界动态（事件/风声/派系三态）
+  // 有世界状态：注入 = 备忘在前 + 当前态势在末尾（V0.4.1 末尾注意力位）
   window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });
   AD.state.wbLast.director = '';   // 强制重写观察新内容
   AD.dispatchNow('test-world');
-  assert('有世界状态：词条含驻守信号 + 事件链段 + 风声段 + 派系三态段', await waitFor(() => {
+  assert('有世界状态：词条含 district why + 事件链段 + 风声段 + 派系三态段，且态势块在备忘之后', await waitFor(() => {
     const c = WB_MOCK.entry('副导演') || '';
-    return c.includes('驻守信号：凯特·利（萨里山）')
-      && c.includes('<进行中的事件') && c.includes('仓库冲突')
-      && c.includes('<风声') && c.includes('达令港夜里能听见仓库方向的枪声')
+    return c.includes('帮派混战区')
+      && c.includes('<进行中的事件>') && c.includes('仓库冲突')
+      && c.includes('<风声>') && c.includes('达令港夜里能听见仓库方向的枪声')
       && c.includes('<世界引擎推断>') && c.includes('空白搜查令已备')
-      && c.includes('<幕后动向') && c.includes('运输队共谋');
+      && c.includes('<幕后动向>') && c.includes('运输队共谋')
+      && c.indexOf('</内部导演备忘>') < c.indexOf('<当前态势>')
+      && c.lastIndexOf('</当前态势>') === c.length - AD.SIT_CLOSE.length;   // 态势块收尾=末尾注意力位
   }, 4000));
 
   /* ——— 事件链路：楼层事件 + 去抖 ——— */
@@ -500,7 +504,8 @@ async function runAll() {
     && s.randomCombatCooldown === true && s.randomCombatCooldownFloors === 3 && s.directorFloors === 20
     && s.regionalIncidentEnabled === true && s.regionalIncidentChance === 1
     && s.regionalIncidentDuration === 5 && s.regionalIncidentCooldown === 5
-    && Array.isArray(s.regionalIncidentTypes) && s.regionalIncidentTypes.length === 8);
+    && Array.isArray(s.regionalIncidentTypes) && s.regionalIncidentTypes.length === 8,
+    `everyX=${s.directorEveryX} floors=${s.directorFloors} cdF=${s.randomCombatCooldownFloors} incC=${s.regionalIncidentChance} incD=${s.regionalIncidentDuration} incCd=${s.regionalIncidentCooldown} types=${Array.isArray(s.regionalIncidentTypes) ? s.regionalIncidentTypes.length : 'n/a'}`);
   s.director.baseUrl = 'https://api.example.com/v1'; s.enabledDirector = false;
   AD.saveSettings(s);
   assert('设置保存到 localStorage 并读回', AD.loadSettings().director.baseUrl === 'https://api.example.com/v1'
@@ -802,7 +807,8 @@ async function runAll() {
         && inj.includes('<禁泄清单') && inj.includes('炸药原属伦道夫')
         && !inj.includes('[object Object]')
         && inj.includes('阿尔菲：逼问仅能问出身高体貌与口音') && inj.includes('警方全城戒备：牛津街机动巡逻增加三倍')
-        && inj.endsWith('</内部导演备忘>');
+        && inj.indexOf('</内部导演备忘>') < inj.indexOf('<当前态势>')   // V0.4.1：备忘在前，当前态势收尾（末尾注意力位）
+        && inj.endsWith('</当前态势>');
     })());
     assert('T10 调试日志记录推演请求/响应（label=director）', AD.DebugLog.some(e => e.label === 'director' && e.ok && e.raw.includes('双线绞合')));
     assert('T11 请求结构：世界书→LWB→楼层→时空→名单→名册→墓碑→上次世界状态→附加铁律（文末）', (() => {
@@ -1105,13 +1111,13 @@ async function runAll() {
     MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
     AD.dispatchNow('wb-a');
     assert('B1 首次写入后词条内容 = 纯脚本内容', await waitFor(() =>
-      (WB_MOCK.entry('副导演') || '').includes('尚无世界态势档案'), 4000));
+      (WB_MOCK.entry('副导演') || '').includes('绿顶酒馆'), 4000));
     WB_MOCK.patch('副导演', { content: (WB_MOCK.entry('副导演') || '') + '\n（GM注：凯特已与警方达成默契）' });   // 模拟用户在世界书编辑器改词条
     window.insertOrAssignVariables({ $ad_world: JSON.parse(JSON.stringify(WORLD)) }, { type: 'chat' });   // 换世界状态（脚本内容大改）
     AD.dispatchNow('wb-b');
     assert('B2 用户改过的词条在脚本换内容时合并：用户注保留 + 新世界动态生效', await waitFor(() => {
       const c = WB_MOCK.entry('副导演') || '';
-      return c.includes('驻守信号：凯特·利（萨里山）') && c.includes('（GM注：凯特已与警方达成默契）');
+      return c.includes('帮派混战区') && c.includes('（GM注：凯特已与警方达成默契）');
     }, 4000));
 
     // 端到端：用户调 position（顺序）→ 脚本更新永不覆盖
@@ -1120,7 +1126,7 @@ async function runAll() {
     assert('B3 用户调过的 position 永久保留（脚本只改 content 不动位置）', await waitFor(() => {
       const e = WB_MOCK.find('副导演');
       return e && e.position.depth === 4 && e.position.order === 2
-        && (e.content || '').includes('驻守信号：凯特·利（萨里山）');
+        && (e.content || '').includes('帮派混战区');
     }, 4000));
 
     // 禁用兜底：无 stat 聊天 → 词条下灯（先造残留词条再验证只下灯不删除）
@@ -1358,8 +1364,10 @@ async function runAll() {
     window.insertOrAssignVariables({ $ad_world: Object.assign(JSON.parse(JSON.stringify(WORLD)), { floorId: 99 }) }, { type: 'chat' });
     delete MOCK.chat['$ad_world_checkpoint'];
     AD.dispatchNow('s8-nocp');
-    assert('K5 无更早快照的回退 → 回到未推演状态（词条回落"尚无世界态势档案"）', await waitFor(() =>
-      (WB_MOCK.entry('副导演') || '').includes('尚无世界态势档案'), 4000));
+    assert('K5 无更早快照的回退 → 回到未推演状态（词条回落纯地点态势块，备忘消失）', await waitFor(() => {
+      const c = WB_MOCK.entry('副导演') || '';
+      return c.includes('绿顶酒馆') && !c.includes('<内部导演备忘>');
+    }, 4000));
 
     // 清理
     const s8z = AD.loadSettings();
