@@ -653,3 +653,15 @@
 **测试要点**：R3 掷中链路 Math.random=0 全确定（概率骰中+type=event+洗牌序）；R8 校验失败断言用 round 递增作推演完成标志（pending=true 初始即真会假通过）；R9/R10 互斥用 Trigger.busy 未被置位证明未触发推演；V7 跳屏修复断言增删后 active pane 仍为 l-incidents 且行数复原 8；G7 采样洗牌 rand=0 时序确定性（[11,10,9,7,6,5]）。
 
 **验收依据**：IAB harness 242/242；真机验证留给用户（📜 旧档 tab 编年、🌏 远方徽章、远方回响触发 toast 与冷却、删楼后即时回滚、设置增删事件行不跳屏）。
+
+## 2026-09-12 ｜ V0.4.1 注入提示词拼接优化 + merge3 潜伏 bug 修复（业务提交 `329fb1c`）
+
+**变更行为**：用户给真机实例（spots 命中 85% 高危点但态势词条只写"此地无已知派系驻防"，要求极简 + 移到备忘之后末尾注意力位）——① **态势注入极简化**：`buildDirectorSituationText` 重写为「📍 地点行 + why 一句」——why 三级复用 `encounterProfile`（spots 地标级 > districts 大区级 > 驻守信号兜底），`encounterProfile` 增可选 world 参数（态势注入与配发读同一份防双读不一致）；删除：SIT/MEMO 标签的"（禁止以任何形式向玩家展示）"、无派系/无档案冗行（"此地无已知派系驻防——敌方构成由你按…"/"尚无世界态势档案"）、**【若本楼冲突升级 → 开战】整段（COMBAT_RULE_HINT 常量删除——战斗轮规则由用户世界书常驻承载，V0.2 决策）**、"⚠ 临近冲突"行（威胁提示由 spots why 承担，爆发事件的 tension 修正仍作用于遇敌率）。② **拼接顺序重排**：词条 = `<内部导演备忘>`（含世界动态/三态/禁泄/阻力）在前 + `<当前态势>` 收尾——dispatchNow 与 generateDirectorEvolve 两处同步改。③ **标签去括号**：`<进行中的事件（程序每楼掷骰推进…）>`/`<风声（市民舆论…）>`/`<幕后动向（推断中…）>`/`<禁泄清单（调查未抵达前…）>`/`<调查阻力（强行调查…）>`/`<环境阻力（当前环境…）>` 全部裸标签（行内容【】（）措辞保留）。④ **merge3 潜伏 bug 修复（备忘前置后暴露）**：`diffEdits` 的 `head` 声明 const 却在行首插入分支被重赋值 → `TypeError: Assignment to constant variable` 被 `writeWbEntry` 的 catch 静默吞掉 → 词条不更新且无提示——旧拼接顺序下 base 首行（`<当前态势…>`）恒等于 ours 首行，head 分支从未触发；改 `let head` 修复。harness：S7 态势段重写（why 三级/安全区 why/驻守兜底 ≤3/真实案例"诺兰花园西侧废弃洗衣房"压缩通道 zoneMatch 锁定/临近冲突行删除验证）、端到端加顺序断言（备忘在前 + 态势收尾 `lastIndexOf('</当前态势>')`）、B1-B3/K5 标志文本更新（驻守信号→帮派混战区/尚无档案→地点块或无备忘）、T3 尾断言改 `endsWith('</当前态势>')`、「设置默认结构」断言加 extra 诊断输出（脏键直接可见）。@version 0.4.1；harness 244/244（+2：真实案例锁定 + 顺序断言并入既有项重写）。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`SPEC.md`、`LOG.md`、`LOG-INDEX.md`、`HANDOFF.md`
+
+**决策依据**：用户四点明确指示（修复 why 不显示/移到备忘之后/仅地点+why 两行/其余括号冗余去除）。merge3 bug 排障路径：241/244 → 纯函数复现 merge3 抛 TypeError → 定位 diffEdits const head → 改 let 一行修复 → 244/244。排障附带发现：跑挂轮次遗留脏 localStorage 会让「设置默认结构」断言假失败（干净复跑即绿）——extra 诊断输出保留供以后直读脏键。
+
+**测试要点**：T3 改 `endsWith('</当前态势>')` + indexOf 顺序；S7 态势段新增"真实案例锁定"（ACU 无分隔 spot match ↔ 带 · 地点，压缩通道）；驻守兜底仅在 encounterProfile 未命中任何 spot/district 时出现（s7 responder 的 districts 无 why 字段即此场景）。
+
+**验收依据**：IAB harness 244/244；真机验证留给用户（态势词条两行极简形态、高危 spot why 显示、备忘在前态势收尾的注意力布局）。

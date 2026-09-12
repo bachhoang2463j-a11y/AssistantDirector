@@ -1,6 +1,6 @@
 # HANDOFF · 副导演项目交接文档
 
-> **交接时间**：2026-09-12 ｜ **当前版本 V0.4.0** ｜ harness **242/242**
+> **交接时间**：2026-09-12 ｜ **当前版本 V0.4.1** ｜ harness **244/244**
 > **用途**：新对话接手开发。先读本文档，再按需查 SPEC.md（协议）/ LOG-INDEX.md（历史索引）。
 > **下一步任务**：批量回填 backfill（长聊天冷启动，见 §3.1）。
 
@@ -39,7 +39,7 @@
 | 类型表 | `parseIncidentTypes`/`normalizeIncidentTypes` | **结构化数组** `[{label,guide,weight,enabled,custom}]`；默认 8 类（`DEFAULT_INCIDENT_TYPES()`，custom:false 只可开关）；UI 行列表（PC 全字段+删除，移动端简化行）；权重 0=单类禁用 |
 | 账本（V0.4.0） | `recordLedger`/`getLedger` → `$ad_ledger` | 推演回执合并后 diff 前后世界：Lv≥3 新事件（带 zone）/推进至爆发·平息（终局不限等级）/Lv≥3 新风声（`windSeen` norm 包含=延续不入账）；同楼覆盖、回退截断、上限 30（LEDGER_KEEP）；报纸「📜 旧档」tab 编年展示 |
 | 远方回响（V0.4.0） | `rollDistantEcho` → `triggerDistantEvolve` → `acceptDistantEcho` | 挂 dispatchNow（区域事件后、共享 lastDiceFloorId 幂等）：账本≥阈值(10)×概率(20%/楼) → `sampleDistantLedger`（最近1/4必选+洗牌补半）→ 强制推演 distant-echo；指令段 `buildDistantDirective` 与区域事件互斥（掷中/活跃优先顺延）；回执读**原始 parsed** 的 `_distanceGenerated`（validateWorld 重建剥未知字段）——恰好一个+类型匹配+Lv2/3+形状合法+确为新 → `distance:true` 持久标记（validateWorld prev 继承跨轮存活）+冷却(5楼)+历史 distant-echo；失败剔除重试；远方卡「🌏 远方」徽章 |
-| 注入 | `buildDirectorSituationText` + `buildDirectorInjection` → `writeWbEntry('副导演')` | 单词条 at_depth/system/depth0/order15；信号级态势（无敌人菜单）+ 世界动态段（区域动态/事件/风声/三态/禁泄/阻力）；merge3 用户改动保留 |
+| 注入 | `buildDirectorInjection` + `buildDirectorSituationText` → `writeWbEntry('副导演')` | 单词条 at_depth/system/depth0/order15；**V0.4.1 拼接顺序：备忘在前 + 当前态势收尾（末尾注意力位）**；备忘=世界动态段（区域动态/事件/风声/三态/禁泄/阻力，标签无括号）；态势=📍地点 + why 三级（`encounterProfile` spots>districts>驻守兜底，world 参数显式传入）；merge3 用户改动保留 |
 | 历史 | `pushHistory`/`getHistory` | `$ad_history` 四类（evolve/combat/incident/system）各环形 50 条；🕘 弹窗（设置内入口）；distant-echo 落 system 类 |
 | 设置 UI | `isMobileDevice()` UA 分流 | PC ⚙ → 960px 八栏目工作台（`.st-*` 类；`settingsActiveTab` 全量重渲保持当前栏，新开回首屏）；移动端 ⚙ → 面板内切 `#panel-view-settings` 4-Tab 零弹窗；`collectFormToSettings(root)` 参数化（只收活跃容器）；远方回响卡片在 PC「⚡ 区域与远方」栏 + 移动端 m-combat 分区 |
 | 报纸 | `renderWire` | activeTab 分流（📰/⚡/📣/📜 四 tab）；lead=遇敌几率+区域氛围（`encounterProfile` + 区域事件提醒）；灰卡揭幕体系（`syncRevealState` 接触即揭）；远方事件/风声卡「🌏 远方」徽章 |
@@ -78,6 +78,8 @@
 - **localStorage 旧格式存档**会吞新设置项（真机排障实例：概率改 100 不生效实为回落默认 5）——migrateSettings 每加新键必须有迁移行；
 - **UA 双路分流**：设置 UI 移动端/PC 是两套容器，`collectFormToSettings(root)` 只收活跃容器（否则陈旧输入覆盖新值）；
 - **harness 各段 ST_MOCK.chat 推楼必须复原**（V0.4.0 排障实例：S8 段遗留用户尾楼 → A4「尾楼为 AI 楼」假失败）——段开头记 `BASE_LEN`、段末 `while (stChat.length > BASE_LEN) stChat.pop()`；需要特定尾楼身份时显式 push 构造，勿依赖前段遗留；
+- **跑挂轮次会遗留脏 localStorage**：某轮断言挂掉不影响后续段执行，但各段清理快照的时序抖动可能让下一轮的「设置默认结构」等读默认值断言假失败——「设置默认结构」断言已加 extra 诊断输出（失败时直接打印各键实际值），干净复跑即绿；
+- **merge3/diffEdits 的行首插入分支**（`head`）在"base 首行 ≠ ours 首行"时才触发（V0.4.1 曾因此爆 const TypeError 静默吞写入）——改注入拼接顺序时务必跑 merge3 相关断言（B1-B3/T3/K5）；
 - **IAB 截图管道**：`tab.screenshot()` 须在同 cell `nodeRepl.emitImage`；页面挂载需先点"运行"（__AD__ 才存在）；
 - **commit 中文乱码**只是终端显示波动，git 存储是 UTF-8（`git log --format=%s` 验证）。
 
@@ -90,6 +92,7 @@
 - [ ] V0.3.7 设置 UI 双路（手机 ⚙ 内切手感、PC 工作台观感、窄屏满宽）
 - [ ] V0.3.8 类型行增删开关、步进器显示、空敌方池推演输入
 - [ ] V0.4.0 📜 旧档 tab 编年（推演产生 Lv3 事件后入账展示）、🌏 远方徽章、远方回响触发（账本 ≥10 条后 toast「🌏 远方回响」+ 冷却 5 楼）、删楼后即时回滚（不再等下一楼）、设置增删自定义事件行不再跳回 API 首屏
+- [ ] V0.4.1 态势词条极简两行形态（📍地点 + spot/district why）、备忘在前态势收尾的注意力布局、高危 spot（如 85% 洗衣房）why 准确显示
 
 ## 7. 下一步任务的开工话术（新对话直接用）
 
