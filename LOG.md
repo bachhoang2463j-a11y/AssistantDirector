@@ -675,3 +675,15 @@
 **决策依据**：用户实机截图 + IAB 真机检查（browser-use 连 127.0.0.1:8000，脚本 iframe 的 `__AD__` 状态 + 聊天变量）。真机排查附带发现：IAB 页面会被宿主随机重置成空白页（同 tab 反复发生，重开标签即可）；聊天变量必须 await `getVariables`（TavernHelper 返回 Promise，同步读得到空对象）。
 
 **验收依据**：IAB harness 246/246；真机验证留给用户（导入 v0.4.2 后重载页面/换聊天，折叠栏应显示历史头条滚动——前提是该聊天推演过；从未推演的聊天维持星形胶囊为设计行为）。
+
+## 2026-09-12 ｜ V0.4.3 折叠栏四类轮播（态势/报纸/事件/风声 + 已更新优先）（业务提交 `32975a4`）
+
+**变更行为**：用户指示折叠栏改为「按态势、报纸、事件、风声的顺序进行轮播，优先播放已更新内容」——① **数据模型升级**：`State.tickerHeads`（推演快照字符串数组）废弃，改 `State.tickerItems`（`[{cat,text}]` 对象数组）+ `State.tickerPins`（已更新类别数组），均持久化 $ad_state（旧 tickerHeads 字段遗弃不迁移——每楼 dispatch 会重建）；② **`buildTickerItems(world, locationText, pins)` 纯函数**：固定类别顺序 📍态势（shortLoc 地点）→ 📰报纸（前 2 条派系征兆 surface 截 10 字）→ ⚔事件链（前 2 条未平息事件 名·阶段）→ 📣风声（前 2 条内容截 9 字），pins 中的类别组整体提前（组内保持类别相对序）；③ **dispatchNow 每楼派生**（世界状态/态势地点变化即刷新，页面重载/换聊天后自动恢复——含未推演聊天仅态势条）；④ **推演路径**：digest/factions(name+surface+state)/events(name+stage+stageRound)/winds(content) 字段级 diff 算 pins，首推全 pin；pins/条目立即 persistRuntimeState（补 V0.4.2 教训：不能等下一次 dispatch）；renderTicker 改 tickerItems 渲染（空判定 items.length===0）。⑤ 修自引入 bug：buildTickerItems 初版漏包装 {cat,text}（返回字符串数组）→ renderTicker 的 esc(undefined) 渲染空白 + harness T12 断言 x.text.includes 抛 unhandled rejection 炸断 runAll；__AD__ 补导出 buildTickerItems/TICKER_ORDER。harness：+3（T-k1 类别顺序纯函数/T-k2 pins 提前/T-t1 dispatch 派生渲染），T-t2 改推演落盘断言，T-t3 换聊天清空沿用；同步旧断言（T12/空态收缩 tickerHeads→tickerItems）；V0.4.3 段补设置清理（防脏值泄漏——上一版 sv43.regionalIncidentEnabled=false 未恢复致下一轮「设置默认结构」假失败）。@version 0.4.3；harness 249/249。
+
+**涉及文件**：`src/content.js`、`integration-test/harness.html`、`酒馆助手脚本-副导演.json`、`LOG.md`、`LOG-INDEX.md`、`HANDOFF.md`
+
+**决策依据**：用户指示四类顺序 + 已更新优先。排障两例：①IAB 宿主对 harness 标签的 fetch 概率性挂起（面板 visibility 开关重置可解；「等待加载产物…」是 stat 初始文案，runAll 中途查询时看到它≠挂起，要看 log 是否滚动）；②emoji 代理对坑——📍📰📣 是四字节字符，`text[0]`/`slice(0,2)` 只取到半个代理项，断言须用 `Array.from(text)[0]` 或 startsWith。
+
+**测试要点**：T-k1 用 Array.from 按 code point 取 emoji；T-k2 断言 cat 数组而非 text 前缀；T-t2 推演落盘用 digest 变化触发 situation pin；V 段新增加的设置改动必须在段尾恢复（本轮「设置默认结构」假失败即 sv43 漏清理所致）。
+
+**验收依据**：IAB harness 249/249；真机验证留给用户（导入 v0.4.3 后折叠栏四类条目滚动：📍当前地点→📰最新派系征兆→⚔未平息事件→📣风声；推演后刚更新的类别排最前；换聊天/重载页面自动恢复）。
