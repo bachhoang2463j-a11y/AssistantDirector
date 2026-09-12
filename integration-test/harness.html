@@ -274,7 +274,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-  assert('版本 v0.4.1（态势极简化：why 三级 + 备忘/态势重排 + 标签去括号）', json.content.includes("@version      0.4.1"));
+  assert('版本 v0.4.2（折叠栏头条渲染修复 + 备忘小说作者视角提醒）', json.content.includes("@version      0.4.2"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -1821,6 +1821,25 @@ async function runAll() {
       delete MOCK.chat['$ad_ledger'];
       document.querySelector('#ad-tabs .ad-tab[data-tab="ledger"]').click();
       assert('V4 旧档空态提示', document.getElementById('ad-wire').innerText.includes('尚无重大事件入账'));
+    }
+
+    // ── V0.4.2：折叠栏头条渲染修复（dispatchNow 每楼刷 ticker，换聊天即时清空）──
+    {
+      MOCK.addFloor({ stat_data: { '状态栏': STAT_GREEN } });
+      window.insertOrAssignVariables({ $ad_state: { tickerHeads: ['⚔测试头条A', '📣测试头条B'] } }, { type: 'chat' });
+      AD.loadRuntimeState();
+      AD.dispatchNow('v42-ticker');
+      assert('T-t1 dispatchNow 刷新折叠栏头条（页面重载后恢复历史 tickerHeads，empty 态解除）', await waitFor(() => {
+        const rail = document.getElementById('ad-rail');
+        const lis = [...document.querySelectorAll('#ad-ticker li')];
+        return rail && !rail.classList.contains('empty') && lis.length >= 2
+          && lis.some(l => l.textContent.includes('测试头条A'));
+      }, 4000));
+      MOCK.eventEmit('CHAT_CHANGED');
+      assert('T-t2 换聊天即时清空折叠栏头条（empty 态恢复，不留旧聊天内容）', await waitFor(() => {
+        const rail = document.getElementById('ad-rail');
+        return rail && rail.classList.contains('empty') && document.querySelectorAll('#ad-ticker li').length === 0;
+      }, 8000));
     }
 
     // ── 设置：远方回响字段 + 跳屏修复（增删事件行不再回 API 首屏）──

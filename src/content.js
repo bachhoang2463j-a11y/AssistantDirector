@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.4.1
+// @version      0.4.2
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.4.1';
+  const SCRIPT_VERSION = '0.4.2';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -734,6 +734,7 @@
     State.combatEndFloorId = -1;
     State.pendingIncident = null;
     State.tickerHeads = [];
+    renderTicker();   // V0.4.2：清空即时反映（否则换聊天后 DOM 还挂旧聊天头条）
     Trigger.lastDateKey = '';               // 换聊天：触发基线重建（首次 dispatch 记基线不触发）
     Trigger.lastStage = '';
     Trigger.lastCombatResult = '';
@@ -1348,6 +1349,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     persistRuntimeState();
     updatePanelStatus(null, { locationText, world });
     updatePanelMeta(stat);
+    renderTicker();   // V0.4.2 修复：折叠栏头条每楼刷新（V0.3.0 重构时丢失——页面重载/换聊天后 loadRuntimeState 恢复的历史头条永不渲染，折叠栏一直空胶囊）
     if (IS_LIVE) checkTriggers(stat);   // S7：心跳 + 强制推触发矩阵
   }
 
@@ -2011,6 +2013,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
       MEMO_OPEN,
       '',
       '以下是副导演世界引擎的推断——用于环境渗透、NPC 行为自洽与剧情伏笔参考，正文按合理性自由取舍。',
+      '注意：像专业的小说作者一样自然融入故事，不要以上帝视角告知玩家。',
       '',
       body,
       '',
