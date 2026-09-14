@@ -274,7 +274,7 @@ async function runAll() {
   } catch (e) { ng('产物 JSON 加载失败', String(e)); return finish(); }
   assert('产物 JSON 载入（type=script）', json.type === 'script');
   assert('content 非空', typeof json.content === 'string' && json.content.length > 1000, `${json.content.length} 字符`);
-    assert('版本 v0.4.4（派系钦定设定 + 清空重推 + 圈套纪律动机驱动版）', json.content.includes("@version      0.4.4"));
+    assert('版本 v0.4.5（名册双钮：✕ 除名纯移除 + 🪦 拉黑手动黑名单）', json.content.includes("@version      0.4.5"));
   MOCK.reset();   // 重跑隔离：清残留楼层变量与世界书词条（HAS_WB 探测在 content 执行时完成）
   try { new Function(json.content).call(window); } catch (e) { ng('content 执行异常', String(e)); return finish(); }
   AD = window.__AD__;
@@ -955,7 +955,7 @@ async function runAll() {
       encounter: {}, roster_ops: [], generatedAt: Date.now(), reason: 's5' } }, { type: 'chat' });
     const r2 = AD.tombstoneFaction('蒂莉（达令赫斯特）');
     const w2 = MOCK.chat['$ad_world'];
-    assert('R2 除名=墓碑：世界状态条目/提及事件/提及风声/提及阻力级联删除，其他派系与事件保留', r2 === true
+    assert('R2 拉黑=黑名单：世界状态条目/提及事件/提及风声/提及阻力级联删除，其他派系与事件保留', r2 === true
       && w2.factions.length === 1 && w2.factions[0].name === '凯特·利（萨里山）'
       && w2.events.length === 1 && w2.events[0].name === '仓库冲突'
       && w2.winds.length === 1 && w2.winds[0].content === '码头枪声传闻'
@@ -967,6 +967,15 @@ async function runAll() {
       const c = WB_MOCK.entry('副导演') || '';
       return !c.includes('蒂莉借刀杀人') && !c.includes('蒂莉的信使只会撒谎') && c.includes('凯特脱手军火');
     }, 4000));
+
+    // R2c V0.4.5 除名=纯移除：出册不进黑名单 + 暗线照删 + 非在册拒绝
+    const r2c = AD.removeRosterFaction('凯特·利（萨里山）');
+    const w2c = MOCK.chat['$ad_world'];
+    assert('R2c 除名=纯移除（出册 + 暗线级联删 + 不进黑名单 + 非在册拒绝）', r2c === true
+      && !AD.getRoster().factions.includes('凯特·利（萨里山）')
+      && !AD.getRoster().tombstones.includes('凯特·利（萨里山）')
+      && w2c.factions.length === 0
+      && AD.removeRosterFaction('凯特·利（萨里山）') === false);
 
     // R3 恢复：出墓碑回名册（非墓碑名拒绝）
     assert('R3 墓碑恢复回名册（非墓碑名拒绝）', AD.restoreFaction('蒂莉（达令赫斯特）') === true
@@ -1008,9 +1017,18 @@ async function runAll() {
     })());
     const r6Before = AD.getRoster().factions.length;
     document.querySelector('#ad-modal-box [data-tomb="全新派系"]').click();
-    assert('R6b 弹窗除名按钮生效（点击→墓碑 + 弹窗重渲染）', AD.getRoster().factions.length === r6Before - 1
+    assert('R6b 弹窗拉黑按钮生效（点击→黑名单 + 弹窗重渲染）', AD.getRoster().factions.length === r6Before - 1
       && AD.getRoster().tombstones.includes('全新派系')
       && document.querySelectorAll('#ad-modal-box [data-restore="全新派系"]').length === 1);
+    // R6c V0.4.5 弹窗除名按钮：纯移除不进黑名单
+    AD.addRosterFaction('测试除名派系');
+    AD.openRosterModal();
+    document.querySelector('#ad-modal-box [data-del="测试除名派系"]').click();
+    assert('R6c 弹窗除名按钮生效（点击→出册不进黑名单 + 弹窗重渲染）', (() => {
+      return !AD.getRoster().factions.includes('测试除名派系')
+        && !AD.getRoster().tombstones.includes('测试除名派系')
+        && document.querySelectorAll('#ad-modal-box [data-del]').length === AD.getRoster().factions.length;
+    })());
     // 清理
     const s5z = AD.loadSettings();
     s5z.director = { baseUrl: '', apiKey: '', model: '', temperature: 0.4, maxTokens: 4000 };

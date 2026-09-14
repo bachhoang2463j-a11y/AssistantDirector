@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.4.4
+// @version      0.4.5
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.4.4';
+  const SCRIPT_VERSION = '0.4.5';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -1629,7 +1629,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     return true;
   }
 
-  // —— S5 名册 CRUD（GM 生杀权：添加=轻量登场/预输入，删除=墓碑，恢复=出墓碑）———
+  // —— S5 名册 CRUD（GM 生杀权：添加=轻量登场/预输入；除名=纯移除；拉黑=手动黑名单；恢复=出黑名单）———
 
   // 添加派系（预输入：MMS 固定名册同构——玩家已知，立即署名 + 永远有平静占位卡）
   function addRosterFaction(name) {
@@ -1637,7 +1637,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     if (!name) { toast('派系名为空'); return false; }
     const roster = getRoster();
     if (roster.factions.includes(name)) { toast('名册中已存在'); return false; }
-    if (roster.tombstones.includes(name)) { toast('该派系在墓碑中——先恢复再操作'); return false; }
+    if (roster.tombstones.includes(name)) { toast('该派系在黑名单中——先恢复再操作'); return false; }
     roster.factions.push(name);
     roster.manual.push(name);      // 预输入来源（区别于插件自动登记——不打"新面孔"标记）
     roster.revealed.push(name);    // 预输入派系 = 玩家已知，立即署名
@@ -1646,8 +1646,57 @@ ${JSON.stringify(d.sample || [], null, 1)}
     return true;
   }
 
-  // 除名 = 墓碑：级联删该派系全部暗线（世界状态条目 + 提及它的事件/风声/阻力整条删——
-  // 交叉暗线其他派系自身条目不动），废弃名单写入推演输入（【墓碑（禁止复活）】），词条即时重写
+  // 级联删世界状态中该派系全部暗线（条目 + 提及它的事件/风声/阻力整条删——交叉暗线其他派系
+  // 自身条目不动），词条即时重写——V0.4.5 起除名与拉黑共用
+  function cascadeDeleteFaction(name) {
+    // 短名容错：条目常以核心名提及派系（"蒂莉的信使"而非"蒂莉（达令赫斯特）"）——全名或去括号核心名任一命中即算提及
+    const core = name.replace(/[（(][^）)]*[）)]/g, '').trim();
+    const mentions = v => {
+      const s = String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v)));
+      return s.includes(name) || (core.length >= 2 && core !== name && s.includes(core));
+    };
+    const world = readChatVar(CV.world);
+    if (!(world && Array.isArray(world.factions))) return;
+    const before = world.factions.length;
+    world.factions = world.factions.filter(f => !(f && f.name === name));
+    const res = world.resistance && typeof world.resistance === 'object' ? world.resistance : {};
+    if (Array.isArray(res.forbidden)) res.forbidden = res.forbidden.filter(x => x && !mentions(x.truth) && !mentions(x.path));
+    if (Array.isArray(res.partial)) res.partial = res.partial.filter(x => !mentions(x));
+    if (Array.isArray(res.friction)) res.friction = res.friction.filter(x => !mentions(x));
+    world.resistance = res;
+    if (Array.isArray(world.events)) {
+      world.events = world.events.map(ev => {
+        if (!ev) return ev;
+        if (mentions(ev.name) || mentions(ev.desc)) return null;   // 事件本身提及该派系：整条删
+        if (Array.isArray(ev.factions)) {
+          ev.factions = ev.factions.filter(f => f !== name && !mentions(f));
+          return ev.factions.length ? ev : null;   // 涉及派系剔空：删
+        }
+        return ev;
+      }).filter(Boolean);
+    }
+    if (Array.isArray(world.winds)) world.winds = world.winds.filter(w => w && !mentions(w.content) && !mentions(w.source));
+    writeChatVar(CV.world, world);
+    writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorInjection(world, State.lastLocationText));   // 词条即时重写（无该派系版本）
+    renderWire();   // surface 报纸同步去该派系
+    log(`暗线级联删除：${name}（世界派系 ${before}→${world.factions.length} 条，事件/风声/阻力级联删除）`);
+  }
+
+  // V0.4.5 除名 = 纯移除：从名册删 + 级联删暗线，不进黑名单——下轮推演模型仍可能重新输出该名并自动登记
+  function removeRosterFaction(name) {
+    name = String(name || '').trim();
+    if (!name) return false;
+    const roster = getRoster();
+    if (!roster.factions.includes(name)) return false;
+    roster.factions = roster.factions.filter(f => f !== name);
+    saveRoster(roster);
+    cascadeDeleteFaction(name);
+    log('名册除名（纯移除，未拉黑）：', name);
+    return true;
+  }
+
+  // V0.4.5 拉黑 = 手动黑名单（原"删除=墓碑"语义）：从名册删 + 级联删暗线 + 禁止模型复活
+  // （名单写入推演输入【墓碑（禁止复活）】，validateWorld 精确同名兜底丢弃）
   function tombstoneFaction(name) {
     name = String(name || '').trim();
     if (!name) return false;
@@ -1655,44 +1704,11 @@ ${JSON.stringify(d.sample || [], null, 1)}
     roster.factions = roster.factions.filter(f => f !== name);
     if (!roster.tombstones.includes(name)) roster.tombstones.push(name);
     saveRoster(roster);
-
-    // 短名容错：条目常以核心名提及派系（"蒂莉的信使"而非"蒂莉（达令赫斯特）"）——全名或去括号核心名任一命中即算提及
-    const core = name.replace(/[（(][^）)]*[）)]/g, '').trim();
-    const mentions = v => {
-      const s = String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v)));
-      return s.includes(name) || (core.length >= 2 && core !== name && s.includes(core));
-    };
-    // 级联：世界状态——该派系条目 + 提及它的阻力整条删 + 事件中的该派系剔除（剔空删事件）+ 提及它的风声删
-    const world = readChatVar(CV.world);
-    if (world && Array.isArray(world.factions)) {
-      const before = world.factions.length;
-      world.factions = world.factions.filter(f => !(f && f.name === name));
-      const res = world.resistance && typeof world.resistance === 'object' ? world.resistance : {};
-      if (Array.isArray(res.forbidden)) res.forbidden = res.forbidden.filter(x => x && !mentions(x.truth) && !mentions(x.path));
-      if (Array.isArray(res.partial)) res.partial = res.partial.filter(x => !mentions(x));
-      if (Array.isArray(res.friction)) res.friction = res.friction.filter(x => !mentions(x));
-      world.resistance = res;
-      if (Array.isArray(world.events)) {
-        world.events = world.events.map(ev => {
-          if (!ev) return ev;
-          if (mentions(ev.name) || mentions(ev.desc)) return null;   // 事件本身提及该派系：整条删
-          if (Array.isArray(ev.factions)) {
-            ev.factions = ev.factions.filter(f => f !== name && !mentions(f));
-            return ev.factions.length ? ev : null;   // 涉及派系剔空：删
-          }
-          return ev;
-        }).filter(Boolean);
-      }
-      if (Array.isArray(world.winds)) world.winds = world.winds.filter(w => w && !mentions(w.content) && !mentions(w.source));
-      writeChatVar(CV.world, world);
-      writeWbEntry(WB_ENTRY_DIRECTOR, buildDirectorInjection(world, State.lastLocationText));   // 词条即时重写（无该派系版本）
-      renderWire();   // surface 报纸同步去该派系
-      log(`墓碑：${name} 已除名（世界派系 ${before}→${world.factions.length} 条，事件/风声/阻力级联删除）`);
-    }
+    cascadeDeleteFaction(name);
     return true;
   }
 
-  // 恢复：出墓碑回名册（报告内容已被级联删除——由下一轮推演重新覆盖）
+  // 恢复：出黑名单回名册（报告内容已被级联删除——由下一轮推演重新覆盖）
   function restoreFaction(name) {
     name = String(name || '').trim();
     if (!name) return false;
@@ -1701,7 +1717,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     roster.tombstones = roster.tombstones.filter(f => f !== name);
     if (!roster.factions.includes(name)) roster.factions.push(name);
     saveRoster(roster);
-    log('墓碑恢复（回名册）：', name);
+    log('黑名单恢复（回名册）：', name);
     return true;
   }
 
@@ -3813,22 +3829,23 @@ ${JSON.stringify(d.sample || [], null, 1)}
         <span class="place">${roster.prompts[name] ? '📌 ' : ''}${esc(name)}</span>
         <span style="display:flex;gap:4px">
           <button class="ad-row-btn" data-fp="${esc(name)}" title="作者钦定设定：定位/实力/认知边界，注入推演输入（优先级高于默认铁律）">✏️ 设定</button>
-          <button class="ad-row-btn" data-tomb="${esc(name)}" title="除名=墓碑：级联删该派系全部暗线并禁止模型复活">🪦 除名</button>
+          <button class="ad-row-btn" data-tomb="${esc(name)}" title="拉黑=手动黑名单：级联删该派系全部暗线并禁止模型复活">🪦 拉黑</button>
+          <button class="ad-row-btn" data-del="${esc(name)}" title="除名=仅从名册移除并级联删暗线（不进黑名单，下轮推演可能重新登记）">✕ 除名</button>
         </span>
       </div>`).join('') || '<div class="dim" style="padding:8px 2px">名册为空——世界推演时自动登记，或在上方手动添加。</div>';
     const tombs = roster.tombstones.map(name => `
       <div class="ad-card-item" style="cursor:default;opacity:0.62">
         <span class="place">🪦 ${esc(name)}</span>
-        <button class="ad-row-btn" data-restore="${esc(name)}" title="出墓碑回名册（暗线由下一轮推演重新覆盖）">↩ 恢复</button>
+        <button class="ad-row-btn" data-restore="${esc(name)}" title="出黑名单回名册（暗线由下一轮推演重新覆盖）">↩ 恢复</button>
       </div>`).join('');
     openModal(`
-      <h3>📜 派系名册（在册 ${roster.factions.length} · 墓碑 ${roster.tombstones.length}）</h3>
+      <h3>📜 派系名册（在册 ${roster.factions.length} · 黑名单 ${roster.tombstones.length}）</h3>
       <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">
-        名册进推演输入（已知派系，新派系由推演自动登记）；除名=墓碑——级联删该派系全部暗线（世界状态条目、提及它的事件/风声/阻力整条删）并禁止模型复活。存 $ad_roster。</div>
+        名册进推演输入（已知派系，新派系由推演自动登记）；✕ 除名=从名册移除并级联删暗线（下轮推演可能重新登记）；🪦 拉黑=黑名单——级联删并禁止模型复活（存 $ad_roster）。</div>
       <div class="ad-form-row"><label>添加派系</label><input type="text" id="ad-roster-new" placeholder="派系名（轻量登场：先入册，真相由推演补）">
         <button class="ad-row-btn" id="ad-roster-add">＋ 入册</button></div>
       ${rows}
-      ${roster.tombstones.length ? `<div class="ad-sec-title" style="margin-top:12px">墓碑（禁止复活）</div>${tombs}` : ''}
+      ${roster.tombstones.length ? `<div class="ad-sec-title" style="margin-top:12px">黑名单（禁止复活）</div>${tombs}` : ''}
       <div class="ad-btnrow"><button id="ad-roster-close">关闭</button></div>`);
     els.modalBox.querySelector('#ad-roster-add').addEventListener('click', () => {
       const input = els.modalBox.querySelector('#ad-roster-new');
@@ -3837,10 +3854,16 @@ ${JSON.stringify(d.sample || [], null, 1)}
     els.modalBox.querySelectorAll('[data-fp]').forEach(btn => {
       btn.addEventListener('click', () => openFactionPromptModal(btn.getAttribute('data-fp')));
     });
+    els.modalBox.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-del');
+        if (removeRosterFaction(name)) { toast(`已除名（纯移除，未拉黑）：${name}`); openRosterModal(); }
+      });
+    });
     els.modalBox.querySelectorAll('[data-tomb]').forEach(btn => {
       btn.addEventListener('click', () => {
         const name = btn.getAttribute('data-tomb');
-        if (tombstoneFaction(name)) { toast(`已除名入墓碑：${name}（暗线级联清除）`); openRosterModal(); }
+        if (tombstoneFaction(name)) { toast(`已拉黑：${name}（暗线级联清除，禁止复活）`); openRosterModal(); }
       });
     });
     els.modalBox.querySelectorAll('[data-restore]').forEach(btn => {
@@ -3938,7 +3961,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     getLwbSummaryText,
     checkTriggers, generateDirectorEvolve, buildDirectorContext, buildDirectorMessages,
     validateWorld, DirectorPrompt, DEFAULT_DIRECTOR_SYS,
-    getRoster, saveRoster, addRosterFaction, tombstoneFaction, restoreFaction, openRosterModal,
+    getRoster, saveRoster, addRosterFaction, removeRosterFaction, tombstoneFaction, restoreFaction, openRosterModal,
     setFactionPrompt, openFactionPromptModal,   // V0.4.4：派系钦定设定
     Trigger, openWorldModal,
     // S6：随机遭遇掷骰
