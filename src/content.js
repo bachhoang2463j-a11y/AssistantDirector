@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Assistant Director (副导演·世界模拟器)
 // @namespace    assistant-director
-// @version      0.4.3
+// @version      0.4.4
 // @description  AIRP 世界模拟器：单一副导演 API 世界推演（派系暗线/事件链/风声，S7 仿世界引擎）+ 随机遭遇掷骰（S6）+ 名册/墓碑（S5）+ 阶段揭示（S4）+ 公开情报贴边栏。注入走世界书词条 · SPEC V0.3.0
 // @author       ELevin
 // @match        *://*/*
@@ -27,7 +27,7 @@
   // ═════════════════════════════════════════════════════════════════════
 
   const SCRIPT_NAME = 'AssistantDirector';
-  const SCRIPT_VERSION = '0.4.3';
+  const SCRIPT_VERSION = '0.4.4';
   // 注入走角色卡主世界书词条（MMS 同构）：constant 蓝灯 + at_depth system 0/15，
   // 首次创建定位置，之后只改 content 不动 position——用户可在世界书编辑器自由调整顺序。
   // V0.3.0：双词条（态势/暗线）合并为单一"副导演"词条；旧词条升级时下灯不删。
@@ -1607,11 +1607,27 @@ ${JSON.stringify(d.sample || [], null, 1)}
         tombstones: Array.isArray(r.tombstones) ? r.tombstones.map(String) : [],
         revealed: Array.isArray(r.revealed) ? r.revealed.map(String) : [],   // S4：玩家侧已知派系（接触即揭，单调）
         manual: Array.isArray(r.manual) ? r.manual.map(String) : [],          // S4：预输入来源（无"新面孔"标记）
+        prompts: (r.prompts && typeof r.prompts === 'object' && !Array.isArray(r.prompts)) ? r.prompts : {},  // V0.4.4：派系钦定设定（名→文本）
       };
     }
-    return { factions: [], tombstones: [], revealed: [], manual: [] };
+    return { factions: [], tombstones: [], revealed: [], manual: [], prompts: {} };
   }
   function saveRoster(r) { writeChatVar(CV.roster, r); }
+
+  // V0.4.4 派系钦定设定（作者钦定背景：定位/实力/认知边界——注入推演输入，压过默认铁律的自由推断）
+  // 墓碑不清设定：恢复出墓时随之回来
+  function setFactionPrompt(name, text) {
+    name = String(name || '').trim();
+    if (!name) { toast('派系名为空'); return false; }
+    const roster = getRoster();
+    if (!roster.factions.includes(name)) { toast('该派系不在名册中——先入册再设定'); return false; }
+    text = String(text || '').trim();
+    if (text) roster.prompts[name] = text;
+    else delete roster.prompts[name];
+    saveRoster(roster);
+    log(text ? '派系钦定设定已保存：' + name : '派系钦定设定已清空：' + name);
+    return true;
+  }
 
   // —— S5 名册 CRUD（GM 生杀权：添加=轻量登场/预输入，删除=墓碑，恢复=出墓碑）———
 
@@ -1770,6 +1786,9 @@ ${JSON.stringify(d.sample || [], null, 1)}
       coreTeam: getCoreTeam(),
       extraRules: String(SETTINGS.extraRules || '').trim(),
       knownFactions: roster.factions, roster,
+      factionPrompts: Object.keys(roster.prompts)   // V0.4.4：派系钦定设定（墓碑派系除外——禁止复活者不进输入）
+        .filter(name => !roster.tombstones.includes(name) && String(roster.prompts[name] || '').trim())
+        .map(name => [name, String(roster.prompts[name]).trim()]),
       lastWorld: readChatVar(CV.world) || null,   // 上次世界状态（含本地骰推进结果）——增量修订式推演
       pendingIncident: State.pendingIncident || null,   // S9：掷中待生成/失败重试的区域事件（指令段）
       activeIncident: (() => {
@@ -1789,11 +1808,11 @@ ${JSON.stringify(d.sample || [], null, 1)}
     return [
       '你是开放世界的架构师、顶级权谋小说作家——为正文AI制造巫师3级别的叙事波折，而不是记录世界。你的产出是一份完整的世界状态 JSON（对【上次世界状态】做增量修订）。',
       '铁律：',
-      '0. 认知定位：你的全部输出是你的推断与提案，不是既定事实——正文AI把它们当参考素材而非指令。三态诚实：延续上次的三态，前文明确演出过才标"已渗透"，真相落地才标"已兑现"，拿不准一律"推断中"。',
+      '0. 认知定位：你的全部输出是你的推断与提案，不是既定事实——正文AI把它们当参考素材而非指令。三态诚实：延续上次的三态，前文明确演出过才标"已渗透"，真相落地才标"已兑现"，拿不准一律"推断中"。动笔前先为每个派系盘点它此刻实际知道什么、不知道什么——信息必须有渠道（接触、线人、公开报道）；无法确定它是否知道的，一律按不知道处理。你写的是克制的智者，不是无所不知的疯子。',
       '1. 反废话：严禁复述前文表层信息、玩家已知常识或主角团已推导的内容。除"从前文合理构思的报纸报道和街头传闻"可作事实引用外，其余全部写推断与设计；永远不顺水推舟写看似合理的废话。',
       '2. factions：每派系一条（键名用英文）：{"name":"派系名","surface":"公开征兆一句话（市民视角，报纸社会新闻体，须体现与其他派系的互动迹象，禁止内幕细节）","truth":"幕后真相：前文很可能未出现过的深层动机+由动机生长的具体行动","contact":"主角团已引起其注意时：派出接触的具体人物（姓名/代号+伪装身份+真实目的），否则空串","scheme":"为主角团设下的圈套（诱饵+真实杀招），无则空串","mole":"安插的间谍（优先选最无害、揭示时戏剧反转最大的人选；【主角核心白名单】人物严禁入选），无则空串","causes":["楼23"],"state":"推断中|已渗透|已兑现","stance":"对我方的立场一句话","relations":"与其他派系的关系一句话","zone":"活动大区（如 萨里山）","morale":"士气一句话"}。',
-      '3. 圈套纪律：恰好 floor(N/2)（N=派系总数，向下取整）个派系对主角团设圈套（scheme 非空）——这是下限也是上限，全员针对主角团=失败。其余派系的动向必须围绕自身利益运转（自己的敌人、生意、日程、地盘纠纷），与主角团无关或仅顺带相遇。圈套建在主角团推理的漏洞上，像最苛刻的编辑一样审视前文。',
-      '4. 尊重实力设定：主角团的前文战绩、背景靠山、警觉程度是硬约束——针对他们的算计必须匹配相应的谨慎、成本与失败风险；把强者当无防备的工具人是廉价的阴谋论。',
+      '3. 圈套纪律：必须写明各派系当前动机和世界造成的可见迹象。优先保证戏剧冲突——一个派系有设下圈套的动机和能力，就让他这么做。各派系的圈套优先针对各自的核心对手，只有当前文已演出该派系注意到主角团（接触、情报渠道、利益交集）时，圈套才允许指向主角团，且必须写明它依据的情报来源。全员针对主角团=失败；无人有任何算计（白开水复读前文）=失败；世界在本次推演后无任何变化=失败。',
+      '4. 尊重实力设定：主角团的前文战绩、背景靠山、警觉程度是硬约束。对实力强于己方或背景深厚的对象，忌惮的表达是回避、试探、借第三方出手、留后路，而不是正面挑衅与鲁莽对抗——敌意烈度必须匹配其掌握的情报与底气。把强者当无防备的工具人是廉价的阴谋论。',
       '5. 深层动机必须从派系既得利益与前文行为中合理生长——推断可以大胆，动机必须有根。墓碑名单中的派系禁止以任何形式复活或提及。',
       '6. 措辞紧凑：每项一句话以内，禁止铺陈细节与心理描写长篇。',
       '7. resistance：forbidden={truth 禁泄真相, path 正确获取途径, leak_cost 过早泄露毁掉什么}；partial=强行调查应得的部分信息或误导；friction=来自已登场势力动机的环境阻力。',
@@ -1825,6 +1844,8 @@ ${JSON.stringify(d.sample || [], null, 1)}
       ...((ctx.enemyPool || []).length ? [`【敌方阵营参考（仅供推演参考，具体敌人由正文AI自选）】\n${ctx.enemyPool.join(' / ')}`] : []),
       `【主角核心白名单（绝不背叛、绝不可能是间谍）】\n${(ctx.coreTeam || []).join(' / ') || '（未设置——正文长期塑造的核心同伴也可能被指定为间谍，建议在设置中填写）'}`,
       `【名册（已知派系）】\n${ctx.knownFactions.join(' / ') || '（无）'}`,
+      // V0.4.4 派系钦定设定——作者钦定的定位/实力/认知边界，压过默认铁律的自由推断（无设定整块省略）
+      ...((ctx.factionPrompts || []).length ? [`【派系钦定设定（作者钦定背景：该派系的定位/实力/认知边界以此为准，优先级高于本文默认规则；未覆盖的字段仍按默认铁律推演）】\n${ctx.factionPrompts.map(([n, t]) => `◆ ${n}：${t}`).join('\n')}`] : []),
       `【墓碑（禁止复活）】\n${ctx.roster.tombstones.join(' / ') || '（无）'}`,
       // ⑨ 上次世界状态——增量修订的基线（含程序本地骰已推进的事件进度）
       `【上次世界状态（增量修订基线：延续未完结事件/未消散风声/三态）】\n${ctx.lastWorld ? JSON.stringify(ctx.lastWorld, null, 1) : '（首次推演——从零建立）'}`,
@@ -3763,10 +3784,21 @@ ${JSON.stringify(d.sample || [], null, 1)}
       <textarea readonly style="width:100%;height:180px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:10px;padding:8px;">${esc(JSON.stringify(world, null, 2))}</textarea>
       <div class="ad-btnrow">
         <button class="primary" id="ad-report-regen">📡 重新推演</button>
+        <button id="ad-report-wipe" title="清空当前世界状态（含回滚快照），从零重新推演；名册与钦定设定保留">🗑 清空重推</button>
         <button id="ad-report-close">关闭</button>
       </div>`);
     els.modalBox.querySelector('#ad-report-regen').addEventListener('click', () => {
       closeModal();
+      generateDirectorEvolve('manual');
+    });
+    // V0.4.4 清空重推：$ad_world 与 checkpoint 一并清（防删楼回滚复活旧世界），名册保留，
+    // 随即手动推演——lastWorld 为空即"首次推演从零建立"
+    els.modalBox.querySelector('#ad-report-wipe').addEventListener('click', () => {
+      if (!confirm('确定清空当前世界状态并从零重新推演？\n（派系/事件链/风声/遇敌档案全部重建；名册与钦定设定保留）')) return;
+      writeChatVar(CV.world, null);
+      writeChatVar(CV.worldCheckpoint, null);
+      closeModal();
+      toast('🗑 已清空世界状态——从零推演中…');
       generateDirectorEvolve('manual');
     });
     els.modalBox.querySelector('#ad-report-close').addEventListener('click', closeModal);
@@ -3778,8 +3810,11 @@ ${JSON.stringify(d.sample || [], null, 1)}
     const roster = getRoster();
     const rows = roster.factions.map(name => `
       <div class="ad-card-item" style="cursor:default">
-        <span class="place">${esc(name)}</span>
-        <button class="ad-row-btn" data-tomb="${esc(name)}" title="除名=墓碑：级联删该派系全部暗线并禁止模型复活">🪦 除名</button>
+        <span class="place">${roster.prompts[name] ? '📌 ' : ''}${esc(name)}</span>
+        <span style="display:flex;gap:4px">
+          <button class="ad-row-btn" data-fp="${esc(name)}" title="作者钦定设定：定位/实力/认知边界，注入推演输入（优先级高于默认铁律）">✏️ 设定</button>
+          <button class="ad-row-btn" data-tomb="${esc(name)}" title="除名=墓碑：级联删该派系全部暗线并禁止模型复活">🪦 除名</button>
+        </span>
       </div>`).join('') || '<div class="dim" style="padding:8px 2px">名册为空——世界推演时自动登记，或在上方手动添加。</div>';
     const tombs = roster.tombstones.map(name => `
       <div class="ad-card-item" style="cursor:default;opacity:0.62">
@@ -3799,6 +3834,9 @@ ${JSON.stringify(d.sample || [], null, 1)}
       const input = els.modalBox.querySelector('#ad-roster-new');
       if (addRosterFaction(input.value)) { toast(`已入册：${input.value.trim()}`); openRosterModal(); }
     });
+    els.modalBox.querySelectorAll('[data-fp]').forEach(btn => {
+      btn.addEventListener('click', () => openFactionPromptModal(btn.getAttribute('data-fp')));
+    });
     els.modalBox.querySelectorAll('[data-tomb]').forEach(btn => {
       btn.addEventListener('click', () => {
         const name = btn.getAttribute('data-tomb');
@@ -3812,6 +3850,32 @@ ${JSON.stringify(d.sample || [], null, 1)}
       });
     });
     els.modalBox.querySelector('#ad-roster-close').addEventListener('click', closeModal);
+  }
+
+  // —— V0.4.4 派系钦定设定编辑弹窗（定位/实力/认知边界——注入推演输入）—————
+
+  function openFactionPromptModal(name) {
+    const current = String((getRoster().prompts || {})[name] || '');
+    openModal(`
+      <h3>✏️ 派系钦定设定 · ${esc(name)}</h3>
+      <div class="dim" style="font-size:10px;color:var(--ad-ink-faint);margin-bottom:8px">
+        作者钦定背景：该派系的定位/实力/认知边界以此为准，注入推演输入（优先级高于默认铁律；未覆盖字段仍按默认铁律推演）。多行自由文本，建议写明它知道什么、忌惮什么、核心对手是谁。存 $ad_roster.prompts。</div>
+      <textarea id="ad-fp-text" style="width:100%;height:200px;background:var(--ad-input-bg);color:var(--ad-ink);border:1px solid var(--ad-border);border-radius:var(--ad-radius-sm);font-family:inherit;font-size:11px;padding:8px;box-sizing:border-box;resize:vertical" placeholder="例：受英王背书的调查员是其惹不起的对象——它若知情，反应是回避与借刀，而非正面对抗；核心对手是XX派系，当前动机是……">${esc(current)}</textarea>
+      <div class="ad-btnrow">
+        <button class="primary" id="ad-fp-save">保存</button>
+        <button id="ad-fp-clear">清空</button>
+        <button id="ad-fp-close">关闭</button>
+      </div>`);
+    els.modalBox.querySelector('#ad-fp-save').addEventListener('click', () => {
+      if (setFactionPrompt(name, els.modalBox.querySelector('#ad-fp-text').value)) {
+        toast('已保存派系钦定设定：' + name);
+        openRosterModal();
+      }
+    });
+    els.modalBox.querySelector('#ad-fp-clear').addEventListener('click', () => {
+      if (setFactionPrompt(name, '')) { toast('已清空派系钦定设定：' + name); openRosterModal(); }
+    });
+    els.modalBox.querySelector('#ad-fp-close').addEventListener('click', () => openRosterModal());
   }
 
 
@@ -3875,6 +3939,7 @@ ${JSON.stringify(d.sample || [], null, 1)}
     checkTriggers, generateDirectorEvolve, buildDirectorContext, buildDirectorMessages,
     validateWorld, DirectorPrompt, DEFAULT_DIRECTOR_SYS,
     getRoster, saveRoster, addRosterFaction, tombstoneFaction, restoreFaction, openRosterModal,
+    setFactionPrompt, openFactionPromptModal,   // V0.4.4：派系钦定设定
     Trigger, openWorldModal,
     // S6：随机遭遇掷骰
     onGenerationStarted, combatInProgress, encounterProfile, RC_MARKER, RC_DIRECTIVE,
